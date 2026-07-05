@@ -10,6 +10,7 @@ interface ExportPanelProps {
   fileNamingRule: string;
   onChangeFileNamingRule: (rule: string) => void;
   recentExports?: RecentExport[];
+  onTriggerExport?: (format: "CSV" | "PDF" | "Google Sheets") => void;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
@@ -20,6 +21,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   fileNamingRule,
   onChangeFileNamingRule,
   recentExports = [],
+  onTriggerExport,
 }) => {
   return (
     <div 
@@ -144,18 +146,21 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               });
               
               return (
-                <div 
+                <button 
+                  type="button"
                   key={item.id} 
-                  className="flex items-center justify-between p-2 bg-slate-950/35 border border-white/5 rounded-lg hover:bg-slate-950/60 hover:border-blue-500/15 transition-all duration-300"
+                  onClick={() => onTriggerExport && onTriggerExport(item.format)}
+                  className="w-full flex items-center justify-between p-2 bg-slate-950/35 border border-white/5 rounded-lg hover:bg-slate-950/60 hover:border-blue-500/30 transition-all duration-300 text-left group cursor-pointer"
+                  title={`Click to re-export as ${item.format}`}
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <div className="p-1 rounded bg-slate-900 border border-white/5 shrink-0">
+                    <div className="p-1 rounded bg-slate-900 border border-white/5 shrink-0 group-hover:border-blue-500/20 transition-colors">
                       {item.format === "CSV" && <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />}
                       {item.format === "PDF" && <FileText className="w-3.5 h-3.5 text-red-400" />}
                       {item.format === "Google Sheets" && <Cloud className="w-3.5 h-3.5 text-sky-400" />}
                     </div>
                     <div className="min-w-0">
-                      <div className="text-[10px] font-bold text-slate-200 truncate leading-snug" title={item.filename}>
+                      <div className="text-[10px] font-bold text-slate-200 truncate leading-snug group-hover:text-blue-400 transition-colors" title={item.filename}>
                         {item.filename}
                       </div>
                       <div className="flex items-center gap-1.5 text-[8px] text-slate-500 font-semibold mt-0.5">
@@ -167,7 +172,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                       </div>
                     </div>
                   </div>
-                  <div className="pl-2">
+                  <div className="pl-2 flex items-center gap-1.5 shrink-0">
                     <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
                       item.format === "CSV" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                       item.format === "PDF" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
@@ -175,8 +180,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     }`}>
                       {item.format === "CSV" ? "CSV" : item.format === "PDF" ? "PDF" : "Sheets"}
                     </span>
+                    <Download className="w-3 h-3 text-slate-500 group-hover:text-blue-400 group-hover:scale-110 transition-all duration-300 opacity-0 group-hover:opacity-100" />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

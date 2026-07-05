@@ -164,6 +164,101 @@ app.post("/api/jira/test-connection", async (req, res) => {
   }
 });
 
+// Lightweight connection check against Jira serverInfo (Heartbeat)
+app.post("/api/jira/heartbeat", async (req, res) => {
+  try {
+    const { jiraUrl, email, token } = req.body;
+
+    if (!jiraUrl || !email || !token) {
+      return res.status(400).json({ error: "Missing required Jira Base URL, Email, or API Token." });
+    }
+
+    // Clean URL
+    let formattedUrl = jiraUrl.trim().replace(/\/+$/, "");
+    if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
+      formattedUrl = `https://${formattedUrl}`;
+    }
+
+    let apiVersion: "3" | "2" = "3";
+    let serverData: any = null;
+    let responseStatus = 200;
+    let errText = "";
+
+    // Test request to serverInfo (lightweight check) - try v3 first
+    try {
+      const testEndpoint = `${formattedUrl}/rest/api/3/serverInfo`;
+      const response = await fetch(testEndpoint, {
+        method: "GET",
+        headers: {
+          Authorization: getAuthHeader(email, token),
+          Accept: "application/json",
+        },
+      });
+
+      responseStatus = response.status;
+      if (response.ok) {
+        serverData = await response.json();
+        apiVersion = "3";
+      } else {
+        errText = await response.text();
+      }
+    } catch (e: any) {
+      errText = e.message;
+    }
+
+    // If v3 failed, try v2
+    if (!serverData) {
+      try {
+        const testEndpoint2 = `${formattedUrl}/rest/api/2/serverInfo`;
+        const response2 = await fetch(testEndpoint2, {
+          method: "GET",
+          headers: {
+            Authorization: getAuthHeader(email, token),
+            Accept: "application/json",
+          },
+        });
+
+        responseStatus = response2.status;
+        if (response2.ok) {
+          serverData = await response2.json();
+          apiVersion = "2";
+        } else {
+          errText = `v3 error: ${errText || "None"}. v2 error: ${await response2.text()}`;
+        }
+      } catch (e: any) {
+        errText = `v3 error: ${errText || "None"}. v2 network error: ${e.message}`;
+      }
+    }
+
+    if (!serverData) {
+      let friendlyError = "Lightweight heartbeat check failed.";
+      if (responseStatus === 401) {
+        friendlyError = "Heartbeat failed: Unauthorized (401). Please check your email and API Token.";
+      } else if (responseStatus === 403) {
+        friendlyError = "Heartbeat failed: Forbidden (403). Your account lacks permissions, or security rules are active.";
+      } else if (responseStatus === 404) {
+        friendlyError = "Heartbeat failed: Not Found (404). Verify that the Jira Base URL is correct.";
+      }
+      return res.status(responseStatus || 401).json({
+        error: friendlyError,
+        details: errText.slice(0, 200),
+      });
+    }
+
+    return res.json({
+      success: true,
+      apiVersion,
+      serverInfo: {
+        baseUrl: serverData.baseUrl || formattedUrl,
+        version: serverData.version || "Cloud",
+        serverTitle: serverData.serverTitle || "Atlassian Jira",
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Failed to establish a heartbeat check to Jira server.", details: error.message });
+  }
+});
+
 // Middleware to extract and validate session ID
 const requireJiraSession = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -288,20 +383,46 @@ app.post("/api/jira/search", requireJiraSession, async (req, res) => {
     let total = 1;
     const version = apiVersion || "3";
 
+    // Start with a rich set of agile fields
+    let fieldsParam = "key,summary,issuetype,status,priority,assignee,reporter,created,updated,duedate,customfield_10016,customfield_10020,resolution,timespent,aggregatetimeoriginalestimate,labels,components";
+    let isFallbackActive = false;
+
     // Loop with auto-pagination for up to 5,000 issues
     while (startAt < total && allIssues.length < 5000) {
-      const searchUrl = `${jiraUrl}/rest/api/${version}/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&fields=key,summary,issuetype,status,priority,assignee,reporter,created,updated,duedate,customfield_10016,customfield_10020,resolution,timespent,aggregatetimeoriginalestimate,labels,components`;
+      const searchUrl = `${jiraUrl}/rest/api/${version}/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&fields=${fieldsParam}`;
       
-      const response = await fetch(searchUrl, {
+      let response = await fetch(searchUrl, {
         headers: {
           Authorization: getAuthHeader(email, token),
           Accept: "application/json",
         },
       });
 
+      // Self-healing: if failed, try guaranteed standard fields list to bypass missing custom fields
+      if (!response.ok && !isFallbackActive) {
+        const errorText = await response.text();
+        console.warn(`Jira search failed on initial fields attempt. Retrying with guaranteed fields list. Original error: ${errorText}`);
+        
+        // Use ONLY standard fields guaranteed to exist in any Jira schema
+        fieldsParam = "key,summary,issuetype,status,priority,assignee,reporter,created,updated,resolution,labels,components";
+        isFallbackActive = true;
+
+        const fallbackSearchUrl = `${jiraUrl}/rest/api/${version}/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&fields=${fieldsParam}`;
+        response = await fetch(fallbackSearchUrl, {
+          headers: {
+            Authorization: getAuthHeader(email, token),
+            Accept: "application/json",
+          },
+        });
+      }
+
       if (!response.ok) {
         const text = await response.text();
-        return res.status(response.status).json({ error: "Jira API query rejected.", details: text.slice(0, 150) });
+        return res.status(response.status).json({ 
+          error: "Jira API query rejected.", 
+          details: text.slice(0, 150),
+          isFallbackActive
+        });
       }
 
       const data: any = await response.json();

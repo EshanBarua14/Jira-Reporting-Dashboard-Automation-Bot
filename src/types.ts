@@ -104,3 +104,13 @@ export interface RecentExport {
   projects: string[];
 }
 
+export interface NetworkLog {
+  timestamp: string;
+  url: string;
+  method: string;
+  status: number | string;
+  statusText: string;
+  details?: string;
+}
+
+

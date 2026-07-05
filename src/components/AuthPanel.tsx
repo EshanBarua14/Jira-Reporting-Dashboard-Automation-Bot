@@ -1,29 +1,68 @@
 import React, { useState } from "react";
-import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle } from "lucide-react";
+import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 
 interface AuthPanelProps {
   isSandbox: boolean;
   onToggleSandbox: (val: boolean) => void;
   onConnect: (credentials: { jiraUrl: string; email: string; token: string }) => Promise<void>;
+  onTestConnection: (credentials: { jiraUrl: string; email: string; token: string }) => Promise<{ success: boolean; message: string; version?: string; serverTitle?: string }>;
   onDisconnect: () => void;
   isConnected: boolean;
   activeUser: { displayName: string; emailAddress: string; avatarUrl: string } | null;
+  onClearCache: () => void;
 }
 
 export const AuthPanel: React.FC<AuthPanelProps> = ({
   isSandbox,
   onToggleSandbox,
   onConnect,
+  onTestConnection,
   onDisconnect,
   isConnected,
   activeUser,
+  onClearCache,
 }) => {
-  const [jiraUrl, setJiraUrl] = useState("https://your-domain.atlassian.net");
-  const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
+  const [jiraUrl, setJiraUrl] = useState(() => {
+    return localStorage.getItem("jira_url") || "https://your-domain.atlassian.net";
+  });
+  const [email, setEmail] = useState(() => {
+    return localStorage.getItem("jira_email") || "";
+  });
+  const [token, setToken] = useState(() => {
+    return localStorage.getItem("jira_token") || "";
+  });
   const [showToken, setShowToken] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleTestHeartbeat = async () => {
+    if (isSandbox) return;
+    setTesting(true);
+    setErrorMsg(null);
+    setTestResult(null);
+
+    try {
+      const res = await onTestConnection({ jiraUrl, email, token });
+      setTestResult({
+        success: true,
+        message: `Connected successfully to "${res.serverTitle || "Jira"}" (v${res.version || "Cloud"}). Heartbeat request validated!`,
+      });
+      // Store credentials in localStorage
+      localStorage.setItem("jira_url", jiraUrl);
+      localStorage.setItem("jira_email", email);
+      localStorage.setItem("jira_token", token);
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: err.message || "Failed lightweight heartbeat check.",
+      });
+      setErrorMsg(err.message || "Lightweight heartbeat check failed.");
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +72,10 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
     setLoading(true);
     try {
       await onConnect({ jiraUrl, email, token });
+      // Store credentials in localStorage
+      localStorage.setItem("jira_url", jiraUrl);
+      localStorage.setItem("jira_email", email);
+      localStorage.setItem("jira_token", token);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to establish a connection to Jira.");
     } finally {
@@ -176,6 +219,26 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             </p>
           </div>
 
+          {testResult && (
+            <div className={`p-3.5 rounded-xl border flex gap-2.5 text-xs font-semibold ${
+              testResult.success
+                ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400"
+                : "bg-red-950/20 border-red-900/50 text-red-400"
+            }`}>
+              {testResult.success ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              )}
+              <div className="text-[11px] leading-relaxed">
+                <span className="font-bold uppercase tracking-wider block mb-0.5">
+                  {testResult.success ? "Heartbeat Succeeded" : "Heartbeat Failed"}
+                </span>
+                <p className="font-medium">{testResult.message}</p>
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-red-950/20 border border-red-900/50 flex gap-2.5 text-red-400">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
@@ -194,25 +257,65 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full text-xs font-black text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 py-2.5 rounded-lg shadow-lg shadow-blue-500/10 transition-all disabled:opacity-50 flex items-center justify-center gap-2 uppercase tracking-wider active:scale-[0.99]"
-          >
-            {loading ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Connecting...
-              </>
-            ) : (
-              "Test connection"
-            )}
-          </button>
+          <div className="grid grid-cols-2 gap-3.5">
+            <button
+              type="button"
+              disabled={testing || loading}
+              onClick={handleTestHeartbeat}
+              className="text-xs font-black text-slate-200 bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-blue-500/30 py-2.5 rounded-lg shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 uppercase tracking-wider active:scale-[0.99]"
+            >
+              {testing ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <Globe className="w-3.5 h-3.5 text-blue-400" />
+                  Test Heartbeat
+                </>
+              )}
+            </button>
+
+            <button
+              type="submit"
+              disabled={loading || testing}
+              className="text-xs font-black text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 py-2.5 rounded-lg shadow-lg shadow-blue-500/10 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 uppercase tracking-wider active:scale-[0.99]"
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-1.5 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-3.5 h-3.5 text-white" />
+                  Connect Session
+                </>
+              )}
+            </button>
+          </div>
         </form>
       )}
+
+      {/* Clear Cache Area */}
+      <div className="pt-3.5 border-t border-white/5 flex items-center justify-between gap-2">
+        <span className="text-[10px] text-slate-500 font-medium">Encountering stale data or errors?</span>
+        <button
+          type="button"
+          onClick={onClearCache}
+          id="clear-cache-btn"
+          className="text-[9px] font-extrabold text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 border border-amber-500/20 hover:border-amber-500/30 px-2.5 py-1.5 rounded-lg transition-all uppercase tracking-wider flex items-center gap-1.5"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Clear Cache
+        </button>
+      </div>
     </div>
   );
 };

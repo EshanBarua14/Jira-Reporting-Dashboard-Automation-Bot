@@ -83,6 +83,7 @@ export const PresetsPanel: React.FC<PresetsPanelProps> = ({
 }) => {
   const [presets, setPresets] = useState<SavedPreset[]>([]);
   const [newPresetName, setNewPresetName] = useState("");
+  const [presetSearch, setPresetSearch] = useState("");
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
@@ -284,13 +285,41 @@ export const PresetsPanel: React.FC<PresetsPanelProps> = ({
           </button>
         </div>
 
+        {presets.length > 0 && (
+          <div className="relative mb-2">
+            <input
+              type="text"
+              placeholder="Search profile by name..."
+              value={presetSearch}
+              onChange={(e) => setPresetSearch(e.target.value)}
+              id="preset-search-input"
+              className="w-full bg-slate-950/40 border border-white/5 text-slate-200 text-[11px] rounded-lg pl-3 pr-8 py-2 focus:outline-none focus:border-blue-500/80 placeholder-slate-500 transition-all font-medium"
+            />
+            {presetSearch && (
+              <button
+                type="button"
+                onClick={() => setPresetSearch("")}
+                className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-200 text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
+
         {presets.length === 0 ? (
           <div className="text-[11px] text-slate-400 py-6 text-center border border-dashed border-white/5 rounded-xl bg-slate-950/20 leading-relaxed font-medium">
             No custom profiles saved yet.<br />Setup your filters/columns and bookmark above for instantaneous generation!
           </div>
+        ) : presets.filter(p => p.name.toLowerCase().includes(presetSearch.toLowerCase())).length === 0 ? (
+          <div className="text-[11px] text-slate-500 py-6 text-center border border-dashed border-white/5 rounded-xl bg-slate-950/10 leading-relaxed font-medium">
+            No profiles match "{presetSearch}".
+          </div>
         ) : (
           <div className="max-h-56 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-            {presets.map((preset) => {
+            {presets
+              .filter((p) => p.name.toLowerCase().includes(presetSearch.toLowerCase()))
+              .map((preset) => {
               const isActive = activePresetId === preset.id;
               return (
                 <div

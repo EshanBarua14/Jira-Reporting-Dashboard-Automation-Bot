@@ -68,14 +68,25 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
     setCurrentPage(1);
   }, [report]);
 
+  const safeConfig = useMemo(() => {
+    return {
+      selectedProjects: report?.config?.selectedProjects || [],
+      selectedIssueTypes: report?.config?.selectedIssueTypes || [],
+      columns: report?.config?.columns || [],
+      metrics: report?.config?.metrics || [],
+      visualizations: report?.config?.visualizations || { pieChart: true, barChart: true, lineChart: true, table: true },
+      fileNamingRule: report?.config?.fileNamingRule || "jira-report-{project}-{date}",
+    };
+  }, [report?.config]);
+
   // 1. Column Selection Setup
   const enabledColumns = useMemo(() => {
-    return report?.config.columns.filter((c) => c.enabled) ?? [];
-  }, [report?.config.columns]);
+    return report?.config?.columns?.filter((c) => c.enabled) ?? [];
+  }, [report?.config?.columns]);
 
   // 2. Metrics Setup
   const isMetricEnabled = (id: string) => {
-    return report?.config.metrics.find((m) => m.id === id)?.enabled ?? true;
+    return report?.config?.metrics?.find((m) => m.id === id)?.enabled ?? true;
   };
 
   // 3. Status Circle calculations for Donut Chart
@@ -220,20 +231,20 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   };
 
   const downloadCSV = () => {
-    const name = config.fileNamingRule
-      .replace("{project}", config.selectedProjects.join("_"))
+    const name = safeConfig.fileNamingRule
+      .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".csv";
-    exportToCSV(issues, config.columns, name);
+    exportToCSV(issues, safeConfig.columns, name);
     if (onRecordExport) {
       onRecordExport("CSV", name);
     }
   };
 
   const downloadPDF = () => {
-    const name = config.fileNamingRule
-      .replace("{project}", config.selectedProjects.join("_"))
+    const name = safeConfig.fileNamingRule
+      .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".pdf";
-    exportToPDF(`Jira Executive Report - ${config.selectedProjects.join(", ")}`, issues, config.columns);
+    exportToPDF(`Jira Executive Report - ${safeConfig.selectedProjects.join(", ")}`, issues, safeConfig.columns);
     if (onRecordExport) {
       onRecordExport("PDF", name);
     }
@@ -248,7 +259,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
           initial="hidden"
           animate="show"
           key={report ? report.timestamp : "empty"}
-          className="grid grid-cols-2 md:grid-cols-5 gap-3"
+          className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-8 gap-3"
         >
         {isMetricEnabled("totalIssues") && (
           <motion.div variants={cardVariants} className="bg-[#1E293B] p-4 rounded-xl border border-slate-800 shadow-sm">
@@ -403,9 +414,9 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       )}
 
       {/* 3. Visualizations Row (Pie, Bar, Line) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
         {/* Donut Pie Chart (Status Distribution) */}
-        {config.visualizations.pieChart && (
+        {safeConfig.visualizations.pieChart && (
           <div className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm flex flex-col justify-between">
             <div className="mb-3">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Status Distribution</h3>
@@ -419,7 +430,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
         )}
 
         {/* Workload / Bar Chart (Issues per Assignee) */}
-        {config.visualizations.barChart && (
+        {safeConfig.visualizations.barChart && (
           <div className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm flex flex-col justify-between">
             <div>
               <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Workload Allocation</h3>
@@ -456,7 +467,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
         )}
 
         {/* Cumulative Velocity Trend (Line Chart) */}
-        {config.visualizations.lineChart && (
+        {safeConfig.visualizations.lineChart && (
           <div className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm flex flex-col justify-between">
             <div>
               <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Completion Trend</h3>
@@ -522,7 +533,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       </div>
 
       {/* 4. Filterable Interactive Table Section */}
-      {config.visualizations.table && (
+      {safeConfig.visualizations.table && (
         <div className="bg-[#1E293B] rounded-xl border border-slate-800 shadow-sm overflow-hidden">
           {/* Table Header Controls */}
           <div className="p-4 bg-slate-900/30 border-b border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -539,7 +550,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
                 <input
                   type="text"
-                  placeholder="Filter key, summary, assignee..."
+                  placeholder="Search by key or summary..."
+                  id="table-search-input"
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);

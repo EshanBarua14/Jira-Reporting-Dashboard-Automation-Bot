@@ -9,9 +9,11 @@ import { MetricsPanel } from "./components/MetricsPanel";
 import { VisualizationPanel } from "./components/VisualizationPanel";
 import { ExportPanel } from "./components/ExportPanel";
 import { ReportDashboard } from "./components/ReportDashboard";
+import { DiagnosticConsole } from "./components/DiagnosticConsole";
 import { ToastNotification, Toast } from "./components/ToastNotification";
 import { motion } from "motion/react";
-import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport } from "./types";
+import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog } from "./types";
+
 import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
 
@@ -50,12 +52,44 @@ const DEFAULT_METRICS: MetricDefinition[] = [
 ];
 
 export default function App() {
-  const [isSandbox, setIsSandbox] = useState(true);
+  const [isSandbox, setIsSandbox] = useState(() => {
+    return localStorage.getItem("jira_is_sandbox") !== "false";
+  });
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [isConnected, setIsConnected] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [activeUser, setActiveUser] = useState<{ displayName: string; emailAddress: string; avatarUrl: string } | null>(null);
-  const [jiraUrl, setJiraUrl] = useState<string>("");
+  const [isConnected, setIsConnected] = useState(() => {
+    return localStorage.getItem("jira_is_connected") === "true";
+  });
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    return localStorage.getItem("jira_session_id");
+  });
+  const [activeUser, setActiveUser] = useState<{ displayName: string; emailAddress: string; avatarUrl: string } | null>(() => {
+    const saved = localStorage.getItem("jira_active_user");
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [jiraUrl, setJiraUrl] = useState<string>(() => {
+    return localStorage.getItem("jira_url") || "";
+  });
+
+  // Diagnostic Logs & Console States
+  const [networkLogs, setNetworkLogs] = useState<NetworkLog[]>([]);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  const logNetworkRequest = (url: string, method: string, status: number | string, statusText: string, details?: string) => {
+    const newLog: NetworkLog = {
+      timestamp: new Date().toLocaleTimeString(),
+      url,
+      method,
+      status,
+      statusText,
+      details,
+    };
+    setNetworkLogs((prev) => [newLog, ...prev].slice(0, 5));
+  };
+
 
   // View Mode Switcher state
   const [viewMode, setViewMode] = useState<"dashboard" | "report">("dashboard");
@@ -199,8 +233,15 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Recent exports log state (retained in memory across generation cycles)
-  const [recentExports, setRecentExports] = useState<RecentExport[]>([]);
+  // Recent exports log state (retained in memory and localStorage across generation cycles)
+  const [recentExports, setRecentExports] = useState<RecentExport[]>(() => {
+    const saved = localStorage.getItem("jira_recent_exports");
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const recordExport = (format: "CSV" | "PDF" | "Google Sheets", filename: string) => {
     const newExport: RecentExport = {
@@ -210,33 +251,52 @@ export default function App() {
       timestamp: new Date().toISOString(),
       projects: selectedProjects.length > 0 ? selectedProjects : ["GLOBAL"],
     };
-    setRecentExports((prev) => [newExport, ...prev].slice(0, 5));
+    setRecentExports((prev) => {
+      const updated = [newExport, ...prev].slice(0, 5);
+      localStorage.setItem("jira_recent_exports", JSON.stringify(updated));
+      return updated;
+    });
   };
 
   // Load Real Jira Options after successful login
   const loadJiraMetadata = async (sid: string) => {
     try {
       setFetchingProgress(15);
+      
       // 1. Fetch projects
       const projRes = await fetch("/api/jira/projects", {
         headers: { Authorization: `Bearer ${sid}` },
       });
       setFetchingProgress(45);
+      
+      const projContentType = projRes.headers.get("content-type");
       if (projRes.ok) {
-        const pList = await projRes.json();
-        // Deduplicate projects by key
-        const uniqueProjects: { key: string; name: string }[] = [];
-        const seenKeys = new Set<string>();
-        for (const p of pList) {
-          if (!seenKeys.has(p.key)) {
-            seenKeys.add(p.key);
-            uniqueProjects.push(p);
+        if (projContentType && projContentType.includes("application/json")) {
+          const pList = await projRes.json();
+          logNetworkRequest("/api/jira/projects", "GET", projRes.status, projRes.statusText, `Loaded ${pList.length} projects successfully.`);
+          
+          // Deduplicate projects by key
+          const uniqueProjects: { key: string; name: string }[] = [];
+          const seenKeys = new Set<string>();
+          for (const p of pList) {
+            if (!seenKeys.has(p.key)) {
+              seenKeys.add(p.key);
+              uniqueProjects.push(p);
+            }
           }
+          setJiraProjects(uniqueProjects);
+          if (uniqueProjects.length > 0) {
+            setSelectedProjects([uniqueProjects[0].key]);
+          }
+        } else {
+          const text = await projRes.text();
+          logNetworkRequest("/api/jira/projects", "GET", projRes.status, projRes.statusText, `Unexpected non-JSON response: ${text.slice(0, 200)}`);
+          throw new Error("Expected JSON response for Jira projects but got non-JSON output.");
         }
-        setJiraProjects(uniqueProjects);
-        if (uniqueProjects.length > 0) {
-          setSelectedProjects([uniqueProjects[0].key]);
-        }
+      } else {
+        const text = await projRes.text();
+        logNetworkRequest("/api/jira/projects", "GET", projRes.status, projRes.statusText, `Projects load failed: ${text.slice(0, 200)}`);
+        throw new Error(`Failed to load Jira projects list: ${projRes.status} ${projRes.statusText}`);
       }
 
       // 2. Fetch statuses
@@ -244,20 +304,34 @@ export default function App() {
       const statRes = await fetch("/api/jira/statuses", {
         headers: { Authorization: `Bearer ${sid}` },
       });
+      
+      const statContentType = statRes.headers.get("content-type");
       if (statRes.ok) {
-        const sList = await statRes.json();
-        const names: string[] = sList.map((s: any) => s.name);
-        setJiraStatuses(Array.from(new Set(names)));
-        
-        // Populate default mapping for any newly detected statuses
-        const newMap = { ...statusMapping };
-        sList.forEach((s: any) => {
-          if (!newMap[s.name]) {
-            const cat = s.category;
-            newMap[s.name] = cat === "Done" || cat === "Complete" ? "Done" : cat === "In Progress" ? "In Progress" : "To Do";
-          }
-        });
-        setStatusMapping(newMap);
+        if (statContentType && statContentType.includes("application/json")) {
+          const sList = await statRes.json();
+          logNetworkRequest("/api/jira/statuses", "GET", statRes.status, statRes.statusText, `Loaded ${sList.length} status configurations successfully.`);
+          
+          const names: string[] = sList.map((s: any) => s.name);
+          setJiraStatuses(Array.from(new Set(names)));
+          
+          // Populate default mapping for any newly detected statuses
+          const newMap = { ...statusMapping };
+          sList.forEach((s: any) => {
+            if (!newMap[s.name]) {
+              const cat = s.category;
+              newMap[s.name] = cat === "Done" || cat === "Complete" ? "Done" : cat === "In Progress" ? "In Progress" : "To Do";
+            }
+          });
+          setStatusMapping(newMap);
+        } else {
+          const text = await statRes.text();
+          logNetworkRequest("/api/jira/statuses", "GET", statRes.status, statRes.statusText, `Unexpected non-JSON response: ${text.slice(0, 200)}`);
+          throw new Error("Expected JSON response for Jira statuses but got non-JSON output.");
+        }
+      } else {
+        const text = await statRes.text();
+        logNetworkRequest("/api/jira/statuses", "GET", statRes.status, statRes.statusText, `Statuses load failed: ${text.slice(0, 200)}`);
+        throw new Error(`Failed to load Jira status configuration: ${statRes.status} ${statRes.statusText}`);
       }
 
       // 3. Fetch issue types
@@ -265,11 +339,25 @@ export default function App() {
       const typeRes = await fetch("/api/jira/issuetypes", {
         headers: { Authorization: `Bearer ${sid}` },
       });
+      
+      const typeContentType = typeRes.headers.get("content-type");
       if (typeRes.ok) {
-        const tList = await typeRes.json();
-        const uniqueTypes = Array.from(new Set(tList.map((t: any) => t.name as string)));
-        setJiraIssueTypes(uniqueTypes);
-        setSelectedIssueTypes(uniqueTypes.slice(0, 4));
+        if (typeContentType && typeContentType.includes("application/json")) {
+          const tList = await typeRes.json();
+          logNetworkRequest("/api/jira/issuetypes", "GET", typeRes.status, typeRes.statusText, `Loaded ${tList.length} issue type schemas successfully.`);
+          
+          const uniqueTypes = Array.from(new Set(tList.map((t: any) => t.name as string)));
+          setJiraIssueTypes(uniqueTypes);
+          setSelectedIssueTypes(uniqueTypes.slice(0, 4));
+        } else {
+          const text = await typeRes.text();
+          logNetworkRequest("/api/jira/issuetypes", "GET", typeRes.status, typeRes.statusText, `Unexpected non-JSON response: ${text.slice(0, 200)}`);
+          throw new Error("Expected JSON response for Jira issue types but got non-JSON output.");
+        }
+      } else {
+        const text = await typeRes.text();
+        logNetworkRequest("/api/jira/issuetypes", "GET", typeRes.status, typeRes.statusText, `Issue types load failed: ${text.slice(0, 200)}`);
+        throw new Error(`Failed to load Jira issue type schemas: ${typeRes.status} ${typeRes.statusText}`);
       }
 
       setFetchingProgress(100);
@@ -280,41 +368,137 @@ export default function App() {
         "success",
         4000
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error loading Jira metadata:", err);
       setFetchingProgress(null);
+      setErrorMsg(err.message || "Failed to synchronise configuration schema metadata from your Jira cloud instance.");
+      setShowDiagnostics(true);
       addToast(
         "Metadata Sync Failed",
-        "Could not load Jira configuration schemas. Continuing in offline mode.",
+        err.message || "Could not load Jira configuration schemas. Continuing in offline mode.",
         "warning",
         5000
       );
     }
   };
 
-  // Connect to Real Jira
-  const handleConnect = async (credentials: { jiraUrl: string; email: string; token: string }) => {
-    const response = await fetch("/api/jira/test-connection", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(credentials),
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || "Failed to establish connected session.");
+  // Auto-fetch metadata if there is a persistent active session on mount
+  useEffect(() => {
+    const savedSessionId = localStorage.getItem("jira_session_id");
+    const savedIsConnected = localStorage.getItem("jira_is_connected") === "true";
+    if (savedSessionId && savedIsConnected) {
+      loadJiraMetadata(savedSessionId);
     }
+  }, []);
 
-    const data = await response.json();
-    setSessionId(data.sessionId);
-    setJiraUrl(credentials.jiraUrl);
-    setActiveUser(data.user);
-    setIsConnected(true);
-    setIsSandbox(false);
-    setErrorMsg(null);
+  // Lightweight connection check (Heartbeat check against Jira /serverInfo)
+  const handleTestConnection = async (credentials: { jiraUrl: string; email: string; token: string }) => {
+    try {
+      const response = await fetch("/api/jira/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
 
-    // Dynamic fetch projects, statuses etc.
-    await loadJiraMetadata(data.sessionId);
+      const contentType = response.headers.get("content-type");
+      let responseData: any = null;
+
+      if (response.ok) {
+        if (contentType && contentType.includes("application/json")) {
+          responseData = await response.json();
+          logNetworkRequest(
+            "/api/jira/heartbeat",
+            "POST",
+            response.status,
+            response.statusText,
+            `Heartbeat connection OK. Server Title: "${responseData.serverInfo?.serverTitle}", Version: "${responseData.serverInfo?.version}".`
+          );
+          return responseData.serverInfo || { success: true };
+        } else {
+          const rawText = await response.text();
+          logNetworkRequest(
+            "/api/jira/heartbeat",
+            "POST",
+            response.status,
+            response.statusText,
+            `Heartbeat failed. Got non-JSON text: ${rawText.slice(0, 200)}`
+          );
+          throw new Error("Invalid response format. Expected JSON heartbeat payload.");
+        }
+      } else {
+        let errMsg = "Lightweight heartbeat check failed.";
+        if (contentType && contentType.includes("application/json")) {
+          const errJSON = await response.json();
+          errMsg = errJSON.error || errMsg;
+          logNetworkRequest("/api/jira/heartbeat", "POST", response.status, response.statusText, JSON.stringify(errJSON));
+        } else {
+          const rawText = await response.text();
+          errMsg = `${errMsg} Server replied: ${rawText.slice(0, 150)}`;
+          logNetworkRequest("/api/jira/heartbeat", "POST", response.status, response.statusText, rawText);
+        }
+        throw new Error(errMsg);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed lightweight connection check.");
+      setShowDiagnostics(true);
+      throw err;
+    }
+  };
+
+  // Connect to Real Jira & start session
+  const handleConnect = async (credentials: { jiraUrl: string; email: string; token: string }) => {
+    try {
+      const response = await fetch("/api/jira/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        let errMsg = "Failed to establish connected session.";
+        if (contentType && contentType.includes("application/json")) {
+          const err = await response.json();
+          errMsg = err.error || errMsg;
+          logNetworkRequest("/api/jira/test-connection", "POST", response.status, response.statusText, JSON.stringify(err));
+        } else {
+          const rawText = await response.text();
+          errMsg = `${errMsg} Details: ${rawText.slice(0, 150)}`;
+          logNetworkRequest("/api/jira/test-connection", "POST", response.status, response.statusText, rawText);
+        }
+        setErrorMsg(errMsg);
+        setShowDiagnostics(true);
+        throw new Error(errMsg);
+      }
+
+      if (contentType && contentType.includes("application/json")) {
+        const data = await response.json();
+        logNetworkRequest(
+          "/api/jira/test-connection",
+          "POST",
+          response.status,
+          response.statusText,
+          `Session created successfully! Session ID: ${data.sessionId}, User: ${data.user?.displayName}`
+        );
+        setSessionId(data.sessionId);
+        setJiraUrl(credentials.jiraUrl);
+        setActiveUser(data.user);
+        setIsConnected(true);
+        setIsSandbox(false);
+        setErrorMsg(null);
+
+        // Dynamic fetch projects, statuses etc.
+        await loadJiraMetadata(data.sessionId);
+      } else {
+        const text = await response.text();
+        logNetworkRequest("/api/jira/test-connection", "POST", response.status, response.statusText, `Unexpected non-JSON content: ${text.slice(0, 200)}`);
+        throw new Error("Expected JSON response for Jira authentication session.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to establish connected session.");
+      setShowDiagnostics(true);
+      throw err;
+    }
   };
 
   // Disconnect Real Jira
@@ -328,6 +512,25 @@ export default function App() {
     setJiraStatuses([]);
     setJiraIssueTypes([]);
     setReport(null);
+
+    // Clear session details from localStorage
+    localStorage.removeItem("jira_session_id");
+    localStorage.removeItem("jira_is_connected");
+    localStorage.setItem("jira_is_sandbox", "true");
+    localStorage.removeItem("jira_active_user");
+  };
+
+  const handleClearCache = () => {
+    handleDisconnect();
+    handleResetToDefault();
+    setRecentExports([]);
+    setErrorMsg(null);
+    setFetchingProgress(null);
+    addToast(
+      "Cache Cleared",
+      "Session state wiped and dashboard memory successfully reset.",
+      "success"
+    );
   };
 
   // Generate Report workflow (One-Click JQL and compilation)
@@ -411,14 +614,38 @@ export default function App() {
           body: JSON.stringify({ jql: autoJql }),
         });
 
+        const searchContentType = searchRes.headers.get("content-type");
         if (!searchRes.ok) {
-          const errData = await searchRes.json();
-          throw new Error(errData.error || "Jira REST API search failed.");
+          let errMsg = "Jira REST API search failed.";
+          if (searchContentType && searchContentType.includes("application/json")) {
+            const errData = await searchRes.json();
+            errMsg = errData.error || errMsg;
+            if (errData.details) {
+              errMsg = `${errMsg} Detailed Reason: ${errData.details}`;
+            }
+            logNetworkRequest("/api/jira/search", "POST", searchRes.status, searchRes.statusText, JSON.stringify(errData));
+          } else {
+            const rawText = await searchRes.text();
+            errMsg = `${errMsg} Server replied: ${rawText.slice(0, 150)}`;
+            logNetworkRequest("/api/jira/search", "POST", searchRes.status, searchRes.statusText, rawText);
+          }
+          setErrorMsg(errMsg);
+          setShowDiagnostics(true);
+          throw new Error(errMsg);
         }
 
         setFetchingProgress(55);
-        const searchData = await searchRes.json();
-        const rawList: JiraIssue[] = searchData.issues;
+        let rawList: JiraIssue[] = [];
+        if (searchContentType && searchContentType.includes("application/json")) {
+          const searchData = await searchRes.json();
+          logNetworkRequest("/api/jira/search", "POST", searchRes.status, searchRes.statusText, `Loaded ${searchData.issues?.length || 0} issues successfully.`);
+          rawList = searchData.issues || [];
+        } else {
+          const rawText = await searchRes.text();
+          logNetworkRequest("/api/jira/search", "POST", searchRes.status, searchRes.statusText, `Search failed. Got non-JSON output: ${rawText.slice(0, 200)}`);
+          throw new Error("Invalid response format: Expected JSON search results payload.");
+        }
+
 
         // Map status on retrieved items using the user custom status mapping
         finalIssues = rawList.map((issue) => {
@@ -685,6 +912,69 @@ export default function App() {
     }, 2000);
   };
 
+  const handleTriggerExport = (format: "CSV" | "PDF" | "Google Sheets") => {
+    if (!report) {
+      addToast(
+        "No Report Data",
+        "Please generate a report first before trying to export.",
+        "warning",
+        3000
+      );
+      return;
+    }
+    const filename = getFormattedFilename(fileNamingRule, selectedProjects);
+    if (format === "CSV") {
+      exportToCSV(report.issues, columns, filename);
+      recordExport("CSV", filename + ".csv");
+      addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
+    } else if (format === "PDF") {
+      exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, report.issues, columns);
+      recordExport("PDF", filename + ".pdf");
+      addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
+    } else if (format === "Google Sheets") {
+      triggerGoogleSheetsExport();
+    }
+  };
+
+  const handleSwitchToSandbox = () => {
+    setIsSandbox(true);
+    localStorage.setItem("jira_is_sandbox", "true");
+    setIsConnected(false);
+    localStorage.setItem("jira_is_connected", "false");
+    setErrorMsg(null);
+    setSelectedProjects(["ALPHA", "MOBI"]);
+    setSelectedIssueTypes(["Bug", "Story", "Task"]);
+    
+    addToast(
+      "Switched to Sandbox",
+      "Successfully loaded the Offline Sandbox environment using premium mock issues.",
+      "success",
+      4500
+    );
+
+    // Re-generate report for sandbox instantly
+    setTimeout(() => {
+      handleGenerateReport({
+        selectedProjects: ["ALPHA", "MOBI"],
+        selectedIssueTypes: ["Bug", "Story", "Task"],
+        selectedStatuses: [],
+        createdDateStart: "",
+        createdDateEnd: "",
+        updatedDateStart: "",
+        updatedDateEnd: "",
+        selectedSprint: "",
+        selectedAssignee: "",
+        statusMapping: statusMapping,
+        columns: columns,
+        metrics: metrics,
+        visualizations: visualizations,
+        exportFormat: exportFormat,
+        autoExport: autoExport,
+        fileNamingRule: fileNamingRule,
+      });
+    }, 150);
+  };
+
   return (
     <div className={`min-h-screen ${theme === "light" ? "light-theme bg-white text-slate-950" : "bg-[#090D1A] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(59,130,246,0.15),rgba(255,255,255,0))] text-slate-200"} flex flex-col font-sans antialiased selection:bg-blue-900 selection:text-white`}>
       
@@ -820,10 +1110,25 @@ export default function App() {
               }
             }}
             onConnect={handleConnect}
+            onTestConnection={handleTestConnection}
             onDisconnect={handleDisconnect}
             isConnected={isConnected}
             activeUser={activeUser}
+            onClearCache={handleClearCache}
           />
+
+          {showDiagnostics && (
+            <DiagnosticConsole
+              logs={networkLogs}
+              sessionId={sessionId}
+              jiraUrl={jiraUrl}
+              isConnected={isConnected}
+              activeUser={activeUser}
+              isSandbox={isSandbox}
+              onClose={() => setShowDiagnostics(false)}
+              onClear={() => setNetworkLogs([])}
+            />
+          )}
 
           <PresetsPanel
             currentProjects={selectedProjects}
@@ -906,23 +1211,52 @@ export default function App() {
             fileNamingRule={fileNamingRule}
             onChangeFileNamingRule={setFileNamingRule}
             recentExports={recentExports}
+            onTriggerExport={handleTriggerExport}
           />
         </section>
 
         {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
         <section className={viewMode === "dashboard" ? "lg:col-span-7 space-y-6" : "lg:col-span-12 space-y-6"}>
           {errorMsg && (
-            <div className="p-4 rounded-xl bg-red-950/20 border border-red-900/50 flex gap-3 text-red-300 shadow-sm">
-              <ShieldAlert className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
-              <div>
-                <span className="font-bold text-xs block uppercase tracking-wider">Execution Aborted:</span>
-                <p className="text-xs mt-1 leading-relaxed font-semibold">{errorMsg}</p>
-                <button
-                  onClick={handleGenerateReport}
-                  className="mt-3 text-xs font-bold text-red-400 bg-red-950 border border-red-900/50 hover:bg-red-900/30 py-1 px-2.5 rounded transition-colors"
-                >
-                  Retry Execution
-                </button>
+            <div className="p-5 rounded-xl bg-red-950/15 border border-red-900/40 flex gap-4 text-red-300 shadow-xl relative overflow-hidden backdrop-blur-sm">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-red-600"></div>
+              <ShieldAlert className="w-5.5 h-5.5 shrink-0 text-red-500 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-black text-xs block uppercase tracking-widest text-red-400">Execution Aborted: Connection or Query Issue</span>
+                <p className="text-xs mt-1 leading-relaxed font-semibold text-slate-300">{errorMsg}</p>
+                
+                <div className="mt-3 text-[10.5px] text-slate-400 leading-relaxed font-medium bg-slate-950/40 p-3 rounded-lg border border-red-900/20 space-y-1">
+                  <div className="font-bold text-red-300 flex items-center gap-1.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                    Common Connection Failure Culprits:
+                  </div>
+                  <ul className="list-disc list-inside pl-1 space-y-0.5 text-slate-400">
+                    <li>Using your Atlassian <span className="text-slate-300 font-bold">account password</span> instead of an active <span className="text-slate-300 font-bold">API Token</span>.</li>
+                    <li>Slightly misspelled or casing errors in Atlassian account email address.</li>
+                    <li>Active Atlassian Access IP restrictions or strictly enforced CORS security rules.</li>
+                  </ul>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={() => handleGenerateReport()}
+                    className="text-xs font-bold text-white bg-red-600 hover:bg-red-500 px-3.5 py-1.5 rounded-lg transition-colors shadow-md"
+                  >
+                    Retry Execution
+                  </button>
+                  <button
+                    onClick={handleSwitchToSandbox}
+                    className="text-xs font-bold text-blue-400 bg-blue-950/50 border border-blue-900/30 hover:bg-blue-950/80 px-3.5 py-1.5 rounded-lg transition-colors"
+                  >
+                    Switch to Offline Sandbox Mode
+                  </button>
+                  <button
+                    onClick={() => setShowDiagnostics(true)}
+                    className="text-xs font-bold text-slate-400 bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-lg transition-colors border border-white/5"
+                  >
+                    Open Diagnostic Console
+                  </button>
+                </div>
               </div>
             </div>
           )}

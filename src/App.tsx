@@ -16,6 +16,7 @@ import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, Jira
 
 import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
+import { toPng } from "html-to-image";
 
 // Default columns mapping
 const DEFAULT_COLUMNS: ColumnDefinition[] = [
@@ -228,6 +229,58 @@ export default function App() {
   const [autoExport, setAutoExport] = useState(false);
   const [fileNamingRule, setFileNamingRule] = useState("jira-report-{project}-{date}");
 
+  // Custom states
+  const [summaryTone, setSummaryTone] = useState<"Optimistic" | "Conservative" | "Neutral">("Neutral");
+
+  const [autoRunOnLogin, setAutoRunOnLogin] = useState<boolean>(() => {
+    return localStorage.getItem("jira_auto_run_on_login") === "true";
+  });
+
+  const [repeatHourly, setRepeatHourly] = useState<boolean>(() => {
+    return localStorage.getItem("jira_repeat_hourly") === "true";
+  });
+
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(0);
+
+  const [categoryColors, setCategoryColors] = useState<Record<string, string>>(() => {
+    const cached = localStorage.getItem("jira_category_colors");
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+    return {
+      "To Do": "#64748b",
+      "In Progress": "#3b82f6",
+      "Done": "#10b981",
+      "Blocked": "#ef4444",
+    };
+  });
+
+  const [metricsHistory, setMetricsHistory] = useState<any[]>(() => {
+    const saved = localStorage.getItem("jira_metrics_history");
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleUpdateCategoryColors = (newColors: Record<string, string>) => {
+    setCategoryColors(newColors);
+    localStorage.setItem("jira_category_colors", JSON.stringify(newColors));
+  };
+
+  const handleUpdateAutoRunOnLogin = (val: boolean) => {
+    setAutoRunOnLogin(val);
+    localStorage.setItem("jira_auto_run_on_login", String(val));
+  };
+
+  const handleUpdateRepeatHourly = (val: boolean) => {
+    setRepeatHourly(val);
+    localStorage.setItem("jira_repeat_hourly", String(val));
+  };
+
   // Generated report state
   const [report, setReport] = useState<GeneratedReport | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -243,19 +296,42 @@ export default function App() {
     }
   });
 
-  const recordExport = (format: "CSV" | "PDF" | "Google Sheets", filename: string) => {
+  const recordExport = (format: "CSV" | "PDF" | "Google Sheets", filename: string, snapshotIssues?: JiraIssue[]) => {
     const newExport: RecentExport = {
       id: "exp-" + Date.now() + Math.random().toString(36).substring(2, 6),
       format,
       filename,
       timestamp: new Date().toISOString(),
       projects: selectedProjects.length > 0 ? selectedProjects : ["GLOBAL"],
+      issuesSnapshot: snapshotIssues || report?.issues || [],
     };
     setRecentExports((prev) => {
-      const updated = [newExport, ...prev].slice(0, 5);
+      const updated = [newExport, ...prev].slice(0, 20);
       localStorage.setItem("jira_recent_exports", JSON.stringify(updated));
       return updated;
     });
+  };
+
+  const handleReDownloadExport = (item: RecentExport) => {
+    const dataToExport = item.issuesSnapshot || report?.issues || [];
+    if (dataToExport.length === 0) {
+      addToast(
+        "No Snapshot Data",
+        "This snapshot contains no records.",
+        "warning",
+        3000
+      );
+      return;
+    }
+    if (item.format === "CSV") {
+      exportToCSV(dataToExport, columns, item.filename.replace(/\.csv$/, ""));
+      addToast("Re-download Initiated", `Preparing CSV file: ${item.filename}`, "success", 3000);
+    } else if (item.format === "PDF") {
+      exportToPDF(`Jira Snapshot - ${item.projects.join(", ")}`, dataToExport, columns);
+      addToast("Re-download Initiated", `Rendering PDF report: ${item.filename}`, "success", 3000);
+    } else {
+      triggerGoogleSheetsExport();
+    }
   };
 
   // Load Real Jira Options after successful login
@@ -745,6 +821,7 @@ export default function App() {
         overdueIssues,
         unassignedIssues,
         bugsToStoriesRatio,
+        bugsCount: bugs,
         averageCycleTime,
         sprintVelocity,
         issuesPerAssignee: assigneeMap,
@@ -760,6 +837,7 @@ export default function App() {
           body: JSON.stringify({
             metrics: calculatedMetrics,
             projectScope: selectedProjects,
+            summaryTone: summaryTone,
           }),
         });
         if (summaryRes.ok) {
@@ -801,6 +879,18 @@ export default function App() {
       };
 
       setReport(generatedReport);
+      
+      // Save to metrics history for trend sparkline comparison
+      const newHistoryEntry = {
+        timestamp: new Date().toISOString(),
+        metrics: calculatedMetrics,
+      };
+      setMetricsHistory((prev) => {
+        const updated = [...prev, newHistoryEntry].slice(-12);
+        localStorage.setItem("jira_metrics_history", JSON.stringify(updated));
+        return updated;
+      });
+
       setFetchingProgress(100);
       setTimeout(() => setFetchingProgress(null), 500);
 
@@ -816,11 +906,11 @@ export default function App() {
         const filename = getFormattedFilename(fileNamingRule, selectedProjects);
         if (exportFormat === "CSV") {
           exportToCSV(finalIssues, columns, filename);
-          recordExport("CSV", filename + ".csv");
+          recordExport("CSV", filename + ".csv", finalIssues);
           addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
         } else if (exportFormat === "PDF") {
           exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, finalIssues, columns);
-          recordExport("PDF", filename + ".pdf");
+          recordExport("PDF", filename + ".pdf", finalIssues);
           addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
         } else {
           // Sheets trigger
@@ -849,6 +939,14 @@ export default function App() {
         e.preventDefault();
         handleGenerateReport();
       }
+      if (e.key.toLowerCase() === "e" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const input = document.getElementById("table-search-input");
+        if (input) {
+          input.focus();
+          addToast("Search Focused", "Global search bar has been focused. Press Esc or click away to close.", "info", 2000);
+        }
+      }
     };
     window.addEventListener("keydown", handleGlobalShortcuts);
     return () => {
@@ -872,7 +970,92 @@ export default function App() {
     autoExport,
     fileNamingRule,
     sessionId,
-    isSandbox
+    isSandbox,
+    summaryTone
+  ]);
+
+  // Auto-Run on Login (Triggers a generation shortly after app boots)
+  useEffect(() => {
+    const savedAutoRun = localStorage.getItem("jira_auto_run_on_login") === "true";
+    if (savedAutoRun) {
+      const delay = setTimeout(() => {
+        handleGenerateReport();
+      }, 1000);
+      return () => clearTimeout(delay);
+    }
+  }, []);
+
+  // Repeat Hourly interval trigger
+  useEffect(() => {
+    if (!repeatHourly) return;
+    const interval = setInterval(() => {
+      addToast(
+        "Hourly Automation Trigger",
+        "Repeat Hourly is running. Re-compiling Jira dashboard...",
+        "syncing",
+        3000
+      );
+      handleGenerateReport();
+    }, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [
+    repeatHourly,
+    selectedProjects,
+    selectedIssueTypes,
+    selectedStatuses,
+    createdDateStart,
+    createdDateEnd,
+    updatedDateStart,
+    updatedDateEnd,
+    selectedSprint,
+    selectedAssignee,
+    statusMapping,
+    columns,
+    metrics,
+    visualizations,
+    exportFormat,
+    autoExport,
+    fileNamingRule,
+    sessionId,
+    isSandbox,
+    summaryTone
+  ]);
+
+  // Auto-Refresh interval trigger (5, 15, or 30 minutes)
+  useEffect(() => {
+    if (autoRefreshInterval <= 0) return;
+    const ms = autoRefreshInterval * 60 * 1000;
+    const interval = setInterval(() => {
+      addToast(
+        "Auto-Refresh Triggered",
+        `Retrieving live metrics updates (${autoRefreshInterval} min cycle)...`,
+        "syncing",
+        3000
+      );
+      handleGenerateReport();
+    }, ms);
+    return () => clearInterval(interval);
+  }, [
+    autoRefreshInterval,
+    selectedProjects,
+    selectedIssueTypes,
+    selectedStatuses,
+    createdDateStart,
+    createdDateEnd,
+    updatedDateStart,
+    updatedDateEnd,
+    selectedSprint,
+    selectedAssignee,
+    statusMapping,
+    columns,
+    metrics,
+    visualizations,
+    exportFormat,
+    autoExport,
+    fileNamingRule,
+    sessionId,
+    isSandbox,
+    summaryTone
   ]);
 
   // Google Sheets Workspace Sync
@@ -975,6 +1158,59 @@ export default function App() {
     }, 150);
   };
 
+  const handleExportPng = () => {
+    const node = document.getElementById("dashboard-visuals-container");
+    if (!node) {
+      addToast(
+        "Export Failed",
+        "Dashboard visuals container not found. Make sure a report is generated first.",
+        "error",
+        4000
+      );
+      return;
+    }
+
+    addToast(
+      "Rendering PNG",
+      "Compiling dashboard widgets and chart animations to a high-quality PNG...",
+      "syncing",
+      3000
+    );
+
+    // Give a small delay so toast displays or animation registers, then snapshot
+    setTimeout(() => {
+      toPng(node, {
+        backgroundColor: theme === "light" ? "#ffffff" : "#0b0f19", // Dynamic background matching theme
+        style: {
+          transform: "scale(1)",
+          transformOrigin: "top left",
+        },
+        cacheBust: true,
+      })
+        .then((dataUrl) => {
+          const link = document.createElement("a");
+          link.download = `jira-dashboard-snapshot-${new Date().toISOString().slice(0, 10)}.png`;
+          link.href = dataUrl;
+          link.click();
+          addToast(
+            "PNG Downloaded",
+            "High-resolution dashboard layout PNG successfully generated.",
+            "success",
+            4000
+          );
+        })
+        .catch((err) => {
+          console.error("PNG export error:", err);
+          addToast(
+            "Export Error",
+            "An error occurred while compiling charts to canvas. Please try again.",
+            "error",
+            5000
+          );
+        });
+    }, 400);
+  };
+
   return (
     <div className={`min-h-screen ${theme === "light" ? "light-theme bg-white text-slate-950" : "bg-[#090D1A] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(59,130,246,0.15),rgba(255,255,255,0))] text-slate-200"} flex flex-col font-sans antialiased selection:bg-blue-900 selection:text-white`}>
       
@@ -1049,6 +1285,33 @@ export default function App() {
                 <Eye className="w-3.5 h-3.5" />
                 Report Focus
               </button>
+            </div>
+
+            {/* Auto-Refresh Toggle */}
+            <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1.5 shrink-0 select-none px-2.5">
+              <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1.5">
+                <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${autoRefreshInterval > 0 ? "animate-spin-slow" : ""}`} />
+                Auto-Refresh
+              </span>
+              <select
+                id="header-auto-refresh-select"
+                value={autoRefreshInterval}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setAutoRefreshInterval(val);
+                  if (val > 0) {
+                    addToast("Auto-Refresh Enabled", `Dashboard will auto-refresh every ${val} minutes.`, "info", 3500);
+                  } else {
+                    addToast("Auto-Refresh Disabled", "Automatic dashboard updates paused.", "info", 3000);
+                  }
+                }}
+                className="bg-slate-900 border border-white/10 text-slate-200 text-[10px] font-extrabold rounded-lg px-2 py-1 focus:outline-none cursor-pointer hover:text-white"
+              >
+                <option value={0}>OFF</option>
+                <option value={5}>5 mins</option>
+                <option value={15}>15 mins</option>
+                <option value={30}>30 mins</option>
+              </select>
             </div>
 
             {/* Run button */}
@@ -1186,6 +1449,8 @@ export default function App() {
             detectedStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
             mapping={statusMapping}
             onUpdateMapping={setStatusMapping}
+            categoryColors={categoryColors}
+            onUpdateCategoryColors={handleUpdateCategoryColors}
           />
 
           <ColumnPanel
@@ -1212,6 +1477,19 @@ export default function App() {
             onChangeFileNamingRule={setFileNamingRule}
             recentExports={recentExports}
             onTriggerExport={handleTriggerExport}
+            summaryTone={summaryTone}
+            onChangeSummaryTone={setSummaryTone}
+            autoRunOnLogin={autoRunOnLogin}
+            onChangeAutoRunOnLogin={handleUpdateAutoRunOnLogin}
+            repeatHourly={repeatHourly}
+            onChangeRepeatHourly={handleUpdateRepeatHourly}
+            onReDownloadExport={handleReDownloadExport}
+            onExportPng={handleExportPng}
+            onClearHistory={() => {
+              setRecentExports([]);
+              localStorage.removeItem("jira_recent_exports");
+              addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
+            }}
           />
         </section>
 
@@ -1267,7 +1545,9 @@ export default function App() {
             onExportSheets={triggerGoogleSheetsExport}
             jiraUrl={jiraUrl}
             isSandbox={isSandbox}
-            onRecordExport={recordExport}
+            onRecordExport={(format, filename) => recordExport(format, filename, report?.issues)}
+            categoryColors={categoryColors}
+            metricsHistory={metricsHistory}
           />
         </section>
       </main>

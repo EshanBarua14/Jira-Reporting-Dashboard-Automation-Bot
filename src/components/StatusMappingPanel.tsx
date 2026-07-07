@@ -1,17 +1,42 @@
 import React, { useState } from "react";
-import { GitCompare, Plus, ShieldCheck } from "lucide-react";
+import { GitCompare, Plus, Palette, ShieldCheck } from "lucide-react";
 import { StatusMapping } from "../types";
 
 interface StatusMappingPanelProps {
   detectedStatuses: string[];
   mapping: StatusMapping;
   onUpdateMapping: (newMapping: StatusMapping) => void;
+  categoryColors: {
+    "To Do": string;
+    "In Progress": string;
+    "Done": string;
+    "Blocked": string;
+  };
+  onUpdateCategoryColors: (newColors: {
+    "To Do": string;
+    "In Progress": string;
+    "Done": string;
+    "Blocked": string;
+  }) => void;
 }
+
+const PALETTE_PRESETS = [
+  "#64748b", // Slate
+  "#3b82f6", // Blue
+  "#10b981", // Emerald Green
+  "#ef4444", // Rose Red
+  "#f97316", // Orange
+  "#f59e0b", // Amber
+  "#6366f1", // Indigo
+  "#a855f7", // Purple
+];
 
 export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   detectedStatuses,
   mapping,
   onUpdateMapping,
+  categoryColors,
+  onUpdateCategoryColors,
 }) => {
   const [customStatusName, setCustomStatusName] = useState("");
 
@@ -33,6 +58,13 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       [cleanName]: mapping[cleanName] || "To Do",
     });
     setCustomStatusName("");
+  };
+
+  const handleColorChange = (bucket: "To Do" | "In Progress" | "Done" | "Blocked", color: string) => {
+    onUpdateCategoryColors({
+      ...categoryColors,
+      [bucket]: color,
+    });
   };
 
   const activeStatuses = Array.from(new Set([...detectedStatuses, ...Object.keys(mapping)]));
@@ -59,7 +91,7 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       </p>
 
       {/* Grid of status mapping items */}
-      <div className="border border-white/5 rounded-xl overflow-hidden max-h-[250px] overflow-y-auto bg-slate-950/20 p-2 space-y-1.5 custom-scrollbar">
+      <div className="border border-white/5 rounded-xl overflow-hidden max-h-[200px] overflow-y-auto bg-slate-950/20 p-2 space-y-1.5 custom-scrollbar">
         {activeStatuses.length === 0 ? (
           <div className="text-[11px] text-slate-400 py-6 text-center font-medium">
             No statuses detected. Run a sandbox report or load a project to populate workflow states.
@@ -68,11 +100,13 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
           activeStatuses.map((statusName) => {
             const currentBucket = mapping[statusName] || "To Do";
             
-            // Bucket badge styling
-            let selectColor = "bg-slate-900 border-white/5 text-slate-300 focus:border-blue-500/80";
-            if (currentBucket === "Done") selectColor = "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 focus:border-emerald-500/80";
-            if (currentBucket === "In Progress") selectColor = "bg-blue-500/10 border-blue-500/20 text-blue-400 focus:border-blue-500/80";
-            if (currentBucket === "Blocked") selectColor = "bg-rose-500/10 border-rose-500/20 text-rose-400 focus:border-rose-500/80";
+            // Bucket dynamic color preview style
+            const catColor = categoryColors[currentBucket];
+            const selectStyle = {
+              borderColor: `${catColor}30`,
+              backgroundColor: `${catColor}12`,
+              color: catColor,
+            };
 
             return (
               <div
@@ -86,7 +120,8 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
                 <select
                   value={currentBucket}
                   onChange={(e) => handleMapChange(statusName, e.target.value as any)}
-                  className={`text-xs rounded-lg px-2.5 py-1 border font-bold focus:outline-none cursor-pointer transition-all ${selectColor}`}
+                  style={selectStyle}
+                  className="text-xs rounded-lg px-2.5 py-1 border font-extrabold focus:outline-none cursor-pointer transition-all"
                 >
                   <option value="To Do" className="bg-slate-950 text-slate-200">📂 To Do</option>
                   <option value="In Progress" className="bg-slate-950 text-slate-200">⚡ In Progress</option>
@@ -100,21 +135,83 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       </div>
 
       {/* Add Custom Workflow Status */}
-      <form onSubmit={handleAddCustomStatus} className="flex gap-2 pt-2 border-t border-white/5">
+      <form onSubmit={handleAddCustomStatus} className="flex gap-2 pt-2 border-b border-white/5 pb-3">
         <input
           type="text"
           value={customStatusName}
           onChange={(e) => setCustomStatusName(e.target.value)}
           placeholder="Add unlisted custom status (e.g., In Review)..."
-          className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/80 placeholder-slate-500 font-medium"
+          className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500/80 placeholder-slate-500 font-medium"
         />
         <button
           type="submit"
-          className="bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-4 py-2.5 rounded-lg transition-all flex items-center gap-1 shrink-0 shadow-lg shadow-blue-500/10 active:scale-95 uppercase tracking-wider"
+          className="bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-3.5 py-2 rounded-lg transition-all flex items-center gap-1 shrink-0 shadow-lg shadow-blue-500/10 active:scale-95 uppercase tracking-wider"
         >
           <Plus className="w-4 h-4" /> Add
         </button>
       </form>
+
+      {/* --- WORKFLOW CATEGORY COLORS CONFIG --- */}
+      <div className="space-y-3 pt-1">
+        <div className="flex items-center gap-1.5 text-slate-300">
+          <Palette className="w-4 h-4 text-indigo-400" />
+          <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Category Style Themes</h3>
+        </div>
+        <p className="text-[10px] text-slate-500 font-medium">Assign distinct colors to mapped statuses to colorize dashboard cards and issue list table records.</p>
+        
+        <div className="grid grid-cols-2 gap-2.5">
+          {(["To Do", "In Progress", "Done", "Blocked"] as const).map((bucket) => {
+            const currentColor = categoryColors[bucket];
+            
+            return (
+              <div 
+                key={bucket} 
+                className="p-2 rounded-xl bg-slate-950/40 border border-white/5 flex flex-col gap-2 shadow-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10.5px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span 
+                      className="w-2 h-2 rounded-full inline-block shadow-[0_0_6px_currentColor]" 
+                      style={{ backgroundColor: currentColor, color: currentColor }}
+                    />
+                    {bucket}
+                  </span>
+                  
+                  {/* Custom Color Input Colorpicker */}
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={(e) => handleColorChange(bucket, e.target.value)}
+                    className="w-5 h-5 rounded cursor-pointer border border-white/10 p-0 bg-transparent shrink-0 outline-none"
+                    title={`Custom color for ${bucket}`}
+                  />
+                </div>
+
+                {/* Preset circles palette */}
+                <div className="flex flex-wrap gap-1">
+                  {PALETTE_PRESETS.map((col) => {
+                    const isCurrent = currentColor === col;
+                    return (
+                      <button
+                        type="button"
+                        key={col}
+                        onClick={() => handleColorChange(bucket, col)}
+                        className={`w-3.5 h-3.5 rounded-full border transition-all ${
+                          isCurrent 
+                            ? "border-white ring-1 ring-indigo-500/50 scale-110" 
+                            : "border-transparent hover:scale-105"
+                        }`}
+                        style={{ backgroundColor: col }}
+                        title={`Select ${col}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };

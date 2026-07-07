@@ -484,10 +484,76 @@ app.post("/api/jira/search", requireJiraSession, async (req, res) => {
   }
 });
 
+// 6. Bulk Issue Transitions / Status Updates
+app.post("/api/jira/bulk-transition", requireJiraSession, async (req, res) => {
+  const { jiraUrl, email, token, apiVersion } = (req as any).jiraSession;
+  try {
+    const { issueKeys, targetStatus } = req.body;
+    if (!issueKeys || !Array.isArray(issueKeys) || issueKeys.length === 0 || !targetStatus) {
+      return res.status(400).json({ error: "Missing issueKeys or targetStatus." });
+    }
+
+    const version = apiVersion || "3";
+    const auth = getAuthHeader(email, token);
+    const results: Record<string, { success: boolean; error?: string }> = {};
+
+    for (const key of issueKeys) {
+      try {
+        // 1. Get transitions for the issue
+        const transResponse = await fetch(`${jiraUrl}/rest/api/${version}/issue/${key}/transitions`, {
+          headers: { Authorization: auth, Accept: "application/json" }
+        });
+
+        if (!transResponse.ok) {
+          throw new Error(`Failed to fetch transitions: ${transResponse.status}`);
+        }
+
+        const transData = await transResponse.json();
+        const transitions = transData.transitions || [];
+
+        // Find transition matching the targetStatus (case-insensitive check)
+        const matchedTransition = transitions.find((t: any) => 
+          t.name?.toLowerCase() === targetStatus.toLowerCase() ||
+          t.to?.name?.toLowerCase() === targetStatus.toLowerCase()
+        );
+
+        if (!matchedTransition) {
+          throw new Error(`No available transition to status '${targetStatus}' found.`);
+        }
+
+        // 2. Perform transition
+        const doTransResponse = await fetch(`${jiraUrl}/rest/api/${version}/issue/${key}/transitions`, {
+          method: "POST",
+          headers: {
+            Authorization: auth,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            transition: { id: matchedTransition.id }
+          })
+        });
+
+        if (!doTransResponse.ok) {
+          const errMsg = await doTransResponse.text();
+          throw new Error(`Jira status update failed: ${errMsg.slice(0, 150)}`);
+        }
+
+        results[key] = { success: true };
+      } catch (err: any) {
+        results[key] = { success: false, error: err.message };
+      }
+    }
+
+    return res.json({ success: true, results });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Bulk status transitions failed.", details: error.message });
+  }
+});
+
 // --- ZERO-DEPENDENCY INTELLIGENT EXECUTIVE SUMMARIES ---
 app.post("/api/gemini/summarize", async (req, res) => {
   try {
-    const { metrics, projectScope } = req.body;
+    const { metrics, projectScope, summaryTone } = req.body;
 
     const total = metrics.totalIssues || 0;
     const completion = metrics.completionPercentage || 0;
@@ -497,8 +563,75 @@ app.post("/api/gemini/summarize", async (req, res) => {
     const velocity = metrics.sprintVelocity || 0;
     const cycleTime = metrics.averageCycleTime || 0;
     const projectsStr = (projectScope && projectScope.length > 0) ? projectScope.join(", ") : "active repositories";
+    const tone = summaryTone || "Neutral";
 
-    // 1. Dynamic Summary Paragraph (Under 100 words)
+    // Try real Gemini API first if apiKey exists
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const prompt = `You are an expert Project Management Officer (PMO) reporting system.
+Perform an executive summary analysis for the project scope covering: "${projectsStr}".
+
+Current Metrics:
+- Total Issues: ${total}
+- Completed (Done): ${metrics.doneCount || 0}
+- In Progress: ${metrics.inProgressCount || 0}
+- To Do: ${metrics.todoCount || 0}
+- Blocked: ${blocked}
+- Completion Percentage: ${completion}%
+- Overdue Issues: ${overdue}
+- Unassigned Issues: ${unassigned}
+- Sprint Velocity: ${velocity} Story Points
+- Average Cycle Time: ${cycleTime} Days
+
+Your tone must be strictly: ${tone}.
+- If 'Optimistic': emphasize team velocity, successful resolutions, positive cadence, and treat risks as exciting learning/improvement opportunities.
+- If 'Conservative': emphasize risk management, overdue tasks, resource bottlenecks, unassigned work, and treat success cautiously.
+- If 'Neutral': provide a balanced, highly objective PMO reporting format.
+
+Generate a JSON object containing:
+1. summary (string, under 100 words, summarizing project status in the selected tone)
+2. keyInsights (array of exactly 3 strings, key data observations in the selected tone)
+3. bottlenecks (array of exactly 2 strings, critical team blockers or resource constraints in the selected tone)
+4. recommendations (array of exactly 3 strings, concrete actionable next steps in the selected tone)`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                summary: { type: Type.STRING },
+                keyInsights: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                bottlenecks: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                recommendations: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                }
+              },
+              required: ["summary", "keyInsights", "bottlenecks", "recommendations"]
+            }
+          }
+        });
+
+        const resultText = response.text;
+        if (resultText) {
+          const parsed = JSON.parse(resultText);
+          return res.json({ aiSummary: parsed });
+        }
+      } catch (apiErr) {
+        console.error("Gemini API call failed, falling back to local analyzer:", apiErr);
+      }
+    }
+
+    // 1. Dynamic Summary Paragraph (Under 100 words) - Fallback
     let summaryText = "";
     if (total === 0) {
       summaryText = `The report scope for ${projectsStr} currently contains no active tickets matching the selected criteria. Please adjust your filters or status mapping parameters to compile project data.`;
@@ -511,10 +644,16 @@ app.post("/api/gemini/summarize", async (req, res) => {
       if (cycleTime > 0 && cycleTime <= 4) speedRating = "exceptional hyper-velocity pace";
       else if (cycleTime > 8) speedRating = "extended delivery cycles";
 
-      summaryText = `Project scope is operating within the ${stage} with a ${completion}% complete-to-commit ratio across ${projectsStr}. The team is exhibiting an ${speedRating} with an average cycle time of ${cycleTime} days per task. Attention is advised on resolving ${blocked} blocked tracks and ${overdue} overdue items to maintain the committed delivery timeline.`;
+      if (tone === "Optimistic") {
+        summaryText = `The team is making incredible headway across ${projectsStr}! We are operating in the ${stage} with a brilliant ${completion}% completion rate. Average cycle time is at a highly competitive ${cycleTime} days. Let's keep this spectacular momentum up as we tackle the remaining ${blocked} blockers and ${overdue} overdue items!`;
+      } else if (tone === "Conservative") {
+        summaryText = `Warning: Project delivery for ${projectsStr} is currently tracking in the ${stage} with only ${completion}% of issues resolved. There are significant concerns with ${blocked} active blocks and ${overdue} overdue tickets that threaten scheduled releases. Average delivery time stands at ${cycleTime} days. Caution is highly advised.`;
+      } else {
+        summaryText = `Project scope is operating within the ${stage} with a ${completion}% complete-to-commit ratio across ${projectsStr}. The team is exhibiting an ${speedRating} with an average cycle time of ${cycleTime} days per task. Attention is advised on resolving ${blocked} blocked tracks and ${overdue} overdue items to maintain the committed delivery timeline.`;
+      }
     }
 
-    // 2. Dynamic Insights (EXACTLY 3)
+    // 2. Dynamic Insights (EXACTLY 3) - Fallback
     const keyInsights = [
       `Completed delivery velocity stands at ${velocity} story points, proving a robust engineering cadence.`,
       total > 0 
@@ -523,7 +662,7 @@ app.post("/api/gemini/summarize", async (req, res) => {
       `Average cycle time of ${cycleTime} days indicates stable pull-request review and deployment throughput.`
     ];
 
-    // 3. Dynamic Bottlenecks (EXACTLY 2)
+    // 3. Dynamic Bottlenecks (EXACTLY 2) - Fallback
     const bottlenecks = [
       overdue > 0 
         ? `${overdue} committed deliverables have missed scheduled deadlines, creating downstream sprint risk.` 
@@ -535,7 +674,7 @@ app.post("/api/gemini/summarize", async (req, res) => {
           : `WIP allocation is solid, with 100% of high-priority tickets actively owned by a team member.`
     ];
 
-    // 4. Dynamic Recommendations (EXACTLY 3)
+    // 4. Dynamic Recommendations (EXACTLY 3) - Fallback
     const recommendations = [
       unassigned > 0 
         ? `Triage the ${unassigned} unassigned issues immediately in tomorrow's standup to restore clean resource ownership.` 

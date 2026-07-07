@@ -102,6 +102,7 @@ export interface RecentExport {
   filename: string;
   timestamp: string;
   projects: string[];
+  issuesSnapshot?: JiraIssue[];
 }
 
 export interface NetworkLog {

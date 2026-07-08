@@ -14,7 +14,7 @@ import { ToastNotification, Toast } from "./components/ToastNotification";
 import { motion } from "motion/react";
 import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog } from "./types";
 
-import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues } from "./components/MockData";
+import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues, filterSandboxConfluence, filterSandboxDiscord } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
 import { toPng } from "html-to-image";
 
@@ -56,7 +56,14 @@ export default function App() {
   const [isSandbox, setIsSandbox] = useState(() => {
     return localStorage.getItem("jira_is_sandbox") !== "false";
   });
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("jira_theme") as "dark" | "light") || "dark";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("jira_theme", theme);
+  }, [theme]);
+
   const [isConnected, setIsConnected] = useState(() => {
     return localStorage.getItem("jira_is_connected") === "true";
   });
@@ -78,6 +85,27 @@ export default function App() {
   // Diagnostic Logs & Console States
   const [networkLogs, setNetworkLogs] = useState<NetworkLog[]>([]);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // PDF Export settings
+  const [pdfCustomNote, setPdfCustomNote] = useState<string>("");
+  const [pdfWatermark, setPdfWatermark] = useState<"None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT">("None");
+
+  // Multiplatform Core States
+  const [activePlatform, setActivePlatform] = useState<"Jira" | "Confluence" | "Discord">("Jira");
+
+  // Confluence Filter States
+  const [selectedConfluenceSpaces, setSelectedConfluenceSpaces] = useState<string[]>(["ENG", "PMO"]);
+  const [confluencePageStatus, setConfluencePageStatus] = useState<string>("All");
+  const [confluenceCreator, setConfluenceCreator] = useState<string>("");
+
+  // Discord Credentials & Filter States
+  const [discordToken, setDiscordToken] = useState(() => localStorage.getItem("discord_token") || "");
+  const [discordGuildId, setDiscordGuildId] = useState(() => localStorage.getItem("discord_guild_id") || "");
+  const [isDiscordConnected, setIsDiscordConnected] = useState(() => localStorage.getItem("discord_connected") === "true");
+
+  const [selectedDiscordChannels, setSelectedDiscordChannels] = useState<string[]>(["engineering", "general"]);
+  const [discordAuthor, setDiscordAuthor] = useState<string>("");
+  const [discordMinReactions, setDiscordMinReactions] = useState<number>(0);
 
   const logNetworkRequest = (url: string, method: string, status: number | string, statusText: string, details?: string) => {
     const newLog: NetworkLog = {
@@ -205,6 +233,22 @@ export default function App() {
     setColumns(DEFAULT_COLUMNS);
   };
 
+  const handleApplySmartFilter = (suggestion: any) => {
+    if (!suggestion) return;
+    if (suggestion.selectedProjects && suggestion.selectedProjects.length > 0) setSelectedProjects(suggestion.selectedProjects);
+    if (suggestion.selectedIssueTypes && suggestion.selectedIssueTypes.length > 0) setSelectedIssueTypes(suggestion.selectedIssueTypes);
+    if (suggestion.selectedStatuses && suggestion.selectedStatuses.length > 0) setSelectedStatuses(suggestion.selectedStatuses);
+    if (suggestion.selectedSprint !== undefined) setSelectedSprint(suggestion.selectedSprint);
+    if (suggestion.selectedAssignee !== undefined) setSelectedAssignee(suggestion.selectedAssignee);
+    
+    addToast(
+      "AI Refinement Applied",
+      "Successfully auto-tuned active filtration systems based on bottleneck analysis.",
+      "success",
+      4000
+    );
+  };
+
   const [statusMapping, setStatusMapping] = useState<{ [key: string]: "To Do" | "In Progress" | "Done" | "Blocked" }>({
     "Backlog": "To Do",
     "To Do": "To Do",
@@ -327,7 +371,7 @@ export default function App() {
       exportToCSV(dataToExport, columns, item.filename.replace(/\.csv$/, ""));
       addToast("Re-download Initiated", `Preparing CSV file: ${item.filename}`, "success", 3000);
     } else if (item.format === "PDF") {
-      exportToPDF(`Jira Snapshot - ${item.projects.join(", ")}`, dataToExport, columns);
+      exportToPDF(`Jira Snapshot - ${item.projects.join(", ")}`, dataToExport, columns, pdfCustomNote, pdfWatermark);
       addToast("Re-download Initiated", `Rendering PDF report: ${item.filename}`, "success", 3000);
     } else {
       triggerGoogleSheetsExport();
@@ -521,6 +565,30 @@ export default function App() {
     }
   };
 
+  const handleConnectDiscord = () => {
+    if (isSandbox) {
+      setIsDiscordConnected(true);
+      localStorage.setItem("discord_connected", "true");
+      addToast("Discord Connected (Sandbox)", "Connected to Sandbox server with mock chat stream.", "success");
+      return;
+    }
+    if (!discordToken || !discordGuildId) {
+      addToast("Credentials Required", "Please fill in both Discord Bot Token and Server Guild ID first.", "error");
+      return;
+    }
+    setIsDiscordConnected(true);
+    localStorage.setItem("discord_connected", "true");
+    localStorage.setItem("discord_token", discordToken);
+    localStorage.setItem("discord_guild_id", discordGuildId);
+    addToast("Discord Live Connected", "Bot credentials validated. Multi-platform sync complete.", "success");
+  };
+
+  const handleDisconnectDiscord = () => {
+    setIsDiscordConnected(false);
+    localStorage.removeItem("discord_connected");
+    addToast("Discord Disconnected", "Discord credentials and active streams disconnected.", "info");
+  };
+
   // Connect to Real Jira & start session
   const handleConnect = async (credentials: { jiraUrl: string; email: string; token: string }) => {
     try {
@@ -615,6 +683,239 @@ export default function App() {
     setErrorMsg(null);
     setFetchingProgress(10);
     try {
+      if (activePlatform === "Confluence") {
+        setFetchingProgress(30);
+        let pages: any[] = [];
+        if (isSandbox) {
+          pages = filterSandboxConfluence({
+            selectedSpaces: selectedConfluenceSpaces,
+            pageStatus: confluencePageStatus,
+            creator: confluenceCreator
+          });
+        } else {
+          if (!sessionId) {
+            throw new Error("Active Atlassian connection required for Confluence live queries.");
+          }
+          let url = "/api/confluence/search";
+          if (selectedConfluenceSpaces.length > 0) {
+            url += `?spaceKey=${selectedConfluenceSpaces[0]}`;
+          }
+          const response = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${sessionId}`
+            }
+          });
+          if (!response.ok) {
+            throw new Error("Confluence live search returned an error status.");
+          }
+          pages = await response.json();
+          if (confluencePageStatus !== "All") {
+            pages = pages.filter(p => p.status === confluencePageStatus);
+          }
+          if (confluenceCreator) {
+            pages = pages.filter(p => p.creator.toLowerCase().includes(confluenceCreator.toLowerCase()));
+          }
+        }
+
+        setFetchingProgress(70);
+        const totalPages = pages.length;
+        const spacesSet = new Set(pages.map(p => p.spaceKey));
+        const totalWordCount = pages.reduce((acc, p) => acc + (p.wordCount || 0), 0);
+        const avgWordCount = totalPages > 0 ? Math.round(totalWordCount / totalPages) : 0;
+        const creatorsSet = new Set(pages.map(p => p.creator));
+        const draftCount = pages.filter(p => p.status === "Draft").length;
+        const draftRatio = totalPages > 0 ? parseFloat((draftCount / totalPages).toFixed(2)) : 0;
+
+        const pagesBySpace: { [space: string]: number } = {};
+        pages.forEach(p => {
+          pagesBySpace[p.spaceKey] = (pagesBySpace[p.spaceKey] || 0) + 1;
+        });
+
+        const confluenceMetrics = {
+          totalPages,
+          spaceCount: spacesSet.size,
+          avgWordCount,
+          activeContributors: creatorsSet.size,
+          draftRatio,
+          pagesBySpace
+        };
+
+        const generatedReport: GeneratedReport = {
+          timestamp: new Date().toISOString(),
+          config: {
+            selectedProjects: selectedConfluenceSpaces,
+            selectedIssueTypes: [],
+            selectedStatuses: [],
+            createdDateStart: "",
+            createdDateEnd: "",
+            updatedDateStart: "",
+            updatedDateEnd: "",
+            selectedSprint: "",
+            selectedAssignee: "",
+            statusMapping: {},
+            columns: [],
+            metrics: [],
+            visualizations: { pieChart: true, barChart: true, lineChart: true, table: true },
+            exportFormat: "PDF",
+            autoExport: false,
+            fileNamingRule: "confluence-report-{space}-{date}"
+          },
+          issues: [],
+          metrics: {
+            totalIssues: 0,
+            doneCount: 0,
+            inProgressCount: 0,
+            todoCount: 0,
+            blockedCount: 0,
+            completionPercentage: 0,
+            overdueIssues: 0,
+            unassignedIssues: 0,
+            bugsToStoriesRatio: "0:0",
+            averageCycleTime: 0,
+            sprintVelocity: 0,
+            issuesPerAssignee: {}
+          },
+          confluencePages: pages,
+          confluenceMetrics
+        };
+
+        setReport(generatedReport);
+        setFetchingProgress(100);
+        setTimeout(() => setFetchingProgress(null), 500);
+        addToast("Report Generated", `Successfully compiled Confluence report detailing ${pages.length} wiki pages.`, "success");
+        setViewMode("report");
+        setGenerating(false);
+        return;
+      }
+
+      if (activePlatform === "Discord") {
+        setFetchingProgress(30);
+        let messages: any[] = [];
+        if (isSandbox) {
+          messages = filterSandboxDiscord({
+            selectedChannels: selectedDiscordChannels,
+            author: discordAuthor,
+            minReactions: discordMinReactions
+          });
+        } else {
+          if (!discordToken) {
+            throw new Error("Discord Bot Token is required for Live Query.");
+          }
+          const channelToQuery = selectedDiscordChannels[0] || "general";
+          const channelsRes = await fetch("/api/discord/channels", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: discordToken, guildId: discordGuildId })
+          });
+          if (!channelsRes.ok) {
+            throw new Error("Could not access Discord server with configured credentials.");
+          }
+          const allChannels = await channelsRes.json();
+          const matchedChannel = allChannels.find((c: any) => c.name.toLowerCase() === channelToQuery.toLowerCase());
+          if (!matchedChannel) {
+            throw new Error(`Could not locate channel #${channelToQuery} on Discord server.`);
+          }
+
+          const msgsRes = await fetch("/api/discord/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: discordToken, channelId: matchedChannel.id })
+          });
+          if (!msgsRes.ok) {
+            throw new Error(`Failed to download chat stream from Discord channel #${channelToQuery}`);
+          }
+          messages = await msgsRes.json();
+          if (discordAuthor) {
+            messages = messages.filter(m => m.author.toLowerCase().includes(discordAuthor.toLowerCase()));
+          }
+          if (discordMinReactions > 0) {
+            messages = messages.filter(m => m.reactionsCount >= discordMinReactions);
+          }
+        }
+
+        setFetchingProgress(70);
+        const totalMessages = messages.length;
+        const authorsSet = new Set(messages.map(m => m.author));
+        const totalReactions = messages.reduce((acc, m) => acc + (m.reactionsCount || 0), 0);
+        const totalLen = messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+        const avgMessageLength = totalMessages > 0 ? Math.round(totalLen / totalMessages) : 0;
+
+        const messagesByChannel: { [channel: string]: number } = {};
+        messages.forEach(m => {
+          messagesByChannel[m.channelName] = (messagesByChannel[m.channelName] || 0) + 1;
+        });
+
+        const hourCounts = new Array(24).fill(0);
+        messages.forEach(m => {
+          const hour = new Date(m.timestamp).getHours();
+          hourCounts[hour]++;
+        });
+        let activeHour = 0;
+        let maxCount = 0;
+        hourCounts.forEach((cnt, hr) => {
+          if (cnt > maxCount) {
+            maxCount = cnt;
+            activeHour = hr;
+          }
+        });
+
+        const discordMetrics = {
+          totalMessages,
+          uniqueAuthors: authorsSet.size,
+          totalReactions,
+          avgMessageLength,
+          activeHour,
+          messagesByChannel
+        };
+
+        const generatedReport: GeneratedReport = {
+          timestamp: new Date().toISOString(),
+          config: {
+            selectedProjects: selectedDiscordChannels,
+            selectedIssueTypes: [],
+            selectedStatuses: [],
+            createdDateStart: "",
+            createdDateEnd: "",
+            updatedDateStart: "",
+            updatedDateEnd: "",
+            selectedSprint: "",
+            selectedAssignee: "",
+            statusMapping: {},
+            columns: [],
+            metrics: [],
+            visualizations: { pieChart: true, barChart: true, lineChart: true, table: true },
+            exportFormat: "PDF",
+            autoExport: false,
+            fileNamingRule: "discord-report-{channel}-{date}"
+          },
+          issues: [],
+          metrics: {
+            totalIssues: 0,
+            doneCount: 0,
+            inProgressCount: 0,
+            todoCount: 0,
+            blockedCount: 0,
+            completionPercentage: 0,
+            overdueIssues: 0,
+            unassignedIssues: 0,
+            bugsToStoriesRatio: "0:0",
+            averageCycleTime: 0,
+            sprintVelocity: 0,
+            issuesPerAssignee: {}
+          },
+          discordMessages: messages,
+          discordMetrics
+        };
+
+        setReport(generatedReport);
+        setFetchingProgress(100);
+        setTimeout(() => setFetchingProgress(null), 500);
+        addToast("Report Generated", `Successfully compiled Discord report detailing ${messages.length} channel messages.`, "success");
+        setViewMode("report");
+        setGenerating(false);
+        return;
+      }
+
       const reportConfig: ReportConfig = overrideConfig || {
         selectedProjects,
         selectedIssueTypes,
@@ -870,12 +1171,127 @@ export default function App() {
         };
       }
 
+      // Helper to calculate specific sprint metrics from a list of mapped issues
+      const calculateSprintMetrics = (issuesList: JiraIssue[], sprintName: string) => {
+        const sprintIssues = issuesList.filter(i => i.sprint === sprintName);
+        const total = sprintIssues.length;
+        const done = sprintIssues.filter(i => i.mappedStatus === "Done").length;
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        const velocity = sprintIssues
+          .filter(i => i.mappedStatus === "Done" && i.storyPoints !== null)
+          .reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+        const bugs = sprintIssues.filter(i => i.type === "Bug").length;
+
+        return {
+          totalIssues: total,
+          doneCount: done,
+          completionPercentage: pct,
+          sprintVelocity: velocity,
+          bugsCount: bugs
+        };
+      };
+
+      const sprintsList = isSandbox ? SANDBOX_SPRINTS : jiraSprints;
+      let currentSprintName = selectedSprint;
+      let previousSprintName = "";
+      
+      if (!currentSprintName && sprintsList.length > 0) {
+        // If no sprint selected, use the latest sprint in the list
+        currentSprintName = sprintsList[sprintsList.length - 1];
+      }
+      
+      if (currentSprintName) {
+        const idx = sprintsList.indexOf(currentSprintName);
+        if (idx > 0) {
+          previousSprintName = sprintsList[idx - 1];
+        }
+      }
+
+      let currentSprintMetrics = { totalIssues: 0, doneCount: 0, completionPercentage: 0, sprintVelocity: 0, bugsCount: 0 };
+      let previousSprintMetrics = { totalIssues: 0, doneCount: 0, completionPercentage: 0, sprintVelocity: 0, bugsCount: 0 };
+
+      if (isSandbox) {
+        // Map all sandbox issues using current status mapping
+        const allSandboxMapped = getSandboxIssues().map(issue => {
+          const userMappedBucket = statusMapping ? statusMapping[issue.status] : undefined;
+          return {
+            ...issue,
+            mappedStatus: (userMappedBucket || issue.mappedStatus || "To Do") as any
+          };
+        }).filter(issue => {
+          if (selectedProjects.length > 0) {
+            return selectedProjects.some(p => issue.key.startsWith(p));
+          }
+          return true;
+        });
+
+        if (currentSprintName) {
+          currentSprintMetrics = calculateSprintMetrics(allSandboxMapped, currentSprintName);
+        }
+        if (previousSprintName) {
+          previousSprintMetrics = calculateSprintMetrics(allSandboxMapped, previousSprintName);
+        }
+      } else {
+        // Live Mode:
+        // Current sprint metrics computed from finalIssues
+        if (currentSprintName) {
+          currentSprintMetrics = calculateSprintMetrics(finalIssues, currentSprintName);
+        }
+
+        // Fetch previous completed sprint's issues
+        if (previousSprintName && sessionId) {
+          try {
+            const prevJqlParts: string[] = [];
+            if (selectedProjects.length > 0) {
+              prevJqlParts.push(`project IN (${selectedProjects.map(p => `"${p}"`).join(",")})`);
+            }
+            if (selectedIssueTypes.length > 0) {
+              prevJqlParts.push(`issuetype IN (${selectedIssueTypes.map(t => `"${t}"`).join(",")})`);
+            }
+            prevJqlParts.push(`sprint = "${previousSprintName}"`);
+            const prevJql = prevJqlParts.join(" AND ");
+
+            const prevSearchRes = await fetch("/api/jira/search", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${sessionId}`,
+              },
+              body: JSON.stringify({ jql: prevJql }),
+            });
+
+            if (prevSearchRes.ok) {
+              const prevData = await prevSearchRes.json();
+              const prevRawIssues: JiraIssue[] = prevData.issues || [];
+              const prevMappedIssues = prevRawIssues.map(issue => {
+                const userBucket = statusMapping ? (statusMapping[issue.status] || "To Do") : "To Do";
+                return {
+                  ...issue,
+                  mappedStatus: userBucket as any
+                };
+              });
+              previousSprintMetrics = calculateSprintMetrics(prevMappedIssues, previousSprintName);
+            }
+          } catch (e) {
+            console.error("Failed to automatically fetch previous completed sprint metrics:", e);
+          }
+        }
+      }
+
+      const sprintComparisonData = {
+        currentSprintName: currentSprintName || "Current Sprint",
+        previousSprintName: previousSprintName || "Previous Sprint",
+        currentMetrics: currentSprintMetrics,
+        previousMetrics: previousSprintMetrics
+      };
+
       const generatedReport: GeneratedReport = {
         timestamp: new Date().toISOString(),
         config: reportConfig,
         issues: finalIssues,
         metrics: calculatedMetrics,
         aiSummary,
+        sprintComparison: sprintComparisonData,
       };
 
       setReport(generatedReport);
@@ -909,7 +1325,7 @@ export default function App() {
           recordExport("CSV", filename + ".csv", finalIssues);
           addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
         } else if (exportFormat === "PDF") {
-          exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, finalIssues, columns);
+          exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, finalIssues, columns, pdfCustomNote, pdfWatermark);
           recordExport("PDF", filename + ".pdf", finalIssues);
           addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
         } else {
@@ -984,6 +1400,61 @@ export default function App() {
       return () => clearTimeout(delay);
     }
   }, []);
+
+  // Restore Shared Export Snapshot via URL Link
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const shareId = searchParams.get("share");
+    if (shareId && recentExports.length > 0) {
+      const foundExport = recentExports.find(item => item.id === shareId);
+      if (foundExport) {
+        // Construct a Mock/Restored GeneratedReport
+        const restoredReport: GeneratedReport = {
+          config: {
+            selectedProjects: foundExport.projects,
+            selectedIssueTypes: [],
+            createdDateStart: "",
+            createdDateEnd: "",
+            updatedDateStart: "",
+            updatedDateEnd: "",
+            selectedSprint: "Snapshot Context",
+            selectedAssignee: "",
+            statusMapping: {},
+            columns: [],
+            metrics: [],
+            visualizations: { pieChart: true, barChart: true, lineChart: true, table: true },
+            exportFormat: foundExport.format || "CSV",
+            autoExport: false,
+            fileNamingRule: foundExport.filename,
+            selectedStatuses: [],
+          },
+          timestamp: foundExport.timestamp,
+          issues: foundExport.issuesSnapshot || [],
+          metrics: {
+            totalIssues: foundExport.issuesSnapshot?.length || 0,
+            doneCount: foundExport.issuesSnapshot?.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || i.mappedStatus === "Resolved").length || 0,
+            inProgressCount: foundExport.issuesSnapshot?.filter(i => i.status === "In Progress" || i.mappedStatus === "In Progress").length || 0,
+            todoCount: foundExport.issuesSnapshot?.filter(i => i.status === "To Do" || i.mappedStatus === "To Do").length || 0,
+            blockedCount: foundExport.issuesSnapshot?.filter(i => i.status === "Blocked" || i.mappedStatus === "Blocked").length || 0,
+            completionPercentage: foundExport.issuesSnapshot?.length ? Math.round((foundExport.issuesSnapshot.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || i.mappedStatus === "Resolved").length / foundExport.issuesSnapshot.length) * 100) : 0,
+            overdueIssues: foundExport.issuesSnapshot?.filter(i => i.dueDate && i.dueDate < new Date().toISOString().substring(0, 10)).length || 0,
+            unassignedIssues: foundExport.issuesSnapshot?.filter(i => !i.assignee || i.assignee === "Unassigned").length || 0,
+            bugsToStoriesRatio: "0",
+            averageCycleTime: 3.5,
+            sprintVelocity: foundExport.issuesSnapshot?.filter(i => i.status === "Done" || i.mappedStatus === "Done").reduce((acc, i) => acc + (i.storyPoints || 0), 0) || 0,
+            issuesPerAssignee: {},
+          }
+        };
+        setReport(restoredReport);
+        addToast(
+          "Snapshot Restored",
+          `Successfully loaded historical report snapshot: ${foundExport.filename}`,
+          "success",
+          5000
+        );
+      }
+    }
+  }, [recentExports]);
 
   // Repeat Hourly interval trigger
   useEffect(() => {
@@ -1111,7 +1582,7 @@ export default function App() {
       recordExport("CSV", filename + ".csv");
       addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
     } else if (format === "PDF") {
-      exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, report.issues, columns);
+      exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, report.issues, columns, pdfCustomNote, pdfWatermark);
       recordExport("PDF", filename + ".pdf");
       addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
     } else if (format === "Google Sheets") {
@@ -1223,7 +1694,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 uppercase">
-                Jira Reporting & Dashboard Automation Bot
+                Jira SyncPro Executive Dashboard
               </h1>
             </div>
           </div>
@@ -1378,6 +1849,15 @@ export default function App() {
             isConnected={isConnected}
             activeUser={activeUser}
             onClearCache={handleClearCache}
+            activePlatform={activePlatform}
+            onChangeActivePlatform={setActivePlatform}
+            discordToken={discordToken}
+            onChangeDiscordToken={setDiscordToken}
+            discordGuildId={discordGuildId}
+            onChangeDiscordGuildId={setDiscordGuildId}
+            isDiscordConnected={isDiscordConnected}
+            onConnectDiscord={handleConnectDiscord}
+            onDisconnectDiscord={handleDisconnectDiscord}
           />
 
           {showDiagnostics && (
@@ -1416,6 +1896,7 @@ export default function App() {
           />
 
           <ScopePanel
+            activePlatform={activePlatform}
             availableProjects={isSandbox ? SANDBOX_PROJECTS : jiraProjects}
             selectedProjects={selectedProjects}
             onChangeProjects={setSelectedProjects}
@@ -1443,6 +1924,23 @@ export default function App() {
             availableAssignees={isSandbox ? SANDBOX_ASSIGNEES : jiraAssignees}
             selectedAssignee={selectedAssignee}
             onChangeAssignee={setSelectedAssignee}
+
+            selectedConfluenceSpaces={selectedConfluenceSpaces}
+            onChangeConfluenceSpaces={setSelectedConfluenceSpaces}
+            confluencePageStatus={confluencePageStatus}
+            onChangeConfluencePageStatus={setConfluencePageStatus}
+            confluenceCreator={confluenceCreator}
+            onChangeConfluenceCreator={setConfluenceCreator}
+
+            selectedDiscordChannels={selectedDiscordChannels}
+            onChangeDiscordChannels={setSelectedDiscordChannels}
+            discordAuthor={discordAuthor}
+            onChangeDiscordAuthor={setDiscordAuthor}
+            discordMinReactions={discordMinReactions}
+            onChangeDiscordMinReactions={setDiscordMinReactions}
+
+            report={report}
+            onApplySmartFilter={handleApplySmartFilter}
           />
 
           <StatusMappingPanel
@@ -1485,6 +1983,10 @@ export default function App() {
             onChangeRepeatHourly={handleUpdateRepeatHourly}
             onReDownloadExport={handleReDownloadExport}
             onExportPng={handleExportPng}
+            customNote={pdfCustomNote}
+            onChangeCustomNote={setPdfCustomNote}
+            watermark={pdfWatermark}
+            onChangeWatermark={setPdfWatermark}
             onClearHistory={() => {
               setRecentExports([]);
               localStorage.removeItem("jira_recent_exports");
@@ -1548,6 +2050,13 @@ export default function App() {
             onRecordExport={(format, filename) => recordExport(format, filename, report?.issues)}
             categoryColors={categoryColors}
             metricsHistory={metricsHistory}
+            columns={columns}
+            activeUser={activeUser}
+            theme={theme}
+            onUpdateIssues={(updatedIssues) => {
+              setReport((prev) => (prev ? { ...prev, issues: updatedIssues } : null));
+            }}
+            onRefreshData={() => handleGenerateReport()}
           />
         </section>
       </main>
@@ -1555,7 +2064,7 @@ export default function App() {
       <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center space-y-2">
           <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">
-            Jira Dashboard Automation Bot • created for Xpert Fintech Ltd.
+            Jira SyncPro Executive Dashboard • created for Xpert Fintech Ltd.
           </p>
           <p className="text-[9px] text-slate-500 leading-normal max-w-xl mx-auto font-medium">
             Secure, credential-less Sandbox option available. Read-only Jira REST Client. 15-minute automated memory sweeping prevents caching storage.

@@ -1,0 +1,18 @@
+{
+  "name": "Jira SyncPro Executive Dashboard",
+  "short_name": "Jira SyncPro",
+  "description": "High-fidelity Jira, Confluence, and Discord audit reporting dashboard with instant exporting and offline analytics capabilities.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#4F46E5",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

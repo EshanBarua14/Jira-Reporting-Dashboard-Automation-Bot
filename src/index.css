@@ -107,3 +107,91 @@ body {
   color: #1e40af !important;
 }
 
+/* --- CSS PRINT MEDIA STYLESHEET REFINEMENTS --- */
+@media print {
+  /* Hide all persistent sidebar rails, configuration drawers, and interactive controls */
+  aside,
+  nav,
+  header,
+  #navigation-bar,
+  #diagnostics-toggle,
+  #floating-bulk-toolbar,
+  #bulk-update-actions,
+  #settings-panel,
+  #export-panel-sidebar,
+  button,
+  .no-print,
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Force main content container to span full width of physical paper page */
+  main, 
+  #main-content,
+  .main-content-layout,
+  .max-w-7xl {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Force light theme elements for pristine ink clarity */
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  div, tr, td, th, h1, h2, h3, h4, h5, h6, span, p {
+    background-color: transparent !important;
+    color: #000000 !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Keep border layout structures highly visible but simple */
+  div[id$="-card"],
+  #historical-metric-trends-section,
+  #issue-density-heatmap-section,
+  table, 
+  th, 
+  td,
+  .border,
+  .rounded-xl {
+    border: 1px solid #1e293b !important;
+    border-radius: 4px !important;
+  }
+
+  /* Optimizations for high-quality table typography */
+  table {
+    page-break-inside: auto !important;
+    width: 100% !important;
+  }
+  
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  /* Force vector SVG lines to render beautifully */
+  svg, polyline, path, circle {
+    stroke: #000000 !important;
+  }
+  
+  /* Prevent chart columns from overflowing */
+  .grid {
+    display: block !important;
+  }
+
+  .grid > * {
+    margin-bottom: 20px !important;
+    page-break-inside: avoid !important;
+  }
+}
+

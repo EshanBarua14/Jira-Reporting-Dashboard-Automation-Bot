@@ -129,7 +129,7 @@ export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount }) => {
       .append("text")
       .attr("text-anchor", "middle")
       .attr("dy", "-2px")
-      .attr("fill", "#ffffff")
+      .attr("fill", "currentColor")
       .style("font-size", "18px")
       .style("font-weight", "900")
       .attr("class", "font-sans")
@@ -150,7 +150,7 @@ export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount }) => {
   return (
     <div ref={containerRef} className="flex flex-col sm:flex-row items-center justify-around gap-4 w-full">
       <div className="relative flex items-center justify-center">
-        <svg ref={svgRef}></svg>
+        <svg ref={svgRef} className="text-slate-200"></svg>
       </div>
 
       {/* Legend with interactive hover indicators */}

@@ -1,5 +1,5 @@
-import React from "react";
-import { Columns, ArrowUp, ArrowDown, Settings, Bookmark } from "lucide-react";
+import React, { useState } from "react";
+import { Columns, ArrowUp, ArrowDown, Settings, Bookmark, GripVertical } from "lucide-react";
 import { ColumnDefinition } from "../types";
 
 interface ColumnPanelProps {
@@ -11,6 +11,7 @@ export const ColumnPanel: React.FC<ColumnPanelProps> = ({
   columns,
   onChangeColumns,
 }) => {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   
   const toggleColumn = (id: string) => {
     onChangeColumns(
@@ -29,6 +30,28 @@ export const ColumnPanel: React.FC<ColumnPanelProps> = ({
     updated[index] = updated[targetIndex];
     updated[targetIndex] = temp;
     onChangeColumns(updated);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+
+    const updated = [...columns];
+    const temp = updated[draggedIndex];
+    updated.splice(draggedIndex, 1);
+    updated.splice(index, 0, temp);
+
+    setDraggedIndex(index);
+    onChangeColumns(updated);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
   };
 
   // Presets
@@ -110,20 +133,30 @@ export const ColumnPanel: React.FC<ColumnPanelProps> = ({
       {/* Column Checklist & Sort */}
       <div className="space-y-2">
         <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
-          Active Columns & Sequence
+          Active Columns & Sequence (Drag to Reorder)
         </label>
         <div className="border border-white/5 rounded-xl overflow-hidden bg-slate-950/20 max-h-[300px] overflow-y-auto p-2 space-y-1.5 custom-scrollbar">
           {columns.map((col, idx) => {
+            const isBeingDragged = draggedIndex === idx;
             return (
               <div
                 key={col.id}
-                className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all duration-300 ${
-                  col.enabled
-                    ? "bg-slate-950/40 border-white/10 text-white"
+                draggable
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={(e) => handleDragOver(e, idx)}
+                onDragEnd={handleDragEnd}
+                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all duration-300 cursor-grab active:cursor-grabbing ${
+                  isBeingDragged
+                    ? "bg-blue-600/20 border-blue-500/50 text-white opacity-60 scale-95"
+                    : col.enabled
+                    ? "bg-slate-950/40 border-white/10 text-white hover:border-white/20"
                     : "bg-slate-950/10 border-white/5 text-slate-500"
                 }`}
               >
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="text-slate-500 hover:text-slate-300 transition-colors p-0.5">
+                    <GripVertical className="w-3.5 h-3.5" />
+                  </div>
                   <input
                     type="checkbox"
                     checked={col.enabled}

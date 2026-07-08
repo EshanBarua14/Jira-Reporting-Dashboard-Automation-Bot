@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { 
   Download, FileOutput, HelpCircle, FileSpreadsheet, FileText, Cloud, Clock, 
-  Trash2, X, Search, Calendar, Sliders, AlertTriangle
+  Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check
 } from "lucide-react";
 import { RecentExport } from "../types";
 
@@ -25,6 +25,11 @@ interface ExportPanelProps {
   onReDownloadExport?: (item: RecentExport) => void;
   onClearHistory?: () => void;
   onExportPng?: () => void;
+
+  customNote: string;
+  onChangeCustomNote: (val: string) => void;
+  watermark: "None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT";
+  onChangeWatermark: (val: "None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT") => void;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
@@ -46,14 +51,62 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onReDownloadExport,
   onClearHistory,
   onExportPng,
+
+  customNote,
+  onChangeCustomNote,
+  watermark,
+  onChangeWatermark,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalFormatFilter, setModalFormatFilter] = useState<string>("All");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleShare = async (item: RecentExport, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const shareUrl = `${window.location.origin}/?share=${item.id}`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Jira Export Snapshot: ${item.filename}`,
+          text: `View this generated report snapshot for ${item.projects.join(", ")}`,
+          url: shareUrl
+        });
+        return;
+      } catch (err) {
+        // Fall back to clipboard if user cancels or shares fails
+      }
+    }
+    
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error("Failed to copy share link to clipboard", err);
+    }
+  };
 
   const filteredHistory = recentExports.filter((item) => {
-    const matchesSearch = item.filename.toLowerCase().includes(modalSearch.toLowerCase()) || 
-                          item.projects.some(p => p.toLowerCase().includes(modalSearch.toLowerCase()));
+    const dateObj = new Date(item.timestamp);
+    const dateStr = dateObj.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    }).toLowerCase();
+    const formattedTime = dateObj.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    }).toLowerCase();
+
+    const matchesSearch = 
+      item.filename.toLowerCase().includes(modalSearch.toLowerCase()) || 
+      item.projects.some(p => p.toLowerCase().includes(modalSearch.toLowerCase())) ||
+      item.format.toLowerCase().includes(modalSearch.toLowerCase()) ||
+      dateStr.includes(modalSearch.toLowerCase()) ||
+      formattedTime.includes(modalSearch.toLowerCase());
+
     const matchesFormat = modalFormatFilter === "All" || item.format === modalFormatFilter;
     return matchesSearch && matchesFormat;
   });
@@ -211,6 +264,40 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </div>
       </div>
 
+      {/* PDF Specific Configs */}
+      {exportFormat === "PDF" && (
+        <div className="space-y-3 p-3.5 bg-slate-950/30 border border-white/5 rounded-xl animate-in fade-in slide-in-from-top-2 duration-300">
+          <div>
+            <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">
+              Custom Executive Caption / Notes
+            </label>
+            <textarea
+              value={customNote}
+              onChange={(e) => onChangeCustomNote(e.target.value)}
+              placeholder="Add custom notes or an executive briefing caption to render at the top of the exported PDF..."
+              rows={3}
+              className="w-full text-[11px] bg-slate-950/60 border border-white/5 rounded-lg p-2.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 placeholder-slate-600 transition-all resize-none leading-relaxed"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">
+              PDF Security Watermark
+            </label>
+            <select
+              value={watermark}
+              onChange={(e) => onChangeWatermark(e.target.value as any)}
+              className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg p-2.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all cursor-pointer"
+            >
+              <option value="None">None</option>
+              <option value="CONFIDENTIAL">⚠️ CONFIDENTIAL</option>
+              <option value="INTERNAL ONLY">🔒 INTERNAL ONLY</option>
+              <option value="DRAFT">📝 DRAFT</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Auto export toggle */}
       <div className="flex items-center justify-between p-3.5 bg-slate-950/40 rounded-xl border border-white/5">
         <div className="pr-2">
@@ -289,20 +376,22 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               });
               
               return (
-                <button 
-                  type="button"
+                <div 
                   key={item.id} 
-                  onClick={() => onReDownloadExport ? onReDownloadExport(item) : (onTriggerExport && onTriggerExport(item.format))}
-                  className="w-full flex items-center justify-between p-2 bg-slate-950/35 border border-white/5 rounded-lg hover:bg-slate-950/60 hover:border-blue-500/30 transition-all duration-300 text-left group cursor-pointer"
-                  title={`Click to re-download frozen snapshot copy`}
+                  className="w-full flex items-center justify-between p-2 bg-slate-950/35 border border-white/5 rounded-lg hover:bg-slate-950/60 hover:border-blue-500/30 transition-all duration-300 text-left group"
                 >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => onReDownloadExport ? onReDownloadExport(item) : (onTriggerExport && onTriggerExport(item.format))}
+                    className="flex items-center gap-2 min-w-0 flex-1 bg-transparent border-none outline-none text-left cursor-pointer"
+                    title={`Click to re-download frozen snapshot copy`}
+                  >
                     <div className="p-1 rounded bg-slate-900 border border-white/5 shrink-0 group-hover:border-blue-500/20 transition-colors">
                       {item.format === "CSV" && <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />}
                       {item.format === "PDF" && <FileText className="w-3.5 h-3.5 text-red-400" />}
                       {item.format === "Google Sheets" && <Cloud className="w-3.5 h-3.5 text-sky-400" />}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-[10px] font-bold text-slate-200 truncate leading-snug group-hover:text-blue-400 transition-colors" title={item.filename}>
                         {item.filename}
                       </div>
@@ -314,7 +403,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                         <span>{formattedTime}</span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                   <div className="pl-2 flex items-center gap-1.5 shrink-0">
                     <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
                       item.format === "CSV" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
@@ -323,9 +412,28 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     }`}>
                       {item.format === "CSV" ? "CSV" : item.format === "PDF" ? "PDF" : "Sheets"}
                     </span>
-                    <Download className="w-3 h-3 text-slate-500 group-hover:text-blue-400 group-hover:scale-110 transition-all duration-300" />
+                    <button
+                      type="button"
+                      onClick={(e) => handleShare(item, e)}
+                      className={`p-1 rounded transition-colors ${
+                        copiedId === item.id 
+                          ? "bg-emerald-950 text-emerald-400 border border-emerald-800" 
+                          : "text-slate-500 hover:text-white hover:bg-slate-900"
+                      }`}
+                      title={copiedId === item.id ? "Link Copied!" : "Copy Share Link"}
+                    >
+                      {copiedId === item.id ? <Check className="w-3 h-3" /> : <Share2 className="w-3 h-3" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onReDownloadExport ? onReDownloadExport(item) : (onTriggerExport && onTriggerExport(item.format))}
+                      className="p-1 text-slate-500 hover:text-blue-400 transition-colors cursor-pointer"
+                      title="Download"
+                    >
+                      <Download className="w-3 h-3 group-hover:scale-110 transition-all duration-300" />
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -435,6 +543,18 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                       </div>
 
                       <div className="pl-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => handleShare(item, e)}
+                          className={`p-2 rounded-lg border transition-all ${
+                            copiedId === item.id 
+                              ? "bg-emerald-950/80 border-emerald-500/40 text-emerald-400" 
+                              : "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-850"
+                          }`}
+                          title={copiedId === item.id ? "Link Copied!" : "Copy Share Link"}
+                        >
+                          {copiedId === item.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
+                        </button>
                         <button
                           type="button"
                           onClick={() => {

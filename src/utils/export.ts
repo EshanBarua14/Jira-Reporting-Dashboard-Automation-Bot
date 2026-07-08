@@ -46,7 +46,13 @@ export function exportToCSV(issues: JiraIssue[], columns: ColumnDefinition[], fi
 }
 
 // Simple dynamic HTML Print window trigger to support one-click PDF generation
-export function exportToPDF(reportTitle: string, issues: JiraIssue[], columns: ColumnDefinition[]) {
+export function exportToPDF(
+  reportTitle: string, 
+  issues: JiraIssue[], 
+  columns: ColumnDefinition[],
+  customNote?: string,
+  watermark?: string
+) {
   const activeColumns = columns.filter(c => c.enabled);
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
@@ -64,20 +70,48 @@ export function exportToPDF(reportTitle: string, issues: JiraIssue[], columns: C
     return `<tr>${cells}</tr>`;
   }).join("");
 
+  const showWatermark = watermark && watermark !== "None";
+
   printWindow.document.write(`
     <html>
       <head>
         <title>${reportTitle}</title>
         <style>
-          body { font-family: 'Inter', system-ui, sans-serif; color: #333; margin: 30px; }
+          body { font-family: 'Inter', system-ui, sans-serif; color: #333; margin: 30px; position: relative; }
           h1 { margin-bottom: 5px; }
           .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
-          table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 15px; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 15px; position: relative; z-index: 10; }
+          ${showWatermark ? `
+          .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 80px;
+            color: rgba(220, 38, 38, 0.08);
+            font-weight: 900;
+            pointer-events: none;
+            white-space: nowrap;
+            z-index: 1;
+            user-select: none;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+          }
+          ` : ""}
         </style>
       </head>
       <body>
+        ${showWatermark ? `<div class="watermark">${watermark}</div>` : ""}
         <h1>${reportTitle}</h1>
         <div class="meta">Generated on ${new Date().toLocaleString()} | Scope: ${issues.length} Issues</div>
+        
+        ${customNote ? `
+        <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px 16px; margin: 20px 0; font-size: 12px; border-radius: 6px; line-height: 1.6; color: #1e293b; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02); border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+          <strong style="color: #0f172a; font-size: 11px; text-transform: uppercase; tracking: 1.5px; display: block; margin-bottom: 4px;">Executive Caption & Notes:</strong>
+          <span style="font-style: italic;">${customNote.replace(/\n/g, '<br/>')}</span>
+        </div>
+        ` : ""}
+
         <table>
           <thead>
             <tr>${tableHeaders}</tr>

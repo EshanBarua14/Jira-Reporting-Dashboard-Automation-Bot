@@ -531,3 +531,83 @@ export const filterSandboxIssues = (config: ReportConfig): JiraIssue[] => {
 
   return list;
 };
+
+export const MOCK_CONFLUENCE_SPACES = [
+  { key: "ENG", name: "Engineering Wiki" },
+  { key: "PMO", name: "Product Management Office" },
+  { key: "SEC", name: "Security Standards & Compliance" },
+  { key: "MKT", name: "Marketing & Launch Strategy" }
+];
+
+export const MOCK_CONFLUENCE_PAGES = [
+  { id: "pg-01", title: "API Gateway Architecture Design V2", spaceKey: "ENG", creator: "Sarah Connor", lastModifier: "Miles Dyson", lastModifiedDate: "2026-07-06T15:30:00Z", wordCount: 1450, status: "Published", viewCount: 230 },
+  { id: "pg-02", title: "Continuous Delivery Pipeline Standards", spaceKey: "ENG", creator: "John Connor", lastModifier: "John Connor", lastModifiedDate: "2026-07-05T09:12:00Z", wordCount: 980, status: "Published", viewCount: 120 },
+  { id: "pg-03", title: "Database Migration Rollback Plan", spaceKey: "ENG", creator: "Miles Dyson", lastModifier: "Miles Dyson", lastModifiedDate: "2026-07-07T11:00:00Z", wordCount: 650, status: "Published", viewCount: 85 },
+  { id: "pg-04", title: "Sprint 3 Retro & Action Items", spaceKey: "PMO", creator: "Marcus Wright", lastModifier: "Kate Brewster", lastModifiedDate: "2026-07-02T16:45:00Z", wordCount: 1200, status: "Published", viewCount: 310 },
+  { id: "pg-05", title: "Product Requirements Document (PRD) - Mobile Push", spaceKey: "PMO", creator: "Kate Brewster", lastModifier: "Kate Brewster", lastModifiedDate: "2026-07-07T08:20:00Z", wordCount: 2400, status: "Draft", viewCount: 45 },
+  { id: "pg-06", title: "Risk Assessment Register & Mitigation Matrix", spaceKey: "PMO", creator: "Marcus Wright", lastModifier: "Marcus Wright", lastModifiedDate: "2026-06-30T10:00:00Z", wordCount: 1850, status: "Published", viewCount: 175 },
+  { id: "pg-07", title: "ISO-27001 Security Audit Preparation Checklist", spaceKey: "SEC", creator: "Sarah Connor", lastModifier: "Sarah Connor", lastModifiedDate: "2026-07-06T14:00:00Z", wordCount: 3200, status: "Published", viewCount: 410 },
+  { id: "pg-08", title: "IAM Roles & Least Privilege Boundary Guidelines", spaceKey: "SEC", creator: "John Connor", lastModifier: "Sarah Connor", lastModifiedDate: "2026-07-04T18:30:00Z", wordCount: 1100, status: "Published", viewCount: 190 },
+  { id: "pg-09", title: "Secrets Management Best Practices using Vault", spaceKey: "SEC", creator: "Sarah Connor", lastModifier: "Sarah Connor", lastModifiedDate: "2026-07-07T02:00:00Z", wordCount: 520, status: "Published", viewCount: 65 },
+  { id: "pg-10", title: "Q3 Product Launch Press Release Draft", spaceKey: "MKT", creator: "Kate Brewster", lastModifier: "Kate Brewster", lastModifiedDate: "2026-07-07T12:00:00Z", wordCount: 800, status: "Draft", viewCount: 12 },
+];
+
+export const MOCK_DISCORD_CHANNELS = [
+  { id: "ch-01", name: "general" },
+  { id: "ch-02", name: "engineering" },
+  { id: "ch-03", name: "announcements" },
+  { id: "ch-04", name: "prod-deployments" }
+];
+
+export const MOCK_DISCORD_MESSAGES = [
+  { id: "msg-01", author: "Sarah Connor", authorAvatar: "", content: "Just completed the audit prep checklist. We look solid for the ISO audit on Monday!", timestamp: "2026-07-07T09:30:00Z", channelName: "engineering", reactionsCount: 8 },
+  { id: "msg-02", author: "Miles Dyson", authorAvatar: "", content: "I've reviewed the API gateway design. Let's merge the branch this afternoon.", timestamp: "2026-07-07T10:15:00Z", channelName: "engineering", reactionsCount: 4 },
+  { id: "msg-03", author: "John Connor", authorAvatar: "", content: "Can we check why the staging pipeline failed on the master branch?", timestamp: "2026-07-07T11:02:00Z", channelName: "engineering", reactionsCount: 2 },
+  { id: "msg-04", author: "Marcus Wright", authorAvatar: "", content: "Deploying build v2.4.1-rc3 to production staging container now.", timestamp: "2026-07-07T11:20:00Z", channelName: "prod-deployments", reactionsCount: 5 },
+  { id: "msg-05", author: "System Bot", authorAvatar: "", content: "✅ DEPLOY SUCCESSFUL: ALPHA-v2.4.1-rc3 is now live on GCP Cloud Run container cluster.", timestamp: "2026-07-07T11:25:00Z", channelName: "prod-deployments", reactionsCount: 12 },
+  { id: "msg-06", author: "Kate Brewster", authorAvatar: "", content: "Welcome everyone to our new workspace Discord! Let's build something epic.", timestamp: "2026-07-05T08:00:00Z", channelName: "general", reactionsCount: 15 },
+  { id: "msg-07", author: "Marcus Wright", authorAvatar: "", content: "Who is planning the sprint 4 kickoff meeting? We need to schedule it soon.", timestamp: "2026-07-06T14:10:00Z", channelName: "general", reactionsCount: 3 },
+  { id: "msg-08", author: "John Connor", authorAvatar: "", content: "Don't forget we have a team social this Thursday at 5 PM local time!", timestamp: "2026-07-06T16:00:00Z", channelName: "general", reactionsCount: 9 },
+  { id: "msg-09", author: "Sarah Connor", authorAvatar: "", content: "📢 IMPORTANT ANNOUNCEMENT: All developers must update their API tokens by end-of-week.", timestamp: "2026-07-06T09:00:00Z", channelName: "announcements", reactionsCount: 14 },
+  { id: "msg-10", author: "Kate Brewster", authorAvatar: "", content: "Sprint 3 velocity exceeded our forecast by 12%! Massive congrats to the whole squad! 🚀", timestamp: "2026-07-07T15:00:00Z", channelName: "announcements", reactionsCount: 22 },
+];
+
+export interface ConfluenceFilterConfig {
+  selectedSpaces: string[];
+  pageStatus: string;
+  creator: string;
+}
+
+export const filterSandboxConfluence = (config: ConfluenceFilterConfig) => {
+  let list = [...MOCK_CONFLUENCE_PAGES];
+  if (config.selectedSpaces && config.selectedSpaces.length > 0) {
+    list = list.filter(p => config.selectedSpaces.includes(p.spaceKey));
+  }
+  if (config.pageStatus && config.pageStatus !== "All") {
+    list = list.filter(p => p.status === config.pageStatus);
+  }
+  if (config.creator) {
+    list = list.filter(p => p.creator === config.creator);
+  }
+  return list;
+};
+
+export interface DiscordFilterConfig {
+  selectedChannels: string[];
+  author: string;
+  minReactions: number;
+}
+
+export const filterSandboxDiscord = (config: DiscordFilterConfig) => {
+  let list = [...MOCK_DISCORD_MESSAGES];
+  if (config.selectedChannels && config.selectedChannels.length > 0) {
+    list = list.filter(m => config.selectedChannels.includes(m.channelName));
+  }
+  if (config.author) {
+    list = list.filter(m => m.author === config.author);
+  }
+  if (config.minReactions > 0) {
+    list = list.filter(m => m.reactionsCount >= config.minReactions);
+  }
+  return list;
+};

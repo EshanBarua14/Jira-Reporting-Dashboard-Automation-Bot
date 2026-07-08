@@ -1,20 +1,23 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Multi-Platform Project Reporting & Dashboard Automation
 
-# Run and deploy your AI Studio app
+An enterprise-grade, high-fidelity project analytics platform that integrates cleanly across Jira, Confluence, and Discord chat streams. Designed to provide full-scope PMO dashboards, detailed sprint comparisons, and security-hardened report exports.
 
-This contains everything you need to run your app locally.
+## Core Integration Platforms
 
-View your app in AI Studio: https://ai.studio/apps/03670235-5c7e-4264-a350-a40bc72122e8
+### 1. Jira Issue Analytics
+- **Live Search & Metrics Sync:** Fetch and analyze active ticket metrics based on custom JQL filters.
+- **Sprint Performance comparisons:** Generate comparison data tables across consecutive sprints to track velocity changes, completion percentages, and bug ratios.
+- **Custom Mapping:** Translate local status values into standardized workflow phases (`To Do`, `In Progress`, `Done`, `Blocked`).
 
-## Run Locally
+### 2. Confluence Workspace Wiki Reporting
+- **Space Wiki Indexing:** Search, filter, and audit documentation indices across multiple spaces.
+- **Content Metadata Tracking:** Analyze total word counts, draft ratios, and active documentation contributors.
 
-**Prerequisites:**  Node.js
+### 3. Discord Team Engagement Stream
+- **Chat Velocity Analysis:** Process channel activity streams to calculate communication rates.
+- **Engagement Insights:** Monitor message reactions, peak hourly team activity, and core senders.
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Output & Print Automation
+- **Pristine PDF Report Prints:** Generate formatted reports featuring dynamic page titles.
+- **Custom Captions & Briefings:** Inject custom note sections directly into printed PDFs.
+- **Security Watermarking:** Protect sensitive reports with custom `CONFIDENTIAL` or `INTERNAL ONLY` print layouts.

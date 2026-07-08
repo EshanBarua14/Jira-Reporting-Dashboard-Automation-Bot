@@ -1,6 +1,6 @@
 {
-  "name": "Jira Reporting & Dashboard Automation Bot",
-  "description": "A UI-driven Jira reporting and automated dashboard generator with read-only secure session handling and intelligent Gemini executive PMO summaries.",
+  "name": "Jira SyncPro Executive Dashboard",
+  "description": "A UI-driven Jira, Confluence, and Discord reporting and automated dashboard generator with read-only secure session handling and intelligent Gemini executive PMO summaries.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

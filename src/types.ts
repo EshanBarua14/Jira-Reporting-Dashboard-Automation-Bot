@@ -19,6 +19,10 @@ export interface JiraIssue {
   remainingEstimate: number | null; // in seconds or hours
   labels: string[];
   components: string[];
+  description?: string;
+  subtasksCount?: number;
+  subtasks?: { key: string; summary: string; status: string }[];
+  comments?: { id: string; author: string; body: string; created: string }[];
 }
 
 export interface AuthCredentials {
@@ -75,6 +79,25 @@ export interface ExecutiveSummary {
   recommendations: string[];
 }
 
+export interface SprintComparison {
+  currentSprintName: string;
+  previousSprintName: string;
+  currentMetrics: {
+    totalIssues: number;
+    doneCount: number;
+    completionPercentage: number;
+    sprintVelocity: number;
+    bugsCount: number;
+  };
+  previousMetrics: {
+    totalIssues: number;
+    doneCount: number;
+    completionPercentage: number;
+    sprintVelocity: number;
+    bugsCount: number;
+  };
+}
+
 export interface GeneratedReport {
   timestamp: string;
   config: ReportConfig;
@@ -94,6 +117,25 @@ export interface GeneratedReport {
     issuesPerAssignee: { [assignee: string]: number };
   };
   aiSummary?: ExecutiveSummary;
+  sprintComparison?: SprintComparison;
+  confluencePages?: any[];
+  confluenceMetrics?: {
+    totalPages: number;
+    spaceCount: number;
+    avgWordCount: number;
+    activeContributors: number;
+    draftRatio: number;
+    pagesBySpace: { [space: string]: number };
+  };
+  discordMessages?: any[];
+  discordMetrics?: {
+    totalMessages: number;
+    uniqueAuthors: number;
+    totalReactions: number;
+    avgMessageLength: number;
+    activeHour: number;
+    messagesByChannel: { [channel: string]: number };
+  };
 }
 
 export interface RecentExport {

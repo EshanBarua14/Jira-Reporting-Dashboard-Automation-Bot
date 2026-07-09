@@ -284,16 +284,30 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">
               PDF Security Watermark
             </label>
-            <select
-              value={watermark}
-              onChange={(e) => onChangeWatermark(e.target.value as any)}
-              className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg p-2.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all cursor-pointer"
-            >
-              <option value="None">None</option>
-              <option value="CONFIDENTIAL">⚠️ CONFIDENTIAL</option>
-              <option value="INTERNAL ONLY">🔒 INTERNAL ONLY</option>
-              <option value="DRAFT">📝 DRAFT</option>
-            </select>
+            <div className="grid grid-cols-4 gap-1.5 pt-1">
+              {(["None", "CONFIDENTIAL", "INTERNAL ONLY", "DRAFT"] as const).map((opt) => {
+                const isSel = watermark === opt;
+                return (
+                  <button
+                    type="button"
+                    key={opt}
+                    onClick={() => onChangeWatermark(opt)}
+                    className={`text-[9.5px] py-2 px-1 rounded-lg border font-bold transition-all duration-200 uppercase tracking-wide text-center ${
+                      isSel
+                        ? opt === "None"
+                          ? "border-slate-500/30 bg-slate-500/10 text-slate-300"
+                          : "border-red-500/30 bg-red-500/10 text-red-200 shadow-[0_0_8px_rgba(239,68,68,0.15)]"
+                        : "border-white/5 hover:border-white/10 text-slate-400 bg-slate-950/40 hover:bg-slate-950/60"
+                    }`}
+                  >
+                    {opt === "None" && "🚫 Off"}
+                    {opt === "CONFIDENTIAL" && "⚠️ Conf"}
+                    {opt === "INTERNAL ONLY" && "🔒 Int"}
+                    {opt === "DRAFT" && "📝 Draft"}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

@@ -107,6 +107,23 @@ body {
   color: #1e40af !important;
 }
 
+/* Automatically transition colors based on theme state without re-render triggers */
+th, td, svg, path, circle, rect, text, polyline, line, 
+div[id$="-card"], 
+div[id="dashboard-visuals-container"], 
+.bg-slate-900\/40, 
+.bg-\[\#1E293B\], 
+.bg-slate-900, 
+.bg-slate-950, 
+.bg-slate-950\/80, 
+.bg-slate-950\/20, 
+.bg-slate-900\/15, 
+.bg-slate-950\/60, 
+.bg-slate-900\/30, 
+.bg-slate-900\/60 {
+  transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out, color 0.3s ease-in-out, fill 0.3s ease-in-out, stroke 0.3s ease-in-out, opacity 0.3s ease-in-out, box-shadow 0.3s ease-in-out, transform 0.3s ease-in-out !important;
+}
+
 /* --- CSS PRINT MEDIA STYLESHEET REFINEMENTS --- */
 @media print {
   /* Hide all persistent sidebar rails, configuration drawers, and interactive controls */

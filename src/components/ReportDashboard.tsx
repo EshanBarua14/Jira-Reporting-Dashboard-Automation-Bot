@@ -2,7 +2,8 @@ import React, { useState, useMemo } from "react";
 import { 
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
-  Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X
+  Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X,
+  BellOff, Copy, Check, Share2
 } from "lucide-react";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
 import { exportToCSV, exportToPDF } from "../utils/export";
@@ -65,6 +66,7 @@ interface ReportDashboardProps {
     emailAddress: string;
     avatarUrl?: string;
   } | null;
+  onShareReport?: () => string;
 }
 
 const containerVariants = {
@@ -138,6 +140,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   onRefreshData,
   theme,
   activeUser,
+  onShareReport,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -160,6 +163,67 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [justClickedRowKey, setJustClickedRowKey] = useState<string | null>(null);
+
+  // Overdue Snoozed Alerts state
+  const [snoozedAlerts, setSnoozedAlerts] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem("snoozed_overdue_alerts");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleSnooze = (key: string) => {
+    const newSnoozed = { ...snoozedAlerts, [key]: Date.now() + 24 * 60 * 60 * 1000 };
+    setSnoozedAlerts(newSnoozed);
+    localStorage.setItem("snoozed_overdue_alerts", JSON.stringify(newSnoozed));
+  };
+
+  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
+
+  // Hover states for interactive tooltips on trend charts
+  const [hoveredHistory1Idx, setHoveredHistory1Idx] = useState<number | null>(null);
+  const [hoveredHistory2Idx, setHoveredHistory2Idx] = useState<number | null>(null);
+  const [hoveredTrendIdx, setHoveredTrendIdx] = useState<number | null>(null);
+
+  // Cell Copying interactivity state and helper
+  const [copiedCellId, setCopiedCellId] = useState<string | null>(null);
+
+  const handleCopyCell = (text: string, cellId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedCellId(cellId);
+      addToast?.("Copied to Clipboard", `"${text}" copied successfully.`, "success", 2000);
+      setTimeout(() => {
+        setCopiedCellId(null);
+      }, 1500);
+    }).catch(() => {
+      addToast?.("Copy Failed", "Unable to copy to clipboard", "error", 2000);
+    });
+  };
+
+  const CellCopyButton = ({ text, cellId }: { text: string; cellId: string }) => {
+    const isCopied = copiedCellId === cellId;
+    return (
+      <button
+        type="button"
+        onClick={(e) => handleCopyCell(text, cellId, e)}
+        className={`opacity-0 group-hover/cell:opacity-100 p-1 rounded-md transition-all duration-150 shrink-0 ${
+          isCopied 
+            ? "bg-emerald-500/20 text-emerald-400 opacity-100" 
+            : "hover:bg-slate-800 text-slate-500 hover:text-slate-350"
+        }`}
+        title={isCopied ? "Copied!" : "Copy cell value to clipboard"}
+      >
+        {isCopied ? (
+          <Check className="w-3 h-3 text-emerald-400" />
+        ) : (
+          <Copy className="w-3 h-3" />
+        )}
+      </button>
+    );
+  };
 
   const getSubtasksForIssue = (issue: JiraIssue) => {
     if (issue.subtasks && issue.subtasks.length > 0) {
@@ -212,16 +276,17 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       return metricsHistory.map((h, i) => ({
         label: `Run ${i + 1}`,
         date: new Date(h.timestamp).toLocaleDateString([], { month: "short", day: "numeric" }),
+        fullTimestamp: new Date(h.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         totalIssues: h.metrics.totalIssues || 0,
         completionPercentage: h.metrics.completionPercentage || 0
       }));
     }
     return [
-      { label: "Run 1", date: "Jul 01", totalIssues: 24, completionPercentage: 45 },
-      { label: "Run 2", date: "Jul 03", totalIssues: 28, completionPercentage: 50 },
-      { label: "Run 3", date: "Jul 04", totalIssues: 32, completionPercentage: 58 },
-      { label: "Run 4", date: "Jul 06", totalIssues: 30, completionPercentage: 62 },
-      { label: "Run 5", date: "Jul 07", totalIssues: report?.metrics?.totalIssues || 35, completionPercentage: report?.metrics?.completionPercentage || 68 },
+      { label: "Run 1", date: "Jul 01", fullTimestamp: "Jul 01, 10:00:00 AM", totalIssues: 24, completionPercentage: 45 },
+      { label: "Run 2", date: "Jul 03", fullTimestamp: "Jul 03, 11:30:15 AM", totalIssues: 28, completionPercentage: 50 },
+      { label: "Run 3", date: "Jul 04", fullTimestamp: "Jul 04, 02:15:30 PM", totalIssues: 32, completionPercentage: 58 },
+      { label: "Run 4", date: "Jul 06", fullTimestamp: "Jul 06, 09:45:00 AM", totalIssues: 30, completionPercentage: 62 },
+      { label: "Run 5", date: "Jul 07", fullTimestamp: "Jul 07, 04:20:45 PM", totalIssues: report?.metrics?.totalIssues || 35, completionPercentage: report?.metrics?.completionPercentage || 68 },
     ];
   };
   
@@ -630,6 +695,16 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       let valA = a[sortField];
       let valB = b[sortField];
 
+      if (sortField === "priority") {
+        const priorityWeights: Record<string, number> = {
+          "highest": 5, "high": 4, "medium": 3, "low": 2, "lowest": 1,
+          "blocker": 5, "critical": 4, "major": 3, "minor": 2, "trivial": 1
+        };
+        const weightA = priorityWeights[String(valA).toLowerCase()] || 0;
+        const weightB = priorityWeights[String(valB).toLowerCase()] || 0;
+        return sortDirection === "asc" ? weightA - weightB : weightB - weightA;
+      }
+
       if (valA === null || valA === undefined) valA = "";
       if (valB === null || valB === undefined) valB = "";
 
@@ -682,7 +757,28 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
     );
   }
 
-  const { issues, metrics, aiSummary, sprintComparison, config, timestamp } = report;
+  const { issues, metrics: originalMetrics, aiSummary, sprintComparison, config, timestamp } = report;
+
+  const metrics = useMemo(() => {
+    if (!originalMetrics) return originalMetrics;
+    const unsnoozedOverdueCount = issues.filter((i) => {
+      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
+      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
+      return isOverdue && !isSnoozed;
+    }).length;
+    return {
+      ...originalMetrics,
+      overdueIssues: unsnoozedOverdueCount
+    };
+  }, [originalMetrics, issues, todayStr, snoozedAlerts]);
+
+  const overdueIssuesList = useMemo(() => {
+    return issues.filter((i) => {
+      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
+      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
+      return isOverdue && !isSnoozed;
+    });
+  }, [issues, todayStr, snoozedAlerts]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -1085,6 +1181,45 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
             </button>
           )}
 
+          {/* Print Button */}
+          <button
+            onClick={() => {
+              addToast?.("Print Layout", "Preparing layout and opening print dialog...", "info", 2000);
+              window.print();
+            }}
+            className="bg-slate-950 border border-white/10 hover:border-slate-700 text-slate-200 hover:text-white font-extrabold text-[11px] px-4 py-2 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider cursor-pointer"
+            title="Prepare print layout and open print dialog (Ctrl+P)"
+          >
+            <Printer className="w-3.5 h-3.5 text-rose-400" />
+            <span>Print Report</span>
+          </button>
+
+          {/* Share Button */}
+          {onShareReport && (
+            <button
+              onClick={() => {
+                const url = onShareReport();
+                if (url) {
+                  navigator.clipboard.writeText(url).then(() => {
+                    addToast?.(
+                      "Link Copied",
+                      "Shareable URL link copied to clipboard. Share with others to display this report snapshot.",
+                      "success",
+                      3000
+                    );
+                  }).catch(() => {
+                    addToast?.("Share Failed", "Unable to copy share link to clipboard.", "error", 2500);
+                  });
+                }
+              }}
+              className="bg-slate-950 border border-white/10 hover:border-slate-700 text-slate-200 hover:text-white font-extrabold text-[11px] px-4 py-2 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider cursor-pointer"
+              title="Generate a direct link to this report snapshot and copy to clipboard"
+            >
+              <Share2 className="w-3.5 h-3.5 text-blue-450" />
+              <span>Share Snapshot</span>
+            </button>
+          )}
+
           {/* Direct Export Dropdown Container */}
           <div className="relative">
             <button
@@ -1160,6 +1295,36 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
             >
               <X className="w-3.5 h-3.5" /> Clear Filter
             </button>
+          </div>
+        )}
+
+        {/* Overdue Task Alert Notification Banner */}
+        {overdueIssuesList.length > 0 && (
+          <div className="bg-red-500/10 border border-red-500/25 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold">
+            <div className="flex items-center gap-2.5 min-w-0 text-red-200">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 animate-pulse" />
+              <div>
+                <div className="font-bold text-slate-100">Overdue Task Alert Notification</div>
+                <div className="text-[10px] text-red-300/80 font-medium mt-0.5">
+                  You have <span className="font-extrabold text-red-450">{overdueIssuesList.length}</span> overdue items past due dates. Hitting "Snooze" will temporarily hide notifications for 24 hours.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 self-end sm:self-center shrink-0">
+              <button 
+                onClick={() => {
+                  const newSnoozed = { ...snoozedAlerts };
+                  overdueIssuesList.forEach((issue) => {
+                    newSnoozed[issue.key] = Date.now() + 24 * 60 * 60 * 1000;
+                  });
+                  setSnoozedAlerts(newSnoozed);
+                  localStorage.setItem("snoozed_overdue_alerts", JSON.stringify(newSnoozed));
+                }} 
+                className="text-[10px] uppercase font-black tracking-wider px-3 py-1.5 bg-red-950 hover:bg-red-900 text-red-300 hover:text-red-100 rounded-lg transition-colors border border-red-500/30 flex items-center gap-1 shadow-sm cursor-pointer"
+              >
+                <BellOff className="w-3.5 h-3.5" /> Snooze All (24h)
+              </button>
+            </div>
           </div>
         )}
 
@@ -1798,7 +1963,60 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                           })
                           .join(" ")}
                       />
+
+                      {/* Trend Circles */}
+                      {lineChartPoints.map((p, idx) => {
+                        const x = (idx / (lineChartPoints.length - 1)) * 100;
+                        const maxCount = Math.max(...lineChartPoints.map((pt) => pt.count)) || 1;
+                        const y = 30 - (p.count / maxCount) * 25;
+                        return (
+                          <circle
+                            key={idx}
+                            cx={x}
+                            cy={y}
+                            r={hoveredTrendIdx === idx ? "3.5" : "1.8"}
+                            className={`fill-slate-950 stroke-indigo-400 transition-all duration-150 ${hoveredTrendIdx === idx ? "stroke-2" : "stroke-1"}`}
+                          />
+                        );
+                      })}
+
+                      {/* Hover transparent columns */}
+                      {lineChartPoints.map((p, idx) => {
+                        const x = (idx / (lineChartPoints.length - 1)) * 100;
+                        const width = 100 / (lineChartPoints.length - 1);
+                        return (
+                          <rect
+                            key={idx}
+                            x={idx === 0 ? 0 : x - width / 2}
+                            y={0}
+                            width={width}
+                            height={30}
+                            fill="transparent"
+                            className="cursor-crosshair"
+                            onMouseEnter={() => setHoveredTrendIdx(idx)}
+                            onMouseLeave={() => setHoveredTrendIdx(null)}
+                          />
+                        );
+                      })}
                     </svg>
+
+                    {/* Tooltip */}
+                    {hoveredTrendIdx !== null && (
+                      <div 
+                        className="absolute bg-slate-900/95 border border-indigo-500/30 rounded-lg p-2 shadow-2xl pointer-events-none text-[10px] font-sans text-left z-50 transition-all duration-150 backdrop-blur-sm min-w-[130px]"
+                        style={{
+                          left: `${(hoveredTrendIdx / (lineChartPoints.length - 1)) * 80 + 10}%`,
+                          top: '0px',
+                          transform: 'translateX(-50%)',
+                        }}
+                      >
+                        <div className="text-[9px] text-slate-400 font-bold">{lineChartPoints[hoveredTrendIdx].date}</div>
+                        <div className="text-white font-extrabold mt-1 flex items-center justify-between gap-1">
+                          <span>Resolved:</span>
+                          <span className="text-indigo-400 font-mono font-black">{lineChartPoints[hoveredTrendIdx].count} tickets</span>
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Min/Max indicators */}
                     <div className="flex justify-between text-[9px] font-bold text-slate-500 mt-2 font-mono">
@@ -1842,7 +2060,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                   {getHistoricalDataPoints()[getHistoricalDataPoints().length - 1].totalIssues} tickets
                 </span>
               </div>
-              <div className="h-28 relative flex items-end">
+              <div className="h-28 relative">
                 <svg className="w-full h-full overflow-visible" viewBox="0 0 100 35" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="total-issues-grad" x1="0" y1="0" x2="0" y2="1">
@@ -1898,12 +2116,49 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                         key={idx}
                         cx={x}
                         cy={y}
-                        r="2.2"
-                        className="fill-slate-950 stroke-indigo-400 stroke-[1.5]"
+                        r={hoveredHistory1Idx === idx ? "3.5" : "2.2"}
+                        className={`fill-slate-950 stroke-indigo-400 transition-all duration-150 ${hoveredHistory1Idx === idx ? "stroke-2" : "stroke-[1.5]"}`}
+                      />
+                    );
+                  })}
+
+                  {/* Transparent hover columns */}
+                  {getHistoricalDataPoints().map((pt, idx) => {
+                    const x = (idx / (getHistoricalDataPoints().length - 1)) * 100;
+                    const width = 100 / (getHistoricalDataPoints().length - 1);
+                    return (
+                      <rect
+                        key={idx}
+                        x={idx === 0 ? 0 : x - width / 2}
+                        y={0}
+                        width={width}
+                        height={35}
+                        fill="transparent"
+                        className="cursor-crosshair"
+                        onMouseEnter={() => setHoveredHistory1Idx(idx)}
+                        onMouseLeave={() => setHoveredHistory1Idx(null)}
                       />
                     );
                   })}
                 </svg>
+
+                {/* Custom Tooltip */}
+                {hoveredHistory1Idx !== null && (
+                  <div 
+                    className="absolute bg-slate-900/95 border border-indigo-500/30 rounded-lg p-2 shadow-2xl pointer-events-none text-[10px] font-sans text-left z-50 transition-all duration-150 backdrop-blur-sm min-w-[140px]"
+                    style={{
+                      left: `${(hoveredHistory1Idx / (getHistoricalDataPoints().length - 1)) * 80 + 10}%`,
+                      top: '10px',
+                      transform: 'translateX(-50%)',
+                    }}
+                  >
+                    <div className="text-[9px] text-slate-400 font-bold">{getHistoricalDataPoints()[hoveredHistory1Idx].fullTimestamp}</div>
+                    <div className="text-white font-extrabold mt-1 flex items-center justify-between gap-1">
+                      <span>Total Backlog:</span>
+                      <span className="text-indigo-400 font-mono font-black">{getHistoricalDataPoints()[hoveredHistory1Idx].totalIssues} issues</span>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex justify-between text-[8px] text-slate-500 font-bold font-mono">
                 {getHistoricalDataPoints().map((pt, idx) => (
@@ -1920,7 +2175,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                   {getHistoricalDataPoints()[getHistoricalDataPoints().length - 1].completionPercentage}%
                 </span>
               </div>
-              <div className="h-28 relative flex items-end">
+              <div className="h-28 relative">
                 <svg className="w-full h-full overflow-visible" viewBox="0 0 100 35" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="comp-pct-grad" x1="0" y1="0" x2="0" y2="1">
@@ -1976,12 +2231,49 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                         key={idx}
                         cx={x}
                         cy={y}
-                        r="2.2"
-                        className="fill-slate-950 stroke-emerald-400 stroke-[1.5]"
+                        r={hoveredHistory2Idx === idx ? "3.5" : "2.2"}
+                        className={`fill-slate-950 stroke-emerald-400 transition-all duration-150 ${hoveredHistory2Idx === idx ? "stroke-2" : "stroke-[1.5]"}`}
+                      />
+                    );
+                  })}
+
+                  {/* Transparent hover columns */}
+                  {getHistoricalDataPoints().map((pt, idx) => {
+                    const x = (idx / (getHistoricalDataPoints().length - 1)) * 100;
+                    const width = 100 / (getHistoricalDataPoints().length - 1);
+                    return (
+                      <rect
+                        key={idx}
+                        x={idx === 0 ? 0 : x - width / 2}
+                        y={0}
+                        width={width}
+                        height={35}
+                        fill="transparent"
+                        className="cursor-crosshair"
+                        onMouseEnter={() => setHoveredHistory2Idx(idx)}
+                        onMouseLeave={() => setHoveredHistory2Idx(null)}
                       />
                     );
                   })}
                 </svg>
+
+                {/* Custom Tooltip */}
+                {hoveredHistory2Idx !== null && (
+                  <div 
+                    className="absolute bg-slate-900/95 border border-emerald-500/30 rounded-lg p-2 shadow-2xl pointer-events-none text-[10px] font-sans text-left z-50 transition-all duration-150 backdrop-blur-sm min-w-[140px]"
+                    style={{
+                      left: `${(hoveredHistory2Idx / (getHistoricalDataPoints().length - 1)) * 80 + 10}%`,
+                      top: '10px',
+                      transform: 'translateX(-50%)',
+                    }}
+                  >
+                    <div className="text-[9px] text-slate-400 font-bold">{getHistoricalDataPoints()[hoveredHistory2Idx].fullTimestamp}</div>
+                    <div className="text-white font-extrabold mt-1 flex items-center justify-between gap-1">
+                      <span>Efficiency:</span>
+                      <span className="text-emerald-400 font-mono font-black">{getHistoricalDataPoints()[hoveredHistory2Idx].completionPercentage}%</span>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex justify-between text-[8px] text-slate-500 font-bold font-mono">
                 {getHistoricalDataPoints().map((pt, idx) => (
@@ -2175,6 +2467,38 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                 <option value={50}>50 Rows</option>
               </select>
 
+              {/* Dynamic Sort Selector */}
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2.5 py-1.5 focus-within:border-blue-500">
+                <span className="text-[9px] uppercase font-black text-slate-500 tracking-wider">Sort:</span>
+                <select
+                  value={sortField}
+                  onChange={(e) => {
+                    setSortField(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="bg-transparent text-xs font-bold text-slate-200 focus:outline-none cursor-pointer hover:text-white"
+                >
+                  <option value="key" className="bg-slate-900 text-slate-200">Issue Key</option>
+                  <option value="created" className="bg-slate-900 text-slate-200">Created Date</option>
+                  <option value="priority" className="bg-slate-900 text-slate-200">Priority</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                    setCurrentPage(1);
+                  }}
+                  className="ml-1 p-0.5 hover:bg-slate-800 rounded transition-colors text-slate-400 hover:text-white cursor-pointer"
+                  title={`Toggle sort direction (current: ${sortDirection.toUpperCase()})`}
+                >
+                  {sortDirection === "asc" ? (
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+
               {/* Export Button Drawer */}
               <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
                 <button
@@ -2313,34 +2637,42 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                                 : (jiraUrl ? jiraUrl.replace(/\/+$/, "") : "https://jira.atlassian.net");
                               const ticketUrl = `${baseUrl}/browse/${val}`;
                               return (
-                                <td key={col.id} className="p-3 font-mono font-bold text-blue-400 truncate max-w-[120px] flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                  <button 
-                                    onClick={(btnEvt) => {
-                                      btnEvt.stopPropagation();
-                                      toggleRow(issue.key);
-                                    }}
-                                    className="p-1 hover:bg-slate-850 rounded transition-colors text-slate-400 hover:text-white shrink-0"
-                                    title="Toggle details"
-                                  >
-                                    <ChevronRight className={`w-3.5 h-3.5 transform transition-transform duration-200 ${isExpanded ? "rotate-90 text-blue-400" : "text-slate-500"}`} />
-                                  </button>
-                                  <a 
-                                    href={ticketUrl} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="hover:text-blue-300 hover:underline transition-colors inline-flex items-center gap-0.5 truncate"
-                                    title={`Open ${val} in Jira`}
-                                  >
-                                    {highlightText(val, searchQuery)}
-                                    <span className="text-[9px] opacity-70">↗</span>
-                                  </a>
+                                <td key={col.id} className="p-3 font-mono font-bold text-blue-400 truncate max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-between gap-1.5 group/cell">
+                                    <div className="flex items-center gap-1.5 truncate">
+                                      <button 
+                                        onClick={(btnEvt) => {
+                                          btnEvt.stopPropagation();
+                                          toggleRow(issue.key);
+                                        }}
+                                        className="p-1 hover:bg-slate-850 rounded transition-colors text-slate-400 hover:text-white shrink-0"
+                                        title="Toggle details"
+                                      >
+                                        <ChevronRight className={`w-3.5 h-3.5 transform transition-transform duration-200 ${isExpanded ? "rotate-90 text-blue-400" : "text-slate-500"}`} />
+                                      </button>
+                                      <a 
+                                        href={ticketUrl} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="hover:text-blue-300 hover:underline transition-colors inline-flex items-center gap-0.5 truncate"
+                                        title={`Open ${val} in Jira`}
+                                      >
+                                        {highlightText(val, searchQuery)}
+                                        <span className="text-[9px] opacity-70">↗</span>
+                                      </a>
+                                    </div>
+                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-key`} />
+                                  </div>
                                 </td>
                               );
                             }
                             if (col.id === "summary") {
                               return (
                                 <td key={col.id} className="p-3 font-bold text-slate-200 max-w-sm leading-normal">
-                                  {highlightText(val, searchQuery)}
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <span className="truncate">{highlightText(val, searchQuery)}</span>
+                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-summary`} />
+                                  </div>
                                 </td>
                               );
                             }
@@ -2356,12 +2688,15 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
 
                               return (
                                 <td key={col.id} className="p-3 truncate">
-                                  <span 
-                                    style={badgeStyle}
-                                    className="px-2 py-0.5 rounded border font-black uppercase text-[8.5px] tracking-wider inline-block shadow-[0_0_4px_rgba(0,0,0,0.1)]"
-                                  >
-                                    {val}
-                                  </span>
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <span 
+                                      style={badgeStyle}
+                                      className="px-2 py-0.5 rounded border font-black uppercase text-[8.5px] tracking-wider inline-block shadow-[0_0_4px_rgba(0,0,0,0.1)]"
+                                    >
+                                      {val}
+                                    </span>
+                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-status`} />
+                                  </div>
                                 </td>
                               );
                             }
@@ -2373,35 +2708,47 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                               if (val === "Low" || val === "Lowest") pColor = "text-slate-400 bg-slate-800 border border-slate-700";
                               return (
                                 <td key={col.id} className="p-3">
-                                  <span className={`px-1.5 py-0.5 rounded font-semibold ${pColor}`}>
-                                    {val}
-                                  </span>
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <span className={`px-1.5 py-0.5 rounded font-semibold ${pColor}`}>
+                                      {val}
+                                    </span>
+                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-priority`} />
+                                  </div>
                                 </td>
                               );
                             }
                             if (col.id === "storyPoints") {
                               return (
-                                <td key={col.id} className="p-3 font-bold text-slate-200 text-center font-mono">
-                                  {val !== null ? (
-                                    <span className="bg-slate-900 border border-slate-850 px-1.5 py-0.5 rounded">{val}</span>
-                                  ) : (
-                                    <span className="text-slate-600">-</span>
-                                  )}
+                                <td key={col.id} className="p-3 font-bold text-slate-200 font-mono">
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <div className="flex-1 text-center">
+                                      {val !== null ? (
+                                        <span className="bg-slate-900 border border-slate-850 px-1.5 py-0.5 rounded">{val}</span>
+                                      ) : (
+                                        <span className="text-slate-600">-</span>
+                                      )}
+                                    </div>
+                                    <CellCopyButton text={val !== null ? String(val) : ""} cellId={`${issue.key}-storyPoints`} />
+                                  </div>
                                 </td>
                               );
                             }
                             if (col.id === "labels" || col.id === "components") {
                               const tags: string[] = Array.isArray(val) ? val : [];
+                              const tagsText = tags.join(", ");
                               return (
                                 <td key={col.id} className="p-3 max-w-[150px]">
-                                  <div className="flex flex-wrap gap-1">
-                                    {tags.slice(0, 3).map((t, index) => (
-                                      <span key={index} className="bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.2 rounded font-mono text-[9px]">
-                                        {t}
-                                      </span>
-                                    ))}
-                                    {tags.length > 3 && <span className="text-[9px] text-slate-500 font-bold">+{tags.length - 3}</span>}
-                                    {tags.length === 0 && <span className="text-slate-600">-</span>}
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <div className="flex flex-wrap gap-1">
+                                      {tags.slice(0, 3).map((t, index) => (
+                                        <span key={index} className="bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.2 rounded font-mono text-[9px]">
+                                          {t}
+                                        </span>
+                                      ))}
+                                      {tags.length > 3 && <span className="text-[9px] text-slate-500 font-bold">+{tags.length - 3}</span>}
+                                      {tags.length === 0 && <span className="text-slate-600">-</span>}
+                                    </div>
+                                    <CellCopyButton text={tagsText} cellId={`${issue.key}-${col.id}`} />
                                   </div>
                                 </td>
                               );
@@ -2411,7 +2758,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                               const isCurrentUser = activeUser && val === activeUser.displayName;
                               return (
                                 <td key={col.id} className="p-3 font-semibold text-slate-200" onClick={(e) => e.stopPropagation()}>
-                                  <div className="flex items-center justify-between gap-1.5 group/assign">
+                                  <div className="flex items-center justify-between gap-1.5 group/cell">
                                     <div className="flex items-center gap-1.5 min-w-0">
                                       <div className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] text-slate-300 font-black shrink-0 uppercase shadow-sm">
                                         {val ? val.charAt(0) : "U"}
@@ -2421,22 +2768,62 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                                       </span>
                                     </div>
                                     
-                                    <button
-                                      type="button"
-                                      onClick={() => handleQuickAssign(issue.key)}
-                                      className={`p-1.5 rounded-lg transition-all border shadow-sm ${
-                                        isCurrentUser
-                                          ? "bg-emerald-950/45 border-emerald-500/30 text-emerald-400 cursor-default"
-                                          : "bg-slate-950 border-white/5 hover:border-blue-500/45 text-slate-400 hover:text-blue-400 cursor-pointer"
-                                      }`}
-                                      title={isCurrentUser ? "Assigned to you" : "Assign to me in 1 click"}
-                                    >
-                                      {isCurrentUser ? (
-                                        <UserCheck className="w-3.5 h-3.5" />
-                                      ) : (
-                                        <UserPlus className="w-3.5 h-3.5" />
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleQuickAssign(issue.key)}
+                                        className={`p-1.5 rounded-lg transition-all border shadow-sm ${
+                                          isCurrentUser
+                                            ? "bg-emerald-950/45 border-emerald-500/30 text-emerald-400 cursor-default"
+                                            : "bg-slate-950 border-white/5 hover:border-blue-500/45 text-slate-400 hover:text-blue-400 cursor-pointer"
+                                        }`}
+                                        title={isCurrentUser ? "Assigned to you" : "Assign to me in 1 click"}
+                                      >
+                                        {isCurrentUser ? (
+                                          <UserCheck className="w-3.5 h-3.5" />
+                                        ) : (
+                                          <UserPlus className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                      <CellCopyButton text={String(val || "Unassigned")} cellId={`${issue.key}-assignee`} />
+                                    </div>
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (col.id === "dueDate") {
+                              const isOverdue = val && val < todayStr && issue.mappedStatus !== "Done";
+                              const isSnoozed = snoozedAlerts[issue.key] && snoozedAlerts[issue.key] > Date.now();
+                              return (
+                                <td key={col.id} className="p-3 truncate max-w-[180px] text-slate-400 font-medium" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`${isOverdue && !isSnoozed ? "text-red-400 font-bold" : ""}`}>
+                                        {val || <span className="text-slate-600">-</span>}
+                                      </span>
+                                      {isOverdue && (
+                                        isSnoozed ? (
+                                          <span className="text-[9px] text-slate-500 font-bold bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded flex items-center gap-1" title="Snoozed for 24 hours">
+                                            Snoozed
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleSnooze(issue.key);
+                                            }}
+                                            className="text-[9px] font-extrabold uppercase tracking-wider bg-red-500/15 hover:bg-red-500/35 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 transition-all cursor-pointer"
+                                            title="Snooze overdue alert for 24 hours"
+                                          >
+                                            <BellOff className="w-2.5 h-2.5 text-red-400" />
+                                            <span>Snooze</span>
+                                          </button>
+                                        )
                                       )}
-                                    </button>
+                                    </div>
+                                    <CellCopyButton text={val ? String(val) : ""} cellId={`${issue.key}-dueDate`} />
                                   </div>
                                 </td>
                               );
@@ -2444,7 +2831,10 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
 
                             return (
                               <td key={col.id} className="p-3 truncate max-w-[120px] text-slate-400 font-medium">
-                                {val !== null && val !== undefined ? String(val) : <span className="text-slate-600">-</span>}
+                                <div className="flex items-center justify-between gap-2 group/cell">
+                                  <span>{val !== null && val !== undefined ? String(val) : <span className="text-slate-600">-</span>}</span>
+                                  <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
+                                </div>
                               </td>
                             );
                           })}

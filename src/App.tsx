@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
@@ -122,6 +122,7 @@ export default function App() {
 
   // View Mode Switcher state
   const [viewMode, setViewMode] = useState<"dashboard" | "report">("dashboard");
+  const [showExportPanel, setShowExportPanel] = useState(true);
 
   // Jira-fetched Projects, Sprints, Assignees list (loaded on authentication)
   const [jiraProjects, setJiraProjects] = useState<{ key: string; name: string }[]>([]);
@@ -133,6 +134,11 @@ export default function App() {
   // High-Density API progress bar and Toasts notification states
   const [fetchingProgress, setFetchingProgress] = useState<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Auto-save and Keyboard Shortcuts states
+  const [savedReportToRestore, setSavedReportToRestore] = useState<GeneratedReport | null>(null);
+  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
   // Toast creation utility
   const addToast = (
@@ -354,6 +360,25 @@ export default function App() {
       localStorage.setItem("jira_recent_exports", JSON.stringify(updated));
       return updated;
     });
+  };
+
+  const handleShareReport = (): string => {
+    if (!report) return "";
+    const shareId = "exp-share-" + Date.now() + Math.random().toString(36).substring(2, 6);
+    const newExport: RecentExport = {
+      id: shareId,
+      format: "PDF",
+      filename: `Jira Share Snapshot - ${selectedProjects.length > 0 ? selectedProjects.join(", ") : "GLOBAL"}`,
+      timestamp: new Date().toISOString(),
+      projects: selectedProjects.length > 0 ? selectedProjects : ["GLOBAL"],
+      issuesSnapshot: report.issues || [],
+    };
+    setRecentExports((prev) => {
+      const updated = [newExport, ...prev].slice(0, 20);
+      localStorage.setItem("jira_recent_exports", JSON.stringify(updated));
+      return updated;
+    });
+    return `${window.location.origin}${window.location.pathname}?share=${shareId}`;
   };
 
   const handleReDownloadExport = (item: RecentExport) => {
@@ -1355,12 +1380,30 @@ export default function App() {
         e.preventDefault();
         handleGenerateReport();
       }
+      if (e.key.toLowerCase() === "p" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        addToast("Print Layout", "Preparing layout and opening print dialog...", "info", 2000);
+        window.print();
+      }
       if (e.key.toLowerCase() === "e" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        const input = document.getElementById("table-search-input");
-        if (input) {
-          input.focus();
-          addToast("Search Focused", "Global search bar has been focused. Press Esc or click away to close.", "info", 2000);
+        if (e.shiftKey) {
+          setShowExportPanel((prev) => {
+            const next = !prev;
+            addToast(
+              next ? "Export Panel Displayed" : "Export Panel Hidden",
+              next ? "The Export & Output Automation panel is now visible." : "The Export & Output Automation panel has been hidden.",
+              "info",
+              2500
+            );
+            return next;
+          });
+        } else {
+          const input = document.getElementById("table-search-input");
+          if (input) {
+            input.focus();
+            addToast("Search Focused", "Global search bar has been focused. Press Esc or click away to close.", "info", 2000);
+          }
         }
       }
     };
@@ -1387,7 +1430,8 @@ export default function App() {
     fileNamingRule,
     sessionId,
     isSandbox,
-    summaryTone
+    summaryTone,
+    showExportPanel
   ]);
 
   // Auto-Run on Login (Triggers a generation shortly after app boots)
@@ -1400,6 +1444,35 @@ export default function App() {
       return () => clearTimeout(delay);
     }
   }, []);
+
+  // Check for auto-saved report state on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("last_viewed_report");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as GeneratedReport;
+        if (parsed && parsed.issues && parsed.issues.length > 0) {
+          // Verify that we're not currently loading a shared URL snapshot (?share=)
+          const searchParams = new URLSearchParams(window.location.search);
+          if (!searchParams.has("share")) {
+            setSavedReportToRestore(parsed);
+            setShowRestorePrompt(true);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to parse last_viewed_report", e);
+      }
+    }
+  }, []);
+
+  // Periodically save current report state to localStorage
+  useEffect(() => {
+    if (!report) return;
+    const interval = setInterval(() => {
+      localStorage.setItem("last_viewed_report", JSON.stringify(report));
+    }, 10000); // Auto-save every 10 seconds
+    return () => clearInterval(interval);
+  }, [report]);
 
   // Restore Shared Export Snapshot via URL Link
   useEffect(() => {
@@ -1785,6 +1858,34 @@ export default function App() {
               </select>
             </div>
 
+            {/* Share button */}
+            {report && (
+              <button
+                type="button"
+                onClick={() => {
+                  const url = handleShareReport();
+                  if (url) {
+                    navigator.clipboard.writeText(url).then(() => {
+                      addToast(
+                        "Link Copied",
+                        "Shareable URL link copied to clipboard. Share with others to display this report snapshot.",
+                        "success",
+                        3000
+                      );
+                    }).catch(() => {
+                      addToast("Share Failed", "Unable to copy share link to clipboard.", "error", 2500);
+                    });
+                  }
+                }}
+                disabled={generating}
+                className="bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-white/5 hover:border-slate-700 font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98] cursor-pointer"
+                title="Generate a direct link to this report snapshot and copy to clipboard"
+              >
+                <Share2 className="w-4 h-4 text-blue-400" />
+                <span>Share Snapshot</span>
+              </button>
+            )}
+
             {/* Run button */}
             <button
               onClick={handleGenerateReport}
@@ -1818,6 +1919,49 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* Auto-save Restore Prompt Banner */}
+      {showRestorePrompt && savedReportToRestore && (
+        <div className="bg-slate-950 border-b border-blue-500/30 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 z-40 relative">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
+              <Sparkles className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-xs font-extrabold text-slate-100 uppercase tracking-wider">
+                Restore Previous Report State?
+              </h4>
+              <p className="text-[11px] text-slate-400 font-medium mt-0.5 leading-relaxed">
+                An auto-saved report snapshot from your last session is available ({savedReportToRestore.issues?.length || 0} issues, generated {new Date(savedReportToRestore.timestamp).toLocaleTimeString()}).
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              onClick={() => {
+                setShowRestorePrompt(false);
+                setSavedReportToRestore(null);
+                localStorage.removeItem("last_viewed_report");
+                addToast("Prompt Dismissed", "The previous report state has been discarded.", "info", 2000);
+              }}
+              className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 hover:text-slate-200 px-4 py-2 rounded-xl border border-white/5 hover:border-slate-800 transition-all cursor-pointer"
+            >
+              Discard
+            </button>
+            <button
+              onClick={() => {
+                setReport(savedReportToRestore);
+                setShowRestorePrompt(false);
+                setSavedReportToRestore(null);
+                addToast("Report Restored", "Successfully restored your previous report snapshot state.", "success", 3000);
+              }}
+              className="text-[10px] font-extrabold uppercase tracking-wider bg-blue-600 hover:bg-blue-500 text-white px-4.5 py-2 rounded-xl transition-all shadow-md shadow-blue-500/10 active:scale-[0.98] cursor-pointer"
+            >
+              Restore State
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main layout grids */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -1966,33 +2110,35 @@ export default function App() {
             onChangeVisualizations={setVisualizations}
           />
 
-           <ExportPanel
-            exportFormat={exportFormat}
-            onChangeExportFormat={setExportFormat}
-            autoExport={autoExport}
-            onChangeAutoExport={setAutoExport}
-            fileNamingRule={fileNamingRule}
-            onChangeFileNamingRule={setFileNamingRule}
-            recentExports={recentExports}
-            onTriggerExport={handleTriggerExport}
-            summaryTone={summaryTone}
-            onChangeSummaryTone={setSummaryTone}
-            autoRunOnLogin={autoRunOnLogin}
-            onChangeAutoRunOnLogin={handleUpdateAutoRunOnLogin}
-            repeatHourly={repeatHourly}
-            onChangeRepeatHourly={handleUpdateRepeatHourly}
-            onReDownloadExport={handleReDownloadExport}
-            onExportPng={handleExportPng}
-            customNote={pdfCustomNote}
-            onChangeCustomNote={setPdfCustomNote}
-            watermark={pdfWatermark}
-            onChangeWatermark={setPdfWatermark}
-            onClearHistory={() => {
-              setRecentExports([]);
-              localStorage.removeItem("jira_recent_exports");
-              addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
-            }}
-          />
+           {showExportPanel && (
+             <ExportPanel
+              exportFormat={exportFormat}
+              onChangeExportFormat={setExportFormat}
+              autoExport={autoExport}
+              onChangeAutoExport={setAutoExport}
+              fileNamingRule={fileNamingRule}
+              onChangeFileNamingRule={setFileNamingRule}
+              recentExports={recentExports}
+              onTriggerExport={handleTriggerExport}
+              summaryTone={summaryTone}
+              onChangeSummaryTone={setSummaryTone}
+              autoRunOnLogin={autoRunOnLogin}
+              onChangeAutoRunOnLogin={handleUpdateAutoRunOnLogin}
+              repeatHourly={repeatHourly}
+              onChangeRepeatHourly={handleUpdateRepeatHourly}
+              onReDownloadExport={handleReDownloadExport}
+              onExportPng={handleExportPng}
+              customNote={pdfCustomNote}
+              onChangeCustomNote={setPdfCustomNote}
+              watermark={pdfWatermark}
+              onChangeWatermark={setPdfWatermark}
+              onClearHistory={() => {
+                setRecentExports([]);
+                localStorage.removeItem("jira_recent_exports");
+                addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
+              }}
+            />
+          )}
         </section>
 
         {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
@@ -2057,6 +2203,7 @@ export default function App() {
               setReport((prev) => (prev ? { ...prev, issues: updatedIssues } : null));
             }}
             onRefreshData={() => handleGenerateReport()}
+            onShareReport={handleShareReport}
           />
         </section>
       </main>

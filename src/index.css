@@ -11,18 +11,20 @@ body {
   color: #cbd5e1;
 }
 
-/* High Contrast Light Theme Overrides */
+/* Premium Glassmorphism Light Theme Overrides */
 .light-theme {
-  background-color: #ffffff !important;
-  color: #090d1a !important;
+  background: radial-gradient(ellipse at 50% -20%, rgba(59, 130, 246, 0.08), rgba(248, 250, 252, 0.95)) !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
 }
 
 .light-theme body {
-  background-color: #ffffff !important;
-  color: #090d1a !important;
+  background: radial-gradient(ellipse at 50% -20%, rgba(59, 130, 246, 0.08), rgba(248, 250, 252, 0.95)) !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
 }
 
-/* Override all cards/panels to have white background, deep slate border, and dark text */
+/* Override all cards/panels to have modern glassmorphism style */
 .light-theme div[id$="-card"],
 .light-theme div[id="dashboard-visuals-container"],
 .light-theme .bg-slate-900\/40,
@@ -35,11 +37,13 @@ body {
 .light-theme .bg-slate-950\/60,
 .light-theme .bg-slate-900\/30,
 .light-theme .bg-slate-900\/60 {
-  background-color: #ffffff !important;
-  border-color: #000000 !important;
-  border-width: 2px !important;
-  color: #000000 !important;
-  box-shadow: none !important;
+  background-color: rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-color: rgba(15, 23, 42, 0.06) !important;
+  border-width: 1px !important;
+  color: #0f172a !important;
+  box-shadow: 0 8px 32px 0 rgba(15, 23, 42, 0.03), inset 0 1px 1px 0 rgba(255, 255, 255, 0.8) !important;
 }
 
 /* Text overrides */
@@ -50,61 +54,65 @@ body {
 .light-theme h5,
 .light-theme h6,
 .light-theme .text-white,
+.light-theme .text-slate-100,
 .light-theme .text-slate-200,
 .light-theme .text-slate-300 {
-  color: #000000 !important;
+  color: #0f172a !important;
 }
 
 .light-theme .text-slate-400,
 .light-theme .text-slate-500,
 .light-theme .text-slate-600 {
-  color: #1e293b !important;
+  color: #475569 !important;
 }
 
 /* Input/select fields overrides */
 .light-theme input,
 .light-theme select,
 .light-theme textarea {
-  background-color: #ffffff !important;
-  border-color: #000000 !important;
-  border-width: 2px !important;
-  color: #000000 !important;
+  background-color: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(8px) !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  border-width: 1px !important;
+  color: #0f172a !important;
+  box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.02) !important;
 }
 
 .light-theme input::placeholder {
-  color: #475569 !important;
+  color: #94a3b8 !important;
 }
 
 /* Button & Border overrides */
 .light-theme .border-white\/5,
 .light-theme .border-white\/10 {
-  border-color: #000000 !important;
-  border-width: 2px !important;
+  border-color: rgba(15, 23, 42, 0.06) !important;
+  border-width: 1px !important;
 }
 
 /* Table overrides */
 .light-theme table,
 .light-theme th,
 .light-theme td {
-  border-color: #000000 !important;
+  border-color: rgba(15, 23, 42, 0.06) !important;
+  border-width: 1px !important;
 }
 
 .light-theme th {
-  background-color: #f1f5f9 !important;
-  color: #000000 !important;
+  background-color: rgba(15, 23, 42, 0.02) !important;
+  color: #0f172a !important;
 }
 
 .light-theme tr:hover {
-  background-color: #f1f5f9 !important;
+  background-color: rgba(15, 23, 42, 0.01) !important;
 }
 
 /* Specific text/link overrides */
 .light-theme a {
-  color: #1d4ed8 !important;
+  color: #2563eb !important;
   font-weight: 700 !important;
 }
 .light-theme a:hover {
-  color: #1e40af !important;
+  color: #1d4ed8 !important;
 }
 
 /* Automatically transition colors based on theme state without re-render triggers */

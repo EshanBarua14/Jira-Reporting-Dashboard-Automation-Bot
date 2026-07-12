@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { 
   Download, FileOutput, HelpCircle, FileSpreadsheet, FileText, Cloud, Clock, 
-  Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check
+  Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check,
+  Database, Code, FileJson
 } from "lucide-react";
 import { RecentExport } from "../types";
 
@@ -13,7 +14,7 @@ interface ExportPanelProps {
   fileNamingRule: string;
   onChangeFileNamingRule: (rule: string) => void;
   recentExports?: RecentExport[];
-  onTriggerExport?: (format: "CSV" | "PDF" | "Google Sheets") => void;
+  onTriggerExport?: (format: "CSV" | "PDF" | "Google Sheets" | "JSON") => void;
   
   // Custom enhanced props
   summaryTone: "Optimistic" | "Conservative" | "Neutral";
@@ -25,6 +26,7 @@ interface ExportPanelProps {
   onReDownloadExport?: (item: RecentExport) => void;
   onClearHistory?: () => void;
   onExportPng?: () => void;
+  onExportJson?: () => void;
 
   customNote: string;
   onChangeCustomNote: (val: string) => void;
@@ -51,6 +53,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onReDownloadExport,
   onClearHistory,
   onExportPng,
+  onExportJson,
 
   customNote,
   onChangeCustomNote,
@@ -236,6 +239,23 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </button>
       </div>
 
+      {/* --- DEVELOPER DATASET JSON EXPORT --- */}
+      <div className="space-y-2 p-3 bg-slate-950/20 border border-white/5 rounded-xl">
+        <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+          <Database className="w-3.5 h-3.5 text-amber-400" /> Developer Dataset JSON
+        </label>
+        <p className="text-[10px] text-slate-500 font-medium leading-normal">
+          Export the complete report.issues and report.metrics structured datasets for advanced custom data analysis.
+        </p>
+        <button
+          type="button"
+          onClick={onExportJson}
+          className="w-full text-[10.5px] py-2.5 px-3 rounded-lg border font-bold bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300 transition-all duration-300 flex items-center justify-center gap-1.5 uppercase cursor-pointer hover:shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+        >
+          <Code className="w-3.5 h-3.5" /> Download raw JSON
+        </button>
+      </div>
+
       {/* Select export formats */}
       <div className="space-y-2">
         <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
@@ -403,6 +423,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     <div className="p-1 rounded bg-slate-900 border border-white/5 shrink-0 group-hover:border-blue-500/20 transition-colors">
                       {item.format === "CSV" && <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />}
                       {item.format === "PDF" && <FileText className="w-3.5 h-3.5 text-red-400" />}
+                      {item.format === "JSON" && <FileJson className="w-3.5 h-3.5 text-amber-400" />}
                       {item.format === "Google Sheets" && <Cloud className="w-3.5 h-3.5 text-sky-400" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -422,9 +443,10 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
                       item.format === "CSV" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                       item.format === "PDF" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
+                      item.format === "JSON" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
                       "bg-sky-500/10 text-sky-400 border border-sky-500/20"
                     }`}>
-                      {item.format === "CSV" ? "CSV" : item.format === "PDF" ? "PDF" : "Sheets"}
+                      {item.format === "CSV" ? "CSV" : item.format === "PDF" ? "PDF" : item.format === "JSON" ? "JSON" : "Sheets"}
                     </span>
                     <button
                       type="button"
@@ -537,6 +559,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                         <div className="p-2 rounded-xl bg-slate-900 border border-white/5 shrink-0 group-hover:border-blue-500/25 transition-colors">
                           {item.format === "CSV" && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
                           {item.format === "PDF" && <FileText className="w-4 h-4 text-red-400" />}
+                          {item.format === "JSON" && <FileJson className="w-4 h-4 text-amber-400" />}
                           {item.format === "Google Sheets" && <Cloud className="w-4 h-4 text-sky-400" />}
                         </div>
                         <div className="min-w-0">

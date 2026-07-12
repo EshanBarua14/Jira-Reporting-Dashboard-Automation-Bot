@@ -51,7 +51,7 @@ interface ReportDashboardProps {
   onExportSheets: () => void;
   jiraUrl?: string;
   isSandbox?: boolean;
-  onRecordExport?: (format: "CSV" | "PDF" | "Google Sheets", filename: string) => void;
+  onRecordExport?: (format: "CSV" | "PDF" | "Google Sheets" | "JSON", filename: string) => void;
   categoryColors?: Record<string, string>;
   metricsHistory?: any[];
   onUpdateIssues?: (updatedIssues: JiraIssue[]) => void;
@@ -67,6 +67,9 @@ interface ReportDashboardProps {
     avatarUrl?: string;
   } | null;
   onShareReport?: () => string;
+  onRefreshSummary?: () => void;
+  refreshingSummary?: boolean;
+  onTriggerPrintPreview?: () => void;
 }
 
 const containerVariants = {
@@ -141,8 +144,12 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   theme,
   activeUser,
   onShareReport,
+  onRefreshSummary,
+  refreshingSummary = false,
+  onTriggerPrintPreview,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortField, setSortField] = useState<string>("key");
@@ -223,6 +230,67 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
         )}
       </button>
     );
+  };
+
+  const [copiedSummary, setCopiedSummary] = useState(false);
+
+  const handleCopySummary = () => {
+    if (!aiSummary) return;
+    const content = `JIRA PMO EXECUTIVE SMART SUMMARY
+Generated At: ${new Date(timestamp).toLocaleString()}
+--------------------------------------------------
+
+HEALTH EVALUATION:
+${aiSummary.summary}
+
+KEY INSIGHTS:
+${aiSummary.keyInsights.map((insight) => `- ${insight}`).join("\n")}
+
+BOTTLENECKS:
+${aiSummary.bottlenecks.map((b) => `- ${b}`).join("\n")}
+
+PM ACTION RECOMMENDATIONS:
+${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
+`;
+
+    navigator.clipboard.writeText(content).then(() => {
+      setCopiedSummary(true);
+      addToast?.("Summary Copied", "Executive summary copied to clipboard.", "success", 2000);
+      setTimeout(() => setCopiedSummary(false), 2000);
+    }).catch(() => {
+      addToast?.("Copy Failed", "Unable to copy summary to clipboard.", "error", 2000);
+    });
+  };
+
+  const handleSaveAsText = () => {
+    if (!aiSummary) return;
+    const content = `JIRA PMO EXECUTIVE SMART SUMMARY
+Generated At: ${new Date(timestamp).toLocaleString()}
+--------------------------------------------------
+
+HEALTH EVALUATION:
+${aiSummary.summary}
+
+KEY INSIGHTS:
+${aiSummary.keyInsights.map((insight) => `- ${insight}`).join("\n")}
+
+BOTTLENECKS:
+${aiSummary.bottlenecks.map((b) => `- ${b}`).join("\n")}
+
+PM ACTION RECOMMENDATIONS:
+${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
+`;
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Jira_Executive_Summary_${new Date(timestamp).toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addToast?.("Saved as Text", "Executive summary downloaded successfully.", "success", 2000);
   };
 
   const getSubtasksForIssue = (issue: JiraIssue) => {
@@ -678,6 +746,18 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       }
     }
 
+    // Table Quick Filter Pills
+    if (tableQuickFilter !== "All") {
+      if (tableQuickFilter === "Overdue") {
+        const todayStr = new Date().toISOString().split("T")[0];
+        result = result.filter((i) => i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done");
+      } else if (tableQuickFilter === "Unassigned") {
+        result = result.filter((i) => !i.assignee || i.assignee === "Unassigned" || i.assignee.toLowerCase() === "unassigned");
+      } else if (tableQuickFilter === "Blocked") {
+        result = result.filter((i) => i.mappedStatus === "Blocked" || i.status.toLowerCase().includes("block") || i.status.toLowerCase() === "blocked");
+      }
+    }
+
     // Search query filter (summary, key, assignee)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -718,7 +798,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
     });
 
     return result;
-  }, [report?.issues, activeMetricFilter, searchQuery, sortField, sortDirection]);
+  }, [report?.issues, activeMetricFilter, searchQuery, sortField, sortDirection, tableQuickFilter]);
 
   // Paginated Issues
   const paginatedIssues = useMemo(() => {
@@ -800,6 +880,17 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
     }
   };
 
+  const downloadSearchedCSV = () => {
+    const name = "Quick_Export_" + safeConfig.fileNamingRule
+      .replace("{project}", safeConfig.selectedProjects.join("_"))
+      .replace("{date}", new Date().toISOString().split("T")[0]) + ".csv";
+    exportToCSV(filteredIssues, safeConfig.columns, name);
+    if (onRecordExport) {
+      onRecordExport("CSV", name);
+    }
+    addToast?.("Quick Export Successful", `Exported ${filteredIssues.length} searched issues to CSV.`, "success", 2000);
+  };
+
   const downloadPDF = () => {
     const name = safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
@@ -833,9 +924,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
       curVal = report?.issues.filter(i => i.type === "Bug").length || 0;
     }
 
-    if (prevVal === 0) return null;
     const diff = curVal - prevVal;
-    const pct = Math.round((diff / prevVal) * 100);
+    const pct = prevVal === 0 ? 0 : Math.round((diff / prevVal) * 100);
     if (diff === 0) return <span className="text-[9px] text-slate-500 font-bold ml-1">Stable</span>;
 
     const isBadMetric = ["overdueIssues", "unassignedIssues"].includes(metricId);
@@ -844,7 +934,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
 
     return (
       <span className={`text-[9.5px] font-black flex items-center ml-1 shrink-0 ${isGood ? "text-emerald-400" : "text-rose-400"}`}>
-        {isUp ? "▲" : "▼"} {Math.abs(pct)}%
+        {isUp ? "▲" : "▼"} {diff > 0 ? "+" : ""}{diff} {prevVal !== 0 ? `(${Math.abs(pct)}%)` : ""}
       </span>
     );
   };
@@ -1263,6 +1353,16 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                     <button
                       onClick={() => {
                         setIsExportDropdownOpen(false);
+                        onTriggerPrintPreview?.();
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 font-bold flex items-center gap-2.5 transition-colors"
+                    >
+                      <Eye className="w-4 h-4 text-purple-400" />
+                      <span>Print Preview Modal</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsExportDropdownOpen(false);
                         onExportSheets();
                       }}
                       className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 font-bold flex items-center gap-2.5 transition-colors"
@@ -1638,15 +1738,70 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
 
         {/* 2. Gemini AI Executive Smart Summary */}
         {aiSummary && (
-          <div className="bg-gradient-to-r from-blue-950/20 to-indigo-950/10 rounded-xl border border-blue-900/30 p-5 shadow-sm relative overflow-hidden">
+          <motion.div
+            id="jira-report-summary-container"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: "easeOut" }}
+            className="bg-gradient-to-r from-blue-950/20 to-indigo-950/10 rounded-xl border border-blue-900/30 p-5 shadow-sm relative overflow-hidden"
+          >
             <div className="absolute right-4 top-4 text-blue-950/40 font-bold text-7xl select-none pointer-events-none">AI</div>
-            <div className="flex items-center gap-2 mb-3.5">
-              <div className="bg-blue-600 text-white p-1 rounded">
-                <Sparkles className="w-4 h-4" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3.5 border-b border-blue-900/20 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-600 text-white p-1 rounded">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-blue-200 uppercase tracking-wider">Gemini AI Executive Assessment</h3>
+                  <p className="text-[9px] text-blue-400 mt-0.5 font-mono">Analyzed at {new Date(timestamp).toLocaleTimeString()}</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xs font-bold text-blue-200 uppercase tracking-wider">Gemini AI Executive Assessment</h3>
-                <p className="text-[9px] text-blue-400 mt-0.5 font-mono">Analyzed at {new Date(timestamp).toLocaleTimeString()}</p>
+              
+              {/* Actions Toolbar */}
+              <div className="flex items-center gap-2 shrink-0 z-10">
+                {/* Refresh Button */}
+                {onRefreshSummary && (
+                  <button
+                    type="button"
+                    disabled={refreshingSummary}
+                    onClick={onRefreshSummary}
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      refreshingSummary
+                        ? "bg-blue-950/40 border-blue-900/30 text-blue-450"
+                        : "bg-slate-900 border-white/5 hover:border-blue-500/30 text-slate-300 hover:text-blue-400"
+                    }`}
+                    title="Refresh executive summary with new or current scope insights"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshingSummary ? "animate-spin text-blue-400" : "text-blue-400"}`} />
+                    <span>{refreshingSummary ? "Refreshing..." : "Refresh"}</span>
+                  </button>
+                )}
+
+                {/* Copy Button */}
+                <button
+                  type="button"
+                  onClick={handleCopySummary}
+                  className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 hover:border-blue-500/30 text-slate-300 hover:text-blue-400 transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Copy full executive summary to clipboard"
+                >
+                  {copiedSummary ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                  <span>{copiedSummary ? "Copied" : "Copy"}</span>
+                </button>
+
+                {/* Save as Text Button */}
+                <button
+                  type="button"
+                  onClick={handleSaveAsText}
+                  className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 hover:border-blue-500/30 text-slate-300 hover:text-blue-400 transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Download executive summary as a .txt file"
+                >
+                  <Download className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Save as Text</span>
+                </button>
               </div>
             </div>
 
@@ -1693,7 +1848,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                 ))}
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* Sprint Comparison Growth Table */}
@@ -2436,7 +2591,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
             )}
 
             <div className="flex flex-wrap items-center gap-2">
-              {/* Search */}
+              {/* Search with 'Quick Export' action icon */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
                 <input
@@ -2448,26 +2603,20 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                     setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded pl-8 pr-3 py-1.5 w-full sm:w-56 focus:outline-none focus:border-blue-500 placeholder-slate-500 font-medium"
+                  className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded pl-8 pr-9 py-1.5 w-full sm:w-56 focus:outline-none focus:border-blue-500 placeholder-slate-500 font-medium"
                 />
+                {/* 'Quick Export' Action Icon at the end of the search bar */}
+                <button
+                  type="button"
+                  onClick={downloadSearchedCSV}
+                  className="absolute right-2 top-2 p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition-all cursor-pointer flex items-center justify-center animate-pulse hover:animate-none"
+                  title="Quick Export currently searched/filtered subset of issues to CSV"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                </button>
               </div>
 
-              {/* Rows Per Page */}
-              <select
-                value={rowsPerPage}
-                onChange={(e) => {
-                  setRowsPerPage(Number(e.target.value));
-                  setCurrentPage(1);
-                }}
-                className="bg-slate-900 border border-slate-700 text-slate-250 text-xs rounded px-2.5 py-1.5 focus:outline-none font-bold"
-              >
-                <option value={5}>5 Rows</option>
-                <option value={10}>10 Rows</option>
-                <option value={25}>25 Rows</option>
-                <option value={50}>50 Rows</option>
-              </select>
-
-              {/* Dynamic Sort Selector */}
+              {/* Sorting Dropdown next to/as part of the search bar area */}
               <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2.5 py-1.5 focus-within:border-blue-500">
                 <span className="text-[9px] uppercase font-black text-slate-500 tracking-wider">Sort:</span>
                 <select
@@ -2479,8 +2628,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                   className="bg-transparent text-xs font-bold text-slate-200 focus:outline-none cursor-pointer hover:text-white"
                 >
                   <option value="key" className="bg-slate-900 text-slate-200">Issue Key</option>
-                  <option value="created" className="bg-slate-900 text-slate-200">Created Date</option>
-                  <option value="priority" className="bg-slate-900 text-slate-200">Priority</option>
+                  <option value="mappedStatus" className="bg-slate-900 text-slate-200">Status</option>
+                  <option value="created" className="bg-slate-900 text-slate-200">Date</option>
                 </select>
                 <button
                   type="button"
@@ -2499,6 +2648,46 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                 </button>
               </div>
 
+              {/* Quick-filter Pills */}
+              <div className="flex items-center gap-1.5 bg-slate-950/40 p-1 rounded border border-slate-800">
+                <span className="text-[9px] uppercase font-black text-slate-500 tracking-wider px-1.5">Filter:</span>
+                {(["All", "Overdue", "Unassigned", "Blocked"] as const).map((filter) => {
+                  const isActive = tableQuickFilter === filter;
+                  return (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => {
+                        setTableQuickFilter(filter);
+                        setCurrentPage(1);
+                      }}
+                      className={`text-[9.5px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer uppercase tracking-wider ${
+                        isActive
+                          ? "bg-blue-600 text-white shadow-md font-extrabold"
+                          : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                      }`}
+                    >
+                      {filter}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Rows Per Page */}
+              <select
+                value={rowsPerPage}
+                onChange={(e) => {
+                  setRowsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="bg-slate-900 border border-slate-700 text-slate-250 text-xs rounded px-2.5 py-1.5 focus:outline-none font-bold"
+              >
+                <option value={5}>5 Rows</option>
+                <option value={10}>10 Rows</option>
+                <option value={25}>25 Rows</option>
+                <option value={50}>50 Rows</option>
+              </select>
+
               {/* Export Button Drawer */}
               <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
                 <button
@@ -2516,6 +2705,14 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
                 >
                   <Printer className="w-3.5 h-3.5 text-slate-400" />
                   <span className="hidden lg:inline">PDF</span>
+                </button>
+                <button
+                  onClick={onTriggerPrintPreview}
+                  className="bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 p-1.5 rounded text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Show exactly how the report will look on paper before printing"
+                >
+                  <Eye className="w-3.5 h-3.5 text-purple-400" />
+                  <span className="hidden lg:inline">Print Preview</span>
                 </button>
                 <button
                   onClick={onExportSheets}

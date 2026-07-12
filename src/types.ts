@@ -140,7 +140,7 @@ export interface GeneratedReport {
 
 export interface RecentExport {
   id: string;
-  format: "CSV" | "PDF" | "Google Sheets";
+  format: "CSV" | "PDF" | "Google Sheets" | "JSON";
   filename: string;
   timestamp: string;
   projects: string[];

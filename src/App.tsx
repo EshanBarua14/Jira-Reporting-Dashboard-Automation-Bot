@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
@@ -13,6 +13,8 @@ import { DiagnosticConsole } from "./components/DiagnosticConsole";
 import { ToastNotification, Toast } from "./components/ToastNotification";
 import { motion } from "motion/react";
 import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog } from "./types";
+import { RecentSearch, RecentSearchesPanel } from "./components/RecentSearchesPanel";
+import { PrintPreviewModal } from "./components/PrintPreviewModal";
 
 import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues, filterSandboxConfluence, filterSandboxDiscord } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
@@ -139,6 +141,7 @@ export default function App() {
   const [savedReportToRestore, setSavedReportToRestore] = useState<GeneratedReport | null>(null);
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [refreshingSummary, setRefreshingSummary] = useState(false);
 
   // Toast creation utility
   const addToast = (
@@ -336,6 +339,25 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Print Preview open state
+  const [isPrintPreviewOpen, setIsPrintPreviewOpen] = useState(false);
+
+  // Recent searches cache state
+  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>(() => {
+    const saved = localStorage.getItem("jira_recent_searches");
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleClearSearches = () => {
+    setRecentSearches([]);
+    localStorage.removeItem("jira_recent_searches");
+    addToast("Recent Searches Cleared", "Successfully cleared cached query history.", "info", 3000);
+  };
+
   // Recent exports log state (retained in memory and localStorage across generation cycles)
   const [recentExports, setRecentExports] = useState<RecentExport[]>(() => {
     const saved = localStorage.getItem("jira_recent_exports");
@@ -346,7 +368,7 @@ export default function App() {
     }
   });
 
-  const recordExport = (format: "CSV" | "PDF" | "Google Sheets", filename: string, snapshotIssues?: JiraIssue[]) => {
+  const recordExport = (format: "CSV" | "PDF" | "Google Sheets" | "JSON", filename: string, snapshotIssues?: JiraIssue[]) => {
     const newExport: RecentExport = {
       id: "exp-" + Date.now() + Math.random().toString(36).substring(2, 6),
       format,
@@ -359,6 +381,75 @@ export default function App() {
       const updated = [newExport, ...prev].slice(0, 20);
       localStorage.setItem("jira_recent_exports", JSON.stringify(updated));
       return updated;
+    });
+  };
+
+  const handleExportJson = () => {
+    if (!report) {
+      addToast(
+        "No Report Data",
+        "Please generate a report first before trying to export.",
+        "warning",
+        3000
+      );
+      return;
+    }
+    const filename = getFormattedFilename(fileNamingRule, selectedProjects) + ".json";
+    const exportData = {
+      issues: report.issues,
+      metrics: report.metrics,
+      generatedAt: report.timestamp,
+      projects: selectedProjects,
+    };
+    
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", filename);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    
+    recordExport("JSON", filename, report.issues);
+    addToast("JSON Export Successful", `File "${filename}" has been prepared and downloaded.`, "success", 4000);
+  };
+
+  const handleSelectSearch = (search: RecentSearch) => {
+    setSelectedProjects(search.config.selectedProjects);
+    setSelectedIssueTypes(search.config.selectedIssueTypes);
+    setSelectedStatuses(search.config.selectedStatuses);
+    setCreatedDateStart(search.config.createdDateStart);
+    setCreatedDateEnd(search.config.createdDateEnd);
+    setUpdatedDateStart(search.config.updatedDateStart);
+    setUpdatedDateEnd(search.config.updatedDateEnd);
+    setSelectedSprint(search.config.selectedSprint);
+    setSelectedAssignee(search.config.selectedAssignee);
+    
+    addToast(
+      "Search Restored",
+      "Restored parameters. Executing JQL report...",
+      "info",
+      3000
+    );
+
+    // Call generate with config override
+    handleGenerateReport({
+      selectedProjects: search.config.selectedProjects,
+      selectedIssueTypes: search.config.selectedIssueTypes,
+      selectedStatuses: search.config.selectedStatuses,
+      createdDateStart: search.config.createdDateStart,
+      createdDateEnd: search.config.createdDateEnd,
+      updatedDateStart: search.config.updatedDateStart,
+      updatedDateEnd: search.config.updatedDateEnd,
+      selectedSprint: search.config.selectedSprint,
+      selectedAssignee: search.config.selectedAssignee,
+      statusMapping,
+      columns,
+      metrics,
+      visualizations,
+      exportFormat,
+      autoExport,
+      fileNamingRule,
     });
   };
 
@@ -379,6 +470,58 @@ export default function App() {
       return updated;
     });
     return `${window.location.origin}${window.location.pathname}?share=${shareId}`;
+  };
+
+  const handleRefreshSummary = async () => {
+    if (!report) return;
+    setRefreshingSummary(true);
+    addToast("Refreshing Summary", "Re-fetching executive assessment from Gemini...", "info", 2000);
+    try {
+      const summaryRes = await fetch("/api/gemini/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          metrics: report.metrics,
+          projectScope: selectedProjects.length > 0 ? selectedProjects : ["GLOBAL"],
+          summaryTone: summaryTone,
+        }),
+      });
+      if (summaryRes.ok) {
+        const sData = await summaryRes.json();
+        if (sData.aiSummary) {
+          setReport((prev) => prev ? { ...prev, aiSummary: sData.aiSummary } : null);
+          addToast("Summary Refreshed", "Executive summary has been updated successfully.", "success", 2500);
+        } else {
+          throw new Error("No summary returned");
+        }
+      } else {
+        throw new Error("Summary request failed");
+      }
+    } catch (err) {
+      console.error("Failed to refresh Gemini summary:", err);
+      // Fallback local builder
+      const fallbackSummary: ExecutiveSummary = {
+        summary: `The project scope is operating at a ${report.metrics.completionPercentage}% resolution rate across active repositories. Velocity is healthy, but attention is required on resolving overdue bugs to secure the current timeline. (Refreshed)`,
+        keyInsights: [
+          `Completed story points have accumulated to a total velocity of ${report.metrics.sprintVelocity} SP.`,
+          `The core workload is led by Sarah Connor and Marcus Wright with stable performance.`,
+          `Cycle time is averaged at ${report.metrics.averageCycleTime} days per completed epic or bug ticket.`
+        ],
+        bottlenecks: [
+          `${report.metrics.overdueIssues} critical tickets have missed their due date schedules.`,
+          `${report.metrics.unassignedIssues} tickets currently lack team ownership and resource allocations.`
+        ],
+        recommendations: [
+          `Triage unassigned tickets immediately to avoid sprint spillover.`,
+          `Relieve team dependencies on blocked items before launching future milestones.`,
+          `Prioritize overdue critical bugs in the morning scrum.`
+        ],
+      };
+      setReport((prev) => prev ? { ...prev, aiSummary: fallbackSummary } : null);
+      addToast("Local Summary Loaded", "Gemini key is unset or network error. Loaded fallback PMO summary.", "warning", 3000);
+    } finally {
+      setRefreshingSummary(false);
+    }
   };
 
   const handleReDownloadExport = (item: RecentExport) => {
@@ -1320,6 +1463,63 @@ export default function App() {
       };
 
       setReport(generatedReport);
+
+      // Reconstruct the JQL string used for this search
+      const jqlParts: string[] = [];
+      if (reportConfig.selectedProjects && reportConfig.selectedProjects.length > 0) {
+        jqlParts.push(`project IN (${reportConfig.selectedProjects.map(p => `"${p}"`).join(",")})`);
+      }
+      if (reportConfig.selectedIssueTypes && reportConfig.selectedIssueTypes.length > 0) {
+        jqlParts.push(`issuetype IN (${reportConfig.selectedIssueTypes.map(t => `"${t}"`).join(",")})`);
+      }
+      if (reportConfig.selectedStatuses && reportConfig.selectedStatuses.length > 0) {
+        jqlParts.push(`status IN (${reportConfig.selectedStatuses.map(s => `"${s}"`).join(",")})`);
+      }
+      if (reportConfig.createdDateStart) {
+        jqlParts.push(`created >= "${reportConfig.createdDateStart}"`);
+      }
+      if (reportConfig.createdDateEnd) {
+        jqlParts.push(`created <= "${reportConfig.createdDateEnd}"`);
+      }
+      if (reportConfig.updatedDateStart) {
+        jqlParts.push(`updated >= "${reportConfig.updatedDateStart}"`);
+      }
+      if (reportConfig.updatedDateEnd) {
+        jqlParts.push(`updated <= "${reportConfig.updatedDateEnd}"`);
+      }
+      if (reportConfig.selectedSprint) {
+        jqlParts.push(`sprint = "${reportConfig.selectedSprint}"`);
+      }
+      if (reportConfig.selectedAssignee) {
+        jqlParts.push(`assignee = "${reportConfig.selectedAssignee}"`);
+      }
+      const queryJql = jqlParts.join(" AND ") || "order by created desc";
+
+      // Save to JQL Searches Registry
+      const newSearchEntry: RecentSearch = {
+        id: "src-" + Date.now() + Math.random().toString(36).substring(2, 6),
+        timestamp: new Date().toISOString(),
+        jql: queryJql,
+        platform: isSandbox ? "jira" : (activePlatform as any || "jira"),
+        config: {
+          selectedProjects: [...(reportConfig.selectedProjects || [])],
+          selectedIssueTypes: [...(reportConfig.selectedIssueTypes || [])],
+          selectedStatuses: [...(reportConfig.selectedStatuses || [])],
+          createdDateStart: reportConfig.createdDateStart || "",
+          createdDateEnd: reportConfig.createdDateEnd || "",
+          updatedDateStart: reportConfig.updatedDateStart || "",
+          updatedDateEnd: reportConfig.updatedDateEnd || "",
+          selectedSprint: reportConfig.selectedSprint || "",
+          selectedAssignee: reportConfig.selectedAssignee || "",
+        }
+      };
+
+      setRecentSearches((prev) => {
+        const filtered = prev.filter(s => s.jql !== queryJql);
+        const updated = [newSearchEntry, ...filtered].slice(0, 5);
+        localStorage.setItem("jira_recent_searches", JSON.stringify(updated));
+        return updated;
+      });
       
       // Save to metrics history for trend sparkline comparison
       const newHistoryEntry = {
@@ -2039,6 +2239,12 @@ export default function App() {
             onResetToDefault={handleResetToDefault}
           />
 
+          <RecentSearchesPanel
+            recentSearches={recentSearches}
+            onSelectSearch={handleSelectSearch}
+            onClearSearches={handleClearSearches}
+          />
+
           <ScopePanel
             activePlatform={activePlatform}
             availableProjects={isSandbox ? SANDBOX_PROJECTS : jiraProjects}
@@ -2103,6 +2309,8 @@ export default function App() {
           <MetricsPanel
             metrics={metrics}
             onChangeMetrics={setMetrics}
+            report={report}
+            metricsHistory={metricsHistory}
           />
 
           <VisualizationPanel
@@ -2128,6 +2336,7 @@ export default function App() {
               onChangeRepeatHourly={handleUpdateRepeatHourly}
               onReDownloadExport={handleReDownloadExport}
               onExportPng={handleExportPng}
+              onExportJson={handleExportJson}
               customNote={pdfCustomNote}
               onChangeCustomNote={setPdfCustomNote}
               watermark={pdfWatermark}
@@ -2204,20 +2413,133 @@ export default function App() {
             }}
             onRefreshData={() => handleGenerateReport()}
             onShareReport={handleShareReport}
+            onRefreshSummary={handleRefreshSummary}
+            refreshingSummary={refreshingSummary}
+            onTriggerPrintPreview={() => setIsPrintPreviewOpen(true)}
           />
         </section>
       </main>
 
       <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
-        <div className="max-w-7xl mx-auto px-4 text-center space-y-2">
-          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">
-            Jira SyncPro Executive Dashboard • created for Xpert Fintech Ltd.
+        <div className="max-w-7xl mx-auto px-4 text-center space-y-2 relative">
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex flex-wrap items-center justify-center gap-1.5">
+            <span>Jira SyncPro Executive Dashboard</span>
+            <span className="text-slate-600">•</span>
+            <span>Crafted by Eshan Barua</span>
+            <a 
+              href="https://www.linkedin.com/in/eshanbarua" 
+              target="_blank" 
+              referrerPolicy="no-referrer" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors lowercase tracking-normal font-semibold bg-blue-950/40 hover:bg-blue-900/40 px-2 py-0.5 rounded-lg border border-blue-900/30 ml-1.5"
+            >
+              <Linkedin className="w-3.5 h-3.5" />
+              <span>linkedin/eshanbarua</span>
+            </a>
           </p>
           <p className="text-[9px] text-slate-500 leading-normal max-w-xl mx-auto font-medium">
-            Secure, credential-less Sandbox option available. Read-only Jira REST Client. 15-minute automated memory sweeping prevents caching storage.
+            Designed and engineered by Eshan Barua. Secure portfolio sandbox mode is fully operational with automated memory optimizations.
           </p>
+          <div className="pt-2 flex justify-center">
+            <button
+              onClick={() => setShowShortcutsModal(true)}
+              className="text-[10px] text-slate-400 hover:text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-blue-500/20 transition-all cursor-pointer"
+              title="View Keyboard Shortcuts"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              <span>Keyboard Shortcuts</span>
+            </button>
+          </div>
         </div>
       </footer>
+
+      {/* Keyboard Shortcuts Modal */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-[#0b0f19] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl shadow-blue-500/5">
+            {/* Header */}
+            <div className="px-6 py-4 bg-slate-900/50 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-blue-400" />
+                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-100">
+                  Keyboard Shortcuts
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800/80 p-1.5 rounded-lg transition-colors cursor-pointer"
+                title="Close shortcuts menu"
+              >
+                <span className="text-xs font-black">✕</span>
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="p-6 space-y-4">
+              <div className="space-y-3">
+                {/* Ctrl + Enter */}
+                <div className="flex items-center justify-between py-2 border-b border-slate-900">
+                  <div className="text-xs font-bold text-slate-350">Generate Report</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Ctrl</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Enter</kbd>
+                  </div>
+                </div>
+
+                {/* Ctrl + P */}
+                <div className="flex items-center justify-between py-2 border-b border-slate-900">
+                  <div className="text-xs font-bold text-slate-350">Print / Export PDF Layout</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Ctrl</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">P</kbd>
+                  </div>
+                </div>
+
+                {/* Ctrl + Shift + E */}
+                <div className="flex items-center justify-between py-2 border-b border-slate-900">
+                  <div className="text-xs font-bold text-slate-350">Toggle Export Panel</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Ctrl</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Shift</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">E</kbd>
+                  </div>
+                </div>
+
+                {/* Ctrl + E */}
+                <div className="flex items-center justify-between py-2">
+                  <div className="text-xs font-bold text-slate-350">Focus Issue Search</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Ctrl</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">E</kbd>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3.5 text-center mt-4">
+                <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                  These hotkeys work globally from anywhere on the page to streamline your analysis and reporting tasks.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic High-Fidelity Print Preview Modal */}
+      <PrintPreviewModal
+        isOpen={isPrintPreviewOpen}
+        onClose={() => setIsPrintPreviewOpen(false)}
+        reportTitle={`Jira Executive PMO Report - ${selectedProjects.join(", ")}`}
+        issues={report?.issues || []}
+        columns={columns}
+        customNote={pdfCustomNote}
+        watermark={pdfWatermark}
+      />
 
       {/* Non-blocking toast notification system */}
       <ToastNotification 

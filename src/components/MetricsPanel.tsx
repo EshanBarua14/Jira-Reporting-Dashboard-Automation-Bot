@@ -1,6 +1,6 @@
 import React from "react";
 import { AreaChart, Check } from "lucide-react";
-import { MetricDefinition } from "../types";
+import { MetricDefinition, GeneratedReport } from "../types";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -40,12 +40,61 @@ const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
 interface MetricsPanelProps {
   metrics: MetricDefinition[];
   onChangeMetrics: (newMetrics: MetricDefinition[]) => void;
+  report?: GeneratedReport | null;
+  metricsHistory?: any[];
 }
 
 export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   metrics,
   onChangeMetrics,
+  report,
+  metricsHistory = [],
 }) => {
+  const getMetricDelta = (metricId: string) => {
+    if (!report || !metricsHistory || metricsHistory.length < 2) return null;
+    const currentEntry = metricsHistory[metricsHistory.length - 1];
+    const prevEntry = metricsHistory[metricsHistory.length - 2];
+    if (!currentEntry || !prevEntry) return null;
+
+    let currentVal = 0;
+    let prevVal = 0;
+
+    if (metricId === "bugsToStoriesRatio") {
+      currentVal = currentEntry.metrics.bugsCount || 0;
+      prevVal = prevEntry.metrics.bugsCount || 0;
+    } else {
+      currentVal = (currentEntry.metrics as any)[metricId] || 0;
+      prevVal = (prevEntry.metrics as any)[metricId] || 0;
+    }
+
+    const diff = currentVal - prevVal;
+    if (diff === 0) {
+      return (
+        <span className="text-[8px] text-slate-500 font-bold ml-2 inline-flex items-center gap-0.5 bg-slate-950/40 px-1.5 py-0.5 rounded border border-white/5 uppercase tracking-wide">
+          Stable
+        </span>
+      );
+    }
+
+    const isUp = diff > 0;
+    const isBadMetric = ["overdueIssues", "unassignedIssues"].includes(metricId);
+    const isGood = isBadMetric ? !isUp : isUp;
+
+    let pct = 0;
+    if (prevVal !== 0) {
+      pct = Math.round((diff / prevVal) * 100);
+    }
+
+    return (
+      <span className={`text-[8.5px] font-black ml-2 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border uppercase tracking-wider ${
+        isGood 
+          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+          : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+      }`}>
+        {isUp ? "▲" : "▼"} {diff > 0 ? "+" : ""}{diff} {prevVal !== 0 ? `(${Math.abs(pct)}%)` : ""}
+      </span>
+    );
+  };
   const toggleMetric = (id: string) => {
     onChangeMetrics(
       metrics.map((m) => (m.id === id ? { ...m, enabled: !m.enabled } : m))
@@ -110,8 +159,11 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                     {m.enabled && <Check className="w-3 h-3 stroke-[3]" />}
                   </div>
                 </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-200">{m.label}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-200 truncate">{m.label}</span>
+                    {getMetricDelta(m.id)}
+                  </div>
                   <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium">{m.description}</div>
                 </div>
               </button>

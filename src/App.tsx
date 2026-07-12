@@ -1636,6 +1636,12 @@ export default function App() {
 
   // Auto-Run on Login (Triggers a generation shortly after app boots)
   useEffect(() => {
+    const projectSuffix = selectedProjects.length > 0 ? ` [${selectedProjects.join(", ")}]` : "";
+    document.title = `Eshan Barua | Executive Jira PMO${projectSuffix}`;
+  }, [selectedProjects]);
+
+  // Auto-Run on Login (Triggers a generation shortly after app boots)
+  useEffect(() => {
     const savedAutoRun = localStorage.getItem("jira_auto_run_on_login") === "true";
     if (savedAutoRun) {
       const delay = setTimeout(() => {
@@ -1967,7 +1973,12 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 uppercase">
-                Jira SyncPro Executive Dashboard
+                <span>Eshan Barua's Jira Analytics Suite</span>
+                {selectedProjects.length > 0 && (
+                  <span className="text-[10px] font-bold tracking-normal normal-case text-blue-400 bg-blue-950/60 rounded-md border border-blue-900/30 px-2 py-0.5 ml-1.5">
+                    {selectedProjects.join(", ")}
+                  </span>
+                )}
               </h1>
             </div>
           </div>
@@ -2423,7 +2434,7 @@ export default function App() {
       <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center space-y-2 relative">
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex flex-wrap items-center justify-center gap-1.5">
-            <span>Jira SyncPro Executive Dashboard</span>
+            <span>Eshan Barua's Jira Analytics Suite</span>
             <span className="text-slate-600">•</span>
             <span>Crafted by Eshan Barua</span>
             <a 

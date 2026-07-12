@@ -1,5 +1,5 @@
 {
-  "name": "Jira SyncPro Executive Dashboard",
+  "name": "Eshan Barua's Jira Analytics Suite",
   "description": "A UI-driven Jira, Confluence, and Discord reporting and automated dashboard generator with read-only secure session handling and intelligent Gemini executive PMO summaries.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

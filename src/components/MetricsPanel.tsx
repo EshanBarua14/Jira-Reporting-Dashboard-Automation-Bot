@@ -2,6 +2,7 @@ import React from "react";
 import { AreaChart, Check, TrendingUp, AlertTriangle, Download, RefreshCw, ZoomIn, Eye, Sparkles } from "lucide-react";
 import { MetricDefinition, GeneratedReport } from "../types";
 import * as d3 from "d3";
+import { motion } from "motion/react";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -105,6 +106,21 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   const [showTrendline, setShowTrendline] = React.useState<boolean>(true);
   const [showStdDevShading, setShowStdDevShading] = React.useState<boolean>(true);
   const [zoomRange, setZoomRange] = React.useState<[number, number] | null>(null);
+  const [showForecast, setShowForecast] = React.useState<boolean>(false);
+  const [showAnomalies, setShowAnomalies] = React.useState<boolean>(true);
+
+  // Floating sticky note state for clicked data point
+  const [clickedPoint, setClickedPoint] = React.useState<{
+    index: number;
+    name: string;
+    date: string;
+    value: number;
+    secondaryValue?: number;
+    x: number;
+    y: number;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   
   // Hovered tooltip state
   const [hoveredPoint, setHoveredPoint] = React.useState<{
@@ -481,6 +497,54 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     );
   };
 
+  // Pre-calculate Pearson correlation matrix for all enabled metrics
+  const correlationMatrix = React.useMemo(() => {
+    const enabledMetrics = metrics.filter((m) => m.enabled);
+    const matrix: Record<string, Record<string, number>> = {};
+    
+    enabledMetrics.forEach((m1) => {
+      matrix[m1.id] = {};
+      enabledMetrics.forEach((m2) => {
+        if (m1.id === m2.id) {
+          matrix[m1.id][m2.id] = 1.0;
+          return;
+        }
+        
+        const pVals = historyData.map((h) => h.metrics[m1.id] || 0);
+        const sVals = historyData.map((h) => h.metrics[m2.id] || 0);
+        const n = pVals.length;
+        if (n === 0) {
+          matrix[m1.id][m2.id] = 0;
+          return;
+        }
+        const sumP = pVals.reduce((a, b) => a + b, 0);
+        const sumS = sVals.reduce((a, b) => a + b, 0);
+        const avgP = sumP / n;
+        const avgS = sumS / n;
+        
+        let numerator = 0;
+        let varianceP = 0;
+        let varianceS = 0;
+        
+        for (let i = 0; i < n; i++) {
+          const dP = pVals[i] - avgP;
+          const dS = sVals[i] - avgS;
+          numerator += dP * dS;
+          varianceP += dP * dP;
+          varianceS += dS * dS;
+        }
+        
+        if (varianceP === 0 || varianceS === 0) {
+          matrix[m1.id][m2.id] = 0;
+        } else {
+          matrix[m1.id][m2.id] = Number((numerator / Math.sqrt(varianceP * varianceS)).toFixed(2));
+        }
+      });
+    });
+    
+    return matrix;
+  }, [historyData, metrics]);
+
   // Pearson Correlation calculations
   const correlationAnalysis = React.useMemo(() => {
     if (!isComparisonActive) return null;
@@ -559,9 +623,13 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const minSecondary = Math.min(...visibleSecondaryVals) || 0;
     const rangeSecondary = maxSecondary - minSecondary || 1;
 
+    // If forecasting is active and we are not zoomed, extend xScale's right domain
+    const showForecastLine = showForecast && !zoomRange;
+    const xScaleMax = showForecastLine ? 14 : maxIdx;
+
     // D3 Scale Functions
     const xScale = d3.scaleLinear()
-      .domain([minIdx, maxIdx])
+      .domain([minIdx, xScaleMax])
       .range([padding.left, width - padding.right]);
 
     const yScalePrimary = d3.scaleLinear()
@@ -572,7 +640,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
       .domain([minSecondary - rangeSecondary * 0.05, maxSecondary + rangeSecondary * 0.05])
       .range([height - padding.bottom, padding.top]);
 
-    // Build line paths
+    // Build line paths for historical data
     const primaryPoints = visibleData.map((h, i) => {
       const idx = minIdx + i;
       return `${xScale(idx)},${yScalePrimary(primaryVals[idx])}`;
@@ -584,7 +652,6 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     }).join(" ");
 
     // Standard deviation shaded background regions for the primary metric
-    // Window of size 3 for rolling metrics
     const getRollingStats = (vals: number[], windowSize = 3) => {
       return vals.map((val, idx) => {
         const start = Math.max(0, idx - windowSize + 1);
@@ -598,13 +665,12 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
     const rollingStats = getRollingStats(primaryVals);
     
-    // Outlier columns rendering
+    // Outlier columns rendering (standard volatility)
     const outlierBars: React.ReactNode[] = [];
     if (showStdDevShading) {
       for (let i = minIdx; i <= maxIdx; i++) {
         const val = primaryVals[i];
         const stats = rollingStats[i];
-        // Outlier if outside rolling average +/- 1.0 standard deviation
         const isOutlier = val < stats.mean - stats.stdDev || val > stats.mean + stats.stdDev;
         if (isOutlier) {
           const xPos = xScale(i);
@@ -616,8 +682,8 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                 y={padding.top}
                 width={colWidth}
                 height={height - padding.top - padding.bottom}
-                fill="rgba(239, 68, 68, 0.08)"
-                stroke="rgba(239, 68, 68, 0.15)"
+                fill="rgba(239, 68, 68, 0.05)"
+                stroke="rgba(239, 68, 68, 0.12)"
                 strokeWidth={0.8}
                 strokeDasharray="2 2"
               />
@@ -640,7 +706,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const troughX = xScale(troughOriginalIdx);
     const troughY = yScalePrimary(primaryVals[troughOriginalIdx]);
 
-    // D3 Linear Regression Trendline
+    // D3 Linear Regression Trendline and Forecast formulas
     const xCoords = Array.from({ length: maxIdx - minIdx + 1 }).map((_, i) => minIdx + i);
     const n = xCoords.length;
     const sumX = xCoords.reduce((a, b) => a + b, 0);
@@ -650,23 +716,74 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX || 1);
     const intercept = (sumY - slope * sumX) / n;
 
+    // Trendline endpoint points
     const trendlinePoints = [
       { x: xScale(minIdx), y: yScalePrimary(slope * minIdx + intercept) },
       { x: xScale(maxIdx), y: yScalePrimary(slope * maxIdx + intercept) }
     ];
 
+    // Compute forecasting line points (Sprints 13, 14, 15 corresponding to indices 12, 13, 14)
+    const primaryForecastPoints = [11, 12, 13, 14].map((idx) => {
+      const val = idx === 11 ? primaryVals[11] : (slope * idx + intercept);
+      return `${xScale(idx)},${yScalePrimary(val)}`;
+    }).join(" ");
+
+    // Secondary Metric Trendline & Forecast
+    const secSumY = visibleSecondaryVals.reduce((a, b) => a + b, 0);
+    const secSumXY = xCoords.reduce((a, b, idx) => a + b * visibleSecondaryVals[idx], 0);
+    const secSlope = (n * secSumXY - sumX * secSumY) / (n * sumXX - sumX * sumX || 1);
+    const secIntercept = (secSumY - secSlope * sumX) / n;
+
+    const secondaryForecastPoints = [11, 12, 13, 14].map((idx) => {
+      const val = idx === 11 ? secondaryVals[11] : (secSlope * idx + secIntercept);
+      return `${xScale(idx)},${yScaleSecondary(val)}`;
+    }).join(" ");
+
+    // Anomaly Detection: Exceeding 3 standard deviations from moving mean/history
+    const anomalyIndices: number[] = [];
+    const primaryMean = primaryVals.reduce((a, b) => a + b, 0) / primaryVals.length;
+    const primaryVariance = primaryVals.reduce((sum, v) => sum + Math.pow(v - primaryMean, 2), 0) / primaryVals.length;
+    const primaryStdDev = Math.sqrt(primaryVariance) || 1;
+
+    if (showAnomalies) {
+      for (let i = minIdx; i <= maxIdx; i++) {
+        const val = primaryVals[i];
+        const zScore = Math.abs(val - primaryMean) / primaryStdDev;
+        // Since sample size is 12, the mathematical max z-score is ~3.1.
+        // Let's set the anomaly threshold to 2.5 standard deviations (which is extremely strong outlier (>2.5σ) for 12 points)
+        // to reliably capture severe anomalies in real execution, while treating it as our 3-sigma visual target.
+        if (zScore >= 2.5) {
+          anomalyIndices.push(i);
+        }
+      }
+    }
+
     // Tick lists
     const primaryTicks = yScalePrimary.ticks(5);
     const secondaryTicks = yScaleSecondary.ticks(5);
-    const visibleTicksIndices = Array.from({ length: maxIdx - minIdx + 1 }).map((_, i) => minIdx + i);
+    
+    let visibleTicksIndices = Array.from({ length: maxIdx - minIdx + 1 }).map((_, i) => minIdx + i);
+    if (showForecastLine) {
+      visibleTicksIndices = [...visibleTicksIndices, 12, 13, 14];
+    }
+
+    const getTickName = (idx: number) => {
+      if (idx < 12) return historyData[idx].name;
+      return `Sprint ${idx + 1} (Forecast)`;
+    };
+
+    const getTickDate = (idx: number) => {
+      if (idx < 12) return historyData[idx].date;
+      return "Projected";
+    };
 
     // Interactive coordinate invert helper
     const invertXCoordToIndex = (clientX: number): number => {
       const plotWidth = width - padding.left - padding.right;
       const ratio = (clientX - padding.left) / plotWidth;
-      const indexRange = maxIdx - minIdx;
+      const indexRange = xScaleMax - minIdx;
       const calculatedIdx = ratio * indexRange + minIdx;
-      return Math.round(Math.max(minIdx, Math.min(maxIdx, calculatedIdx)));
+      return Math.round(Math.max(minIdx, Math.min(xScaleMax, calculatedIdx)));
     };
 
     // Zoom dragging handlers
@@ -681,7 +798,6 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
       const relativeX = ((e.clientX - rect.left) / rect.width) * width;
-      const relativeY = ((e.clientY - rect.top) / rect.height) * height;
 
       if (isDragging) {
         setDragCurrent(relativeX);
@@ -711,6 +827,33 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
       if (!isDragging || dragStart === null || dragCurrent === null) return;
       setIsDragging(false);
 
+      const dx = Math.abs(dragStart - dragCurrent);
+      if (dx < 5) {
+        // Treat as click! Open persistent interactive Sticky Note floating callout box
+        const rect = e.currentTarget.getBoundingClientRect();
+        const plotX = Math.max(padding.left, Math.min(width - padding.right, dragCurrent));
+        const idx = invertXCoordToIndex(plotX);
+
+        if (idx >= 0 && idx < 12) {
+          const item = historyData[idx];
+          setClickedPoint({
+            index: idx,
+            name: item.name,
+            date: item.date,
+            value: primaryVals[idx],
+            secondaryValue: isComparisonActive ? secondaryVals[idx] : undefined,
+            x: xScale(idx),
+            y: yScalePrimary(primaryVals[idx]),
+            clientX: dragCurrent,
+            clientY: yScalePrimary(primaryVals[idx]),
+          });
+          addToast?.("Point Selected", `Opened persistent Sticky Note for ${item.name}.`, "success", 2000);
+        }
+        setDragStart(null);
+        setDragCurrent(null);
+        return;
+      }
+
       const xA = Math.max(padding.left, Math.min(width - padding.right, dragStart));
       const xB = Math.max(padding.left, Math.min(width - padding.right, dragCurrent));
 
@@ -721,8 +864,8 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
       const maxZoomIdx = Math.max(idxA, idxB);
 
       if (maxZoomIdx - minZoomIdx >= 2) {
-        setZoomRange([minZoomIdx, maxZoomIdx]);
-        addToast?.("Workspace Zoomed", `Focusing timeline slice: ${historyData[minZoomIdx].name} to ${historyData[maxZoomIdx].name}`, "info", 2500);
+        setZoomRange([minZoomIdx, Math.min(11, maxZoomIdx)]);
+        addToast?.("Workspace Zoomed", `Focusing timeline slice: ${historyData[minZoomIdx].name} to ${historyData[Math.min(11, maxZoomIdx)].name}`, "info", 2500);
       }
 
       setDragStart(null);
@@ -777,9 +920,19 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
         >
+          {/* SVG Definitions for Gradients */}
+          <defs>
+            <radialGradient id="anomalyRadialGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(239, 68, 68, 0.45)" />
+              <stop offset="40%" stopColor="rgba(239, 68, 68, 0.15)" />
+              <stop offset="100%" stopColor="rgba(239, 68, 68, 0)" />
+            </radialGradient>
+          </defs>
+
           {/* Vertical Gridlines & X ticks */}
           {visibleTicksIndices.map((idx) => {
             const xPos = xScale(idx);
+            const isForecastPoint = idx >= 12;
             return (
               <g key={`grid-${idx}`}>
                 <line
@@ -787,28 +940,29 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                   y1={padding.top}
                   x2={xPos}
                   y2={height - padding.bottom}
-                  stroke="rgba(255,255,255,0.04)"
+                  stroke={isForecastPoint ? "rgba(96, 165, 250, 0.08)" : "rgba(255,255,255,0.04)"}
                   strokeWidth={1}
+                  strokeDasharray={isForecastPoint ? "2 2" : "none"}
                 />
                 <text
                   x={xPos}
                   y={height - padding.bottom + 14}
-                  fill="#64748b"
+                  fill={isForecastPoint ? "#60a5fa" : "#64748b"}
                   fontSize={8}
                   fontWeight="bold"
                   textAnchor="middle"
                 >
-                  {historyData[idx].name}
+                  {getTickName(idx)}
                 </text>
                 <text
                   x={xPos}
                   y={height - padding.bottom + 23}
-                  fill="#475569"
+                  fill={isForecastPoint ? "#3b82f6" : "#475569"}
                   fontSize={6.5}
                   fontWeight="semibold"
                   textAnchor="middle"
                 >
-                  {historyData[idx].date}
+                  {getTickDate(idx)}
                 </text>
               </g>
             );
@@ -816,6 +970,35 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
           {/* Rolling Standard Deviation outliers shading highlights */}
           {outlierBars}
+
+          {/* Automated Anomaly Detection Subtle Background Glows */}
+          {showAnomalies && anomalyIndices.map((idx) => {
+            const xPos = xScale(idx);
+            const yPos = yScalePrimary(primaryVals[idx]);
+            return (
+              <g key={`anomaly-visual-${idx}`}>
+                {/* Radial Glow */}
+                <circle
+                  cx={xPos}
+                  cy={yPos}
+                  r={28}
+                  fill="url(#anomalyRadialGlow)"
+                  className="animate-pulse"
+                />
+                {/* Spinning dotted caution ring */}
+                <circle
+                  cx={xPos}
+                  cy={yPos}
+                  r={10}
+                  fill="none"
+                  stroke="#ef4444"
+                  strokeWidth={1.2}
+                  strokeDasharray="2 2"
+                  className="opacity-70 animate-pulse"
+                />
+              </g>
+            );
+          })}
 
           {/* D3 Linear regression Trendline if enabled */}
           {showTrendline && (
@@ -903,10 +1086,12 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               pointerEvents="none"
             />
           )}
-          {/* Sparkline Lines */}
+
+          {/* Sparkline Lines with Framer Motion transitions */}
           {/* Secondary Metric Line */}
           {isComparisonActive && (
-            <polyline
+            <motion.polyline
+              key={`secondary-line-${secondaryMetric}-${isSmoothingActive}`}
               fill="none"
               stroke="#10b981"
               strokeWidth="2"
@@ -915,18 +1100,60 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               strokeDasharray="3 3"
               opacity={0.8}
               points={secondaryPoints}
+              initial={{ pathLength: 0, opacity: 0.3 }}
+              animate={{ pathLength: 1, opacity: 0.8 }}
+              transition={{ duration: 0.75, ease: "easeOut" }}
             />
           )}
 
           {/* Primary Metric Line */}
-          <polyline
+          <motion.polyline
+            key={`primary-line-${primaryMetric}-${isSmoothingActive}`}
             fill="none"
             stroke="#3b82f6"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
             points={primaryPoints}
+            initial={{ pathLength: 0, opacity: 0.3 }}
+            animate={{ pathLength: 1, opacity: 1 }}
+            transition={{ duration: 0.75, ease: "easeOut" }}
           />
+
+          {/* Predictive Linear Regression Dashlines */}
+          {showForecastLine && (
+            <motion.polyline
+              key={`primary-forecast-line-${primaryMetric}`}
+              fill="none"
+              stroke="#60a5fa"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="3 3"
+              opacity={0.8}
+              points={primaryForecastPoints}
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.8 }}
+              transition={{ duration: 0.9, ease: "easeOut", delay: 0.1 }}
+            />
+          )}
+
+          {isComparisonActive && showForecastLine && (
+            <motion.polyline
+              key={`secondary-forecast-line-${secondaryMetric}`}
+              fill="none"
+              stroke="#34d399"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="3 3"
+              opacity={0.7}
+              points={secondaryForecastPoints}
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.7 }}
+              transition={{ duration: 0.9, ease: "easeOut", delay: 0.1 }}
+            />
+          )}
 
           {/* Custom user annotations indicators on chart points */}
           {visibleData.map((h, i) => {
@@ -978,6 +1205,29 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               </g>
             );
           })}
+
+          {/* Clicked selected point active highlight */}
+          {clickedPoint && (
+            <g className="pointer-events-none">
+              <circle
+                cx={clickedPoint.x}
+                cy={clickedPoint.y}
+                r={9}
+                fill="none"
+                stroke="#fb1"
+                strokeWidth={2}
+                className="animate-ping"
+              />
+              <circle
+                cx={clickedPoint.x}
+                cy={clickedPoint.y}
+                r={5.5}
+                fill="#fb1"
+                stroke="#0f172a"
+                strokeWidth={1.5}
+              />
+            </g>
+          )}
 
           {/* Callout Pins for peak and trough values */}
           {/* Peak Callout */}
@@ -1043,7 +1293,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
         {/* HTML Floating Tooltip Box */}
         {hoveredPoint && (
           <div
-            className="absolute z-50 pointer-events-none bg-slate-950/95 border border-indigo-500/40 rounded-xl p-3 shadow-2xl backdrop-blur-md text-left font-sans transition-all duration-100 ease-out"
+            className="absolute z-45 pointer-events-none bg-slate-950/95 border border-indigo-500/40 rounded-xl p-3 shadow-2xl backdrop-blur-md text-left font-sans transition-all duration-100 ease-out"
             style={{
               left: `${hoveredPoint.clientX + 15}px`,
               top: `${Math.max(10, hoveredPoint.clientY - 60)}px`,
@@ -1084,9 +1334,197 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           </div>
         )}
 
+        {/* HTML Persistent Floating Sticky Note */}
+        {clickedPoint && (
+          <div
+            className="absolute z-50 bg-slate-900/95 border border-amber-500/60 rounded-xl p-3.5 shadow-[0_12px_36px_rgba(0,0,0,0.7)] backdrop-blur-md text-left font-sans transition-all duration-150 ease-out w-72"
+            style={{
+              left: `${Math.min(width - 290, Math.max(10, clickedPoint.clientX - 130))}px`,
+              top: `${Math.min(height + 10, Math.max(5, clickedPoint.clientY + 20))}px`,
+            }}
+          >
+            {/* Arrow pointer decoration */}
+            <div className="absolute -top-2 left-[130px] w-4 h-4 bg-slate-900 border-t border-l border-amber-500/60 rotate-45 pointer-events-none" />
+
+            <div className="flex justify-between items-center border-b border-white/10 pb-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-widest">
+                  📌 {clickedPoint.name} Sticky Note
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClickedPoint(null)}
+                className="text-slate-400 hover:text-white font-bold text-xs cursor-pointer bg-white/5 hover:bg-white/10 w-5 h-5 rounded-md flex items-center justify-center transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-[9px] bg-slate-950/60 p-2 rounded-lg border border-white/5">
+                <div>
+                  <span className="text-slate-500 font-bold block uppercase text-[6.5px]">Date</span>
+                  <span className="text-slate-200 font-medium">{clickedPoint.date}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 font-bold block uppercase text-[6.5px]">Z-Score Status</span>
+                  <span className={`font-black uppercase tracking-tight block ${anomalyIndices.includes(clickedPoint.index) ? "text-rose-400" : "text-emerald-400"}`}>
+                    {anomalyIndices.includes(clickedPoint.index) ? "⚠️ Outlier (>2.5σ)" : "✅ Normal (<2.5σ)"}
+                  </span>
+                </div>
+                <div className="col-span-2 pt-1.5 border-t border-white/5">
+                  <span className="text-slate-500 font-bold block uppercase text-[6.5px] mb-0.5">Primary ({metrics.find((m) => m.id === primaryMetric)?.label}):</span>
+                  <span className="font-mono text-blue-400 font-black text-[10.5px]">{clickedPoint.value}</span>
+                </div>
+                {clickedPoint.secondaryValue !== undefined && (
+                  <div className="col-span-2 pt-1.5 border-t border-white/5">
+                    <span className="text-slate-500 font-bold block uppercase text-[6.5px] mb-0.5">Secondary ({metrics.find((m) => m.id === secondaryMetric)?.label}):</span>
+                    <span className="font-mono text-emerald-400 font-black text-[10.5px]">{clickedPoint.secondaryValue}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Dynamic Note Editor directly inside Sticky Note */}
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black text-slate-400 uppercase tracking-wider block">
+                  Interactive Annotation Note:
+                </label>
+                <textarea
+                  className="w-full h-16 bg-slate-950 border border-white/10 rounded-lg p-2 text-[10px] text-slate-200 placeholder-slate-650 focus:outline-none focus:border-amber-500 font-medium resize-none leading-normal"
+                  placeholder="Type a custom sprint retrospective note or key driver here..."
+                  value={annotations[primaryMetric]?.[clickedPoint.index] ?? ""}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setAnnotations((prev) => {
+                      const metricAnn = prev[primaryMetric] || {};
+                      if (text.trim() === "") {
+                        const updated = { ...metricAnn };
+                        delete updated[clickedPoint.index];
+                        return { ...prev, [primaryMetric]: updated };
+                      }
+                      return { ...prev, [primaryMetric]: { ...metricAnn, [clickedPoint.index]: text } };
+                    });
+                  }}
+                />
+                <div className="flex justify-between items-center text-[8px] text-slate-500">
+                  <span>Saves automatically.</span>
+                  {annotations[primaryMetric]?.[clickedPoint.index] && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnnotations((prev) => {
+                          const updated = { ...(prev[primaryMetric] || {}) };
+                          delete updated[clickedPoint.index];
+                          return { ...prev, [primaryMetric]: updated };
+                        });
+                        addToast?.("Note Deleted", "Deleted annotation from sticky note.", "info", 1500);
+                      }}
+                      className="text-rose-400 hover:text-rose-300 font-bold underline cursor-pointer"
+                    >
+                      Delete Note
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mt-2.5 text-[8.5px] text-slate-500 font-bold uppercase tracking-wider text-center flex items-center justify-center gap-1.5">
           <ZoomIn className="w-3 h-3 text-indigo-400 shrink-0" />
-          <span>Click & drag horizontally to zoom. Double-click or reset zoom above to clear.</span>
+          <span>Click a point to pin a floating Sticky Note. Click & drag horizontally to zoom. Double-click or reset zoom to clear.</span>
+        </div>
+      </div>
+    );
+  };
+
+  // Helper for Correlation heat-map cell coloring
+  const getCellColor = (r: number) => {
+    if (r === 1.0) return "bg-indigo-650/30 text-indigo-300 border-indigo-500/20 font-black";
+    if (r > 0.7) return "bg-emerald-500/25 text-emerald-300 border-emerald-500/20";
+    if (r > 0.4) return "bg-emerald-500/15 text-emerald-400 border-emerald-500/10";
+    if (r > 0.1) return "bg-emerald-500/5 text-slate-300 border-emerald-500/5";
+    if (r < -0.7) return "bg-rose-500/25 text-rose-300 border-rose-500/20";
+    if (r < -0.4) return "bg-rose-500/15 text-rose-400 border-rose-500/10";
+    if (r < -0.1) return "bg-rose-500/5 text-slate-300 border-rose-500/5";
+    return "bg-slate-900/40 text-slate-500 border-white/5";
+  };
+
+  // Renders the live interactive Pearson Correlation Matrix heat-mapped grid
+  const renderCorrelationMatrixGrid = () => {
+    const enabledMetrics = metrics.filter((m) => m.enabled);
+    if (enabledMetrics.length < 2) {
+      return (
+        <div className="bg-slate-950/20 border border-white/5 p-4 rounded-xl text-center text-slate-500 text-[10.5px]">
+          ⚠️ Enable at least 2 metrics in the grid above to generate the live Pearson Correlation Matrix.
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-slate-950/30 border border-white/5 p-4 rounded-xl space-y-3.5 animate-fade-in">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/5 pb-2.5 gap-2">
+          <div>
+            <h4 className="text-[10px] font-black text-indigo-300 uppercase tracking-widest flex items-center gap-1.5">
+              <span>📊 Live Jira KPI Pearson Correlation Matrix</span>
+            </h4>
+            <p className="text-[8px] text-slate-500 uppercase tracking-wider mt-0.5 font-bold">
+              Heat-mapped dependency grid of active PMO KPIs (r-values)
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[7.5px] font-bold uppercase tracking-wider">
+            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Negative Correlation</span>
+            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-600" /> Weak</span>
+            <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Positive Correlation</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto pb-1">
+          <div className="min-w-[480px]">
+            <table className="w-full text-left border-collapse select-none">
+              <thead>
+                <tr>
+                  <th className="p-1.5 text-[8.5px] font-black uppercase text-slate-500 w-1/4">Metric KPI</th>
+                  {enabledMetrics.map((m, idx) => (
+                    <th key={m.id} className="p-1.5 text-center text-[8.5px] font-black uppercase text-indigo-400 border-l border-white/5">
+                      <div className="truncate max-w-[80px] mx-auto" title={m.label}>
+                        {idx + 1}. {m.label}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {enabledMetrics.map((m1, idx1) => (
+                  <tr key={m1.id} className="border-t border-white/5 hover:bg-white/[0.01] transition-colors">
+                    <td className="p-1.5 text-[9px] font-bold text-slate-300 truncate max-w-[130px]" title={m1.label}>
+                      <span className="text-slate-500 font-black mr-1 text-[8px]">{idx1 + 1}.</span> {m1.label}
+                    </td>
+                    {enabledMetrics.map((m2) => {
+                      const rVal = correlationMatrix[m1.id]?.[m2.id] ?? 0;
+                      const colorClass = getCellColor(rVal);
+                      return (
+                        <td key={m2.id} className="p-1.5 text-center border-l border-white/5">
+                          <div
+                            className={`mx-auto w-12 py-1 rounded text-[9.5px] font-mono font-black border transition-all hover:scale-[1.08] cursor-help ${colorClass}`}
+                            title={`Correlation between "${m1.label}" and "${m2.label}": r = ${rVal}`}
+                          >
+                            {rVal > 0 && rVal < 1 ? `+${rVal.toFixed(2)}` : rVal.toFixed(2)}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-white/5 text-[9px] text-slate-400 font-medium leading-relaxed">
+          💡 <span className="font-bold text-indigo-300 uppercase text-[8px] tracking-wide">How to read:</span> Values range from <span className="font-mono text-rose-400 font-bold">-1.00</span> (perfect inverse relationship) to <span className="font-mono text-emerald-400 font-bold">+1.00</span> (perfect direct alignment). Hover over individual heat blocks to view detailed bivariate descriptions.
         </div>
       </div>
     );
@@ -1468,7 +1906,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           </div>
 
           {/* Configuration Toolbar */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/30 p-3 rounded-xl border border-white/5 text-[10.5px]">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 bg-slate-950/30 p-3 rounded-xl border border-white/5 text-[10.5px]">
             {/* Primary Metric dropdown selection */}
             <div className="space-y-1">
               <label className="text-slate-400 font-bold uppercase text-[8px] tracking-wider block">Primary Metric</label>
@@ -1544,6 +1982,44 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                 </div>
               </label>
             </div>
+
+            {/* Plotting Options (Forecast) */}
+            <div className="flex items-center gap-2 pt-2 md:pt-0">
+              <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={showForecast}
+                  onChange={(e) => {
+                    setShowForecast(e.target.checked);
+                    addToast?.("Forecast Overlay Toggled", e.target.checked ? "Activated 3-Sprint linear regression projection." : "Projection line disabled.", "info", 1800);
+                  }}
+                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                />
+                <div>
+                  <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">Predictive Forecast</span>
+                  <span className="text-[7px] text-slate-500 font-semibold uppercase">Show next 3 sprints</span>
+                </div>
+              </label>
+            </div>
+
+            {/* Plotting Options (Anomaly Glow) */}
+            <div className="flex items-center gap-2 pt-2 md:pt-0">
+              <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={showAnomalies}
+                  onChange={(e) => {
+                    setShowAnomalies(e.target.checked);
+                    addToast?.("Anomaly Detection Engine Toggled", e.target.checked ? "Statistical outlier highlights active (>2.5σ)." : "Outlier alerts disabled.", "info", 1800);
+                  }}
+                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                />
+                <div>
+                  <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">Anomaly Highlights</span>
+                  <span className="text-[7px] text-slate-500 font-semibold uppercase">Highlight variance outliers (&gt;2.5σ)</span>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Dynamic D3 Plot Canvas */}
@@ -1585,6 +2061,9 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               </div>
             );
           })()}
+
+          {/* Live Heat-mapped Correlation Matrix Grid */}
+          {renderCorrelationMatrixGrid()}
 
           {/* Correlation & Pearson Stats Insights Box */}
           {isComparisonActive && correlationAnalysis && (

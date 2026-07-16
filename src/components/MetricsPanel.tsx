@@ -69,6 +69,35 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   metricsHistory = [],
   addToast,
 }) => {
+  // Active Tab view ("monitors" or "correlation")
+  const [activeTab, setActiveTab] = React.useState<"monitors" | "correlation">("monitors");
+
+  // Smoothing moving average toggle
+  const [isSmoothingActive, setIsSmoothingActive] = React.useState<boolean>(false);
+
+  // Annotation persistent states
+  const [annotations, setAnnotations] = React.useState<Record<string, Record<number, string>>>(() => {
+    try {
+      const saved = localStorage.getItem("omnisync_metric_annotations");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Automatically persist annotations to localStorage
+  React.useEffect(() => {
+    localStorage.setItem("omnisync_metric_annotations", JSON.stringify(annotations));
+  }, [annotations]);
+
+  // Selected Sprint/Data Point index for annotation card forms
+  const [selectedSprintIdx, setSelectedSprintIdx] = React.useState<Record<string, number>>({});
+  // Unsaved input notes typing state for annotations card forms
+  const [cardInputs, setCardInputs] = React.useState<Record<string, string>>({});
+
+  // Card delta compare modes ("previous" or "average")
+  const [cardCompareModes, setCardCompareModes] = React.useState<Record<string, "previous" | "average">>({});
+
   // States for Advanced Trend Analyzer
   const [primaryMetric, setPrimaryMetric] = React.useState<string>("sprintVelocity");
   const [secondaryMetric, setSecondaryMetric] = React.useState<string>("averageCycleTime");
@@ -94,6 +123,17 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   const [dragStart, setDragStart] = React.useState<number | null>(null);
   const [dragCurrent, setDragCurrent] = React.useState<number | null>(null);
   const [isDragging, setIsDragging] = React.useState<boolean>(false);
+
+  // Helper to compute 3-period simple moving average
+  const getSmoothedSeries = React.useCallback((series: number[]): number[] => {
+    if (!isSmoothingActive) return series;
+    return series.map((val, idx) => {
+      if (idx === 0) return val;
+      if (idx === 1) return Number(((series[0] + series[1]) / 2).toFixed(2));
+      const sum = series[idx - 2] + series[idx - 1] + series[idx];
+      return Number((sum / 3).toFixed(2));
+    });
+  }, [isSmoothingActive]);
 
   // Generate 12-entry historical dataset using props history or realistic growth padding
   const historyData = React.useMemo<HistoryItem[]>(() => {
@@ -226,37 +266,63 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     }
   };
 
-  const getMetricDelta = (metricId: string) => {
-    if (!report || !metricsHistory || metricsHistory.length < 2) {
-      // Delta based on generated history fallback
-      const currentVal = historyData[11].metrics[metricId];
-      const prevVal = historyData[10].metrics[metricId];
-      return renderDeltaSpan(metricId, currentVal, prevVal);
+  const getMetricDelta = (metricId: string, mode: "previous" | "average") => {
+    const currentVal = historyData[11].metrics[metricId] || 0;
+
+    if (mode === "average") {
+      const vals = historyData.map((h) => h.metrics[metricId] || 0);
+      const historicalAvg = vals.reduce((sum, v) => sum + v, 0) / (vals.length || 1);
+      return renderDeltaSpan(metricId, currentVal, historicalAvg, "avg");
     }
+
+    if (!report || !metricsHistory || metricsHistory.length < 2) {
+      const prevVal = historyData[10].metrics[metricId] || 0;
+      return renderDeltaSpan(metricId, currentVal, prevVal, "prev");
+    }
+
     const currentEntry = metricsHistory[metricsHistory.length - 1];
     const prevEntry = metricsHistory[metricsHistory.length - 2];
-    if (!currentEntry || !prevEntry) return null;
-
-    let currentVal = 0;
-    let prevVal = 0;
-
-    if (metricId === "bugsToStoriesRatio") {
-      currentVal = currentEntry.metrics.bugsCount || 0;
-      prevVal = prevEntry.metrics.bugsCount || 0;
-    } else {
-      currentVal = (currentEntry.metrics as any)[metricId] || 0;
-      prevVal = (prevEntry.metrics as any)[metricId] || 0;
+    if (!currentEntry || !prevEntry) {
+      const prevVal = historyData[10].metrics[metricId] || 0;
+      return renderDeltaSpan(metricId, currentVal, prevVal, "prev");
     }
 
-    return renderDeltaSpan(metricId, currentVal, prevVal);
+    let currentMetricVal = 0;
+    let prevMetricVal = 0;
+
+    if (metricId === "bugsToStoriesRatio") {
+      currentMetricVal = currentEntry.metrics.bugsCount || 0;
+      prevMetricVal = prevEntry.metrics.bugsCount || 0;
+    } else {
+      currentMetricVal = (currentEntry.metrics as any)[metricId] || 0;
+      prevMetricVal = (prevEntry.metrics as any)[metricId] || 0;
+    }
+
+    return renderDeltaSpan(metricId, currentMetricVal, prevMetricVal, "prev");
   };
 
-  const renderDeltaSpan = (metricId: string, currentVal: number, prevVal: number) => {
-    const diff = currentVal - prevVal;
+  const renderDeltaSpan = (metricId: string, currentVal: number, compareVal: number, type: "prev" | "avg") => {
+    const diff = Number((currentVal - compareVal).toFixed(1));
+    const label = type === "avg" ? "vs Avg" : "vs Prev";
+    const modeToToggle = type === "avg" ? "previous" : "average";
+
+    const handleToggleClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setCardCompareModes((prev) => ({
+        ...prev,
+        [metricId]: modeToToggle,
+      }));
+      addToast?.("Delta Mode Changed", `Comparing ${metricId} to ${modeToToggle === "average" ? "12-Sprint Avg" : "Previous Sprint"}`, "info", 1500);
+    };
+
     if (diff === 0) {
       return (
-        <span className="text-[8px] text-slate-500 font-bold ml-2 inline-flex items-center gap-0.5 bg-slate-950/40 px-1.5 py-0.5 rounded border border-white/5 uppercase tracking-wide shrink-0">
-          Stable
+        <span
+          onClick={handleToggleClick}
+          title="Click to toggle comparison mode"
+          className="text-[8px] text-slate-500 font-bold ml-2 inline-flex items-center gap-0.5 bg-slate-950/40 px-1.5 py-0.5 rounded border border-white/5 uppercase tracking-wide shrink-0 cursor-pointer hover:bg-slate-900/60"
+        >
+          Stable ({label})
         </span>
       );
     }
@@ -266,17 +332,22 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const isGood = isBadMetric ? !isUp : isUp;
 
     let pct = 0;
-    if (prevVal !== 0) {
-      pct = Math.round((diff / prevVal) * 100);
+    if (compareVal !== 0) {
+      pct = Math.round((diff / compareVal) * 100);
     }
 
     return (
-      <span className={`text-[8.5px] font-black ml-2 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border uppercase tracking-wider shrink-0 ${
-        isGood 
-          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
-          : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-      }`}>
-        {isUp ? "▲" : "▼"} {diff > 0 ? "+" : ""}{diff} {prevVal !== 0 ? `(${Math.abs(pct)}%)` : ""}
+      <span
+        onClick={handleToggleClick}
+        title="Click to toggle comparison mode"
+        className={`text-[8.5px] font-black ml-2 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border uppercase tracking-wider shrink-0 cursor-pointer transition-all hover:scale-105 select-none ${
+          isGood
+            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+            : "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20"
+        }`}
+      >
+        {isUp ? "▲" : "▼"} {diff > 0 ? "+" : ""}{diff} {compareVal !== 0 ? `(${Math.abs(pct)}%)` : ""}{" "}
+        <span className="text-[7.5px] opacity-75 ml-1">({label})</span>
       </span>
     );
   };
@@ -297,7 +368,8 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
   // Helper to render mini D3-based sparklines in cards with stdDev, callouts, and trendline
   const renderMiniD3Sparkline = (metricId: string) => {
-    const vals = historyData.map((h) => h.metrics[metricId] || 0);
+    const rawVals = historyData.map((h) => h.metrics[metricId] || 0);
+    const vals = isSmoothingActive ? getSmoothedSeries(rawVals) : rawVals;
     const max = Math.max(...vals) || 1;
     const min = Math.min(...vals) || 0;
     const range = max - min || 1;
@@ -472,15 +544,17 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     const visibleData = historyData.slice(minIdx, maxIdx + 1);
     
     // Primary Metric Values
-    const primaryVals = historyData.map((h) => h.metrics[primaryMetric] || 0);
-    const visiblePrimaryVals = visibleData.map((h) => h.metrics[primaryMetric] || 0);
+    const rawPrimaryVals = historyData.map((h) => h.metrics[primaryMetric] || 0);
+    const primaryVals = isSmoothingActive ? getSmoothedSeries(rawPrimaryVals) : rawPrimaryVals;
+    const visiblePrimaryVals = primaryVals.slice(minIdx, maxIdx + 1);
     const maxPrimary = Math.max(...visiblePrimaryVals) || 1;
     const minPrimary = Math.min(...visiblePrimaryVals) || 0;
     const rangePrimary = maxPrimary - minPrimary || 1;
 
     // Secondary Metric Values
-    const secondaryVals = historyData.map((h) => h.metrics[secondaryMetric] || 0);
-    const visibleSecondaryVals = visibleData.map((h) => h.metrics[secondaryMetric] || 0);
+    const rawSecondaryVals = historyData.map((h) => h.metrics[secondaryMetric] || 0);
+    const secondaryVals = isSmoothingActive ? getSmoothedSeries(rawSecondaryVals) : rawSecondaryVals;
+    const visibleSecondaryVals = secondaryVals.slice(minIdx, maxIdx + 1);
     const maxSecondary = Math.max(...visibleSecondaryVals) || 1;
     const minSecondary = Math.min(...visibleSecondaryVals) || 0;
     const rangeSecondary = maxSecondary - minSecondary || 1;
@@ -501,12 +575,12 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     // Build line paths
     const primaryPoints = visibleData.map((h, i) => {
       const idx = minIdx + i;
-      return `${xScale(idx)},${yScalePrimary(h.metrics[primaryMetric])}`;
+      return `${xScale(idx)},${yScalePrimary(primaryVals[idx])}`;
     }).join(" ");
 
     const secondaryPoints = visibleData.map((h, i) => {
       const idx = minIdx + i;
-      return `${xScale(idx)},${yScaleSecondary(h.metrics[secondaryMetric])}`;
+      return `${xScale(idx)},${yScaleSecondary(secondaryVals[idx])}`;
     }).join(" ");
 
     // Standard deviation shaded background regions for the primary metric
@@ -623,10 +697,10 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           index: idx,
           name: item.name,
           date: item.date,
-          value: item.metrics[primaryMetric],
-          secondaryValue: isComparisonActive ? item.metrics[secondaryMetric] : undefined,
+          value: primaryVals[idx],
+          secondaryValue: isComparisonActive ? secondaryVals[idx] : undefined,
           x: xScale(idx),
-          y: yScalePrimary(item.metrics[primaryMetric]),
+          y: yScalePrimary(primaryVals[idx]),
           clientX: e.clientX - rect.left,
           clientY: e.clientY - rect.top,
         });
@@ -829,7 +903,6 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               pointerEvents="none"
             />
           )}
-
           {/* Sparkline Lines */}
           {/* Secondary Metric Line */}
           {isComparisonActive && (
@@ -854,6 +927,57 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             strokeLinejoin="round"
             points={primaryPoints}
           />
+
+          {/* Custom user annotations indicators on chart points */}
+          {visibleData.map((h, i) => {
+            const idx = minIdx + i;
+            const hasPNote = annotations[primaryMetric]?.[idx];
+            if (!hasPNote) return null;
+            return (
+              <g key={`primary-ann-dot-${idx}`} className="pointer-events-none">
+                <circle
+                  cx={xScale(idx)}
+                  cy={yScalePrimary(primaryVals[idx])}
+                  r={7}
+                  fill="none"
+                  stroke="#fbbf24"
+                  strokeWidth={1.5}
+                  className="animate-pulse"
+                />
+                <circle
+                  cx={xScale(idx)}
+                  cy={yScalePrimary(primaryVals[idx])}
+                  r={3.5}
+                  fill="#fbbf24"
+                />
+              </g>
+            );
+          })}
+
+          {isComparisonActive && visibleData.map((h, i) => {
+            const idx = minIdx + i;
+            const hasSNote = annotations[secondaryMetric]?.[idx];
+            if (!hasSNote) return null;
+            return (
+              <g key={`secondary-ann-dot-${idx}`} className="pointer-events-none">
+                <circle
+                  cx={xScale(idx)}
+                  cy={yScaleSecondary(secondaryVals[idx])}
+                  r={7}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={1.5}
+                  className="animate-pulse"
+                />
+                <circle
+                  cx={xScale(idx)}
+                  cy={yScaleSecondary(secondaryVals[idx])}
+                  r={3.5}
+                  fill="#f59e0b"
+                />
+              </g>
+            );
+          })}
 
           {/* Callout Pins for peak and trough values */}
           {/* Peak Callout */}
@@ -933,12 +1057,27 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             <div className="space-y-1 text-xs">
               <div className="flex justify-between items-center gap-3">
                 <span className="text-slate-400 font-semibold text-[10px]">Primary KPI:</span>
-                <span className="font-mono text-blue-400 font-black">{hoveredPoint.value}</span>
+                <span className="font-mono text-blue-400 font-black">
+                  {hoveredPoint.value} {isSmoothingActive && <span className="text-[8px] opacity-65">(Smoothed)</span>}
+                </span>
               </div>
               {hoveredPoint.secondaryValue !== undefined && (
                 <div className="flex justify-between items-center gap-3">
                   <span className="text-slate-400 font-semibold text-[10px]">Secondary KPI:</span>
-                  <span className="font-mono text-emerald-400 font-black">{hoveredPoint.secondaryValue}</span>
+                  <span className="font-mono text-emerald-400 font-black">
+                    {hoveredPoint.secondaryValue} {isSmoothingActive && <span className="text-[8px] opacity-65">(Smoothed)</span>}
+                  </span>
+                </div>
+              )}
+              {/* Show annotations if any exist */}
+              {annotations[primaryMetric]?.[hoveredPoint.index] && (
+                <div className="border-t border-white/5 pt-1 mt-1 text-[9px] text-amber-400 font-medium leading-snug">
+                  <span className="font-black uppercase text-[7px] tracking-wide block text-slate-500">Primary Note:</span> "{annotations[primaryMetric][hoveredPoint.index]}"
+                </div>
+              )}
+              {isComparisonActive && annotations[secondaryMetric]?.[hoveredPoint.index] && (
+                <div className="border-t border-white/5 pt-1 mt-1 text-[9px] text-emerald-400 font-medium leading-snug">
+                  <span className="font-black uppercase text-[7px] tracking-wide block text-slate-500">Secondary Note:</span> "{annotations[secondaryMetric][hoveredPoint.index]}"
                 </div>
               )}
             </div>
@@ -978,269 +1117,511 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
       <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="flex items-center justify-between border-b border-white/5 pb-3">
-        <h2 className="text-xs font-black text-white flex items-center gap-2 uppercase tracking-wider">
+      {/* Top Header Row with Title, Tab Switching, and Noise Smoothing Toggle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/5 pb-3 gap-3">
+        <div className="flex items-center gap-2">
           <AreaChart className="w-4 h-4 text-blue-400 drop-shadow-[0_0_6px_rgba(59,130,246,0.4)]" />
-          5. Dashboard KPIs Selection
-        </h2>
-        <div className="flex gap-3 items-center text-[10px] font-black uppercase tracking-wider">
-          <button type="button" onClick={selectAll} className="text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">
-            All
-          </button>
-          <span className="text-slate-800">|</span>
-          <button type="button" onClick={clearAll} className="text-slate-500 hover:text-slate-400 transition-colors cursor-pointer">
-            None
-          </button>
+          <h2 className="text-xs font-black text-white uppercase tracking-wider">
+            5. Agile Analytics & Metrics Studio
+          </h2>
         </div>
-      </div>
-
-      <p className="text-[11px] text-slate-400 font-medium">
-        Select and toggle active PMO metrics to track on your main executive dashboard bar. Individual metric cards are monitored in real-time and will alert you if a metric deviates significantly from its historical baseline average.
-      </p>
-
-      {/* KPI Selection Card Grid with Automated Deviation Alert System */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {metrics.map((m) => {
-          const formulas = METRIC_FORMULAS[m.id] || { formula: "Default count metrics", source: "Normalized issues" };
-          
-          // Compute historical average and current deviation for red flashing alerts
-          const vals = historyData.map((h) => h.metrics[m.id] || 0);
-          const historicalAvg = vals.reduce((sum, v) => sum + v, 0) / (vals.length || 1);
-          
-          let currentVal = 0;
-          if (report && report.metrics) {
-            const rm = report.metrics;
-            if (m.id === "bugsToStoriesRatio") {
-              const val = rm.bugsToStoriesRatio;
-              if (typeof val === "string") {
-                if (val.includes(":")) {
-                  const parts = val.split(":");
-                  const b = parseFloat(parts[0]) || 0;
-                  const s = parseFloat(parts[1]) || 1;
-                  currentVal = Number((b / s).toFixed(2));
-                } else {
-                  currentVal = parseFloat(val) || 0.25;
-                }
-              } else {
-                currentVal = Number(val) || 0.25;
-              }
-            } else {
-              currentVal = Number((rm as any)[m.id]) || 0;
-            }
-          } else {
-            currentVal = vals[vals.length - 1]; // Use last item in history if no report
-          }
-
-          const deviationPct = historicalAvg !== 0 ? ((currentVal - historicalAvg) / historicalAvg) * 100 : 0;
-          const isDeviationAlert = Math.abs(deviationPct) > 20;
-
-          return (
-            <div 
-              key={m.id} 
-              className={`relative group rounded-xl border transition-all duration-300 p-3 flex flex-col justify-between ${
-                isDeviationAlert 
-                  ? "animate-red-flash-card border-rose-500/40 text-white"
-                  : m.enabled
-                    ? "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_8px_rgba(59,130,246,0.05)]"
-                    : "border-white/5 bg-slate-950/20 text-slate-300 hover:border-white/10 hover:bg-slate-950/30"
+        
+        {/* Navigation Tabs and Smoothing Controls */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* View Selection Tabs */}
+          <div className="bg-slate-950/60 p-1 rounded-xl border border-white/5 flex items-center">
+            <button
+              type="button"
+              onClick={() => setActiveTab("monitors")}
+              className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer transition-all ${
+                activeTab === "monitors"
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <button
-                type="button"
-                onClick={() => toggleMetric(m.id)}
-                className="w-full flex items-start text-left cursor-pointer"
-              >
-                <div className="flex items-center h-5 mr-3 shrink-0">
-                  <div
-                    className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${
-                      m.enabled ? "bg-blue-600 border-blue-600 text-white" : "border-white/10 bg-slate-950"
-                    }`}
-                  >
-                    {m.enabled && <Check className="w-3 h-3 stroke-[3]" />}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-200 truncate">{m.label}</span>
-                    {getMetricDelta(m.id)}
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium truncate">{m.description}</div>
-                </div>
-              </button>
-
-              {/* D3-based Mini Sparkline Widget inside Card */}
-              {renderMiniD3Sparkline(m.id)}
-
-              {/* Out-of-bounds Deviation Indicator */}
-              {isDeviationAlert && (
-                <div className="mt-2.5 flex items-center gap-1.5 text-[8px] font-black text-rose-400 bg-rose-950/40 border border-rose-500/20 px-2 py-1 rounded-lg uppercase tracking-wider">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>ALERT: {deviationPct > 0 ? "+" : ""}{deviationPct.toFixed(0)}% from baseline avg</span>
-                </div>
-              )}
-
-              {/* Info Tooltip */}
-              <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-950 border border-white/10 rounded-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-200 leading-normal">
-                <div className="text-blue-400 font-black uppercase text-[8px] tracking-widest mb-1.5 flex items-center gap-1">
-                  💡 PMO KPI Metric Formula
-                </div>
-                <div className="space-y-1.5 text-[10px]">
-                  <div>
-                    <span className="text-slate-500 font-bold uppercase text-[7.5px] block">Formula Expression:</span>
-                    <span className="font-mono font-bold text-slate-200 block mt-0.5 leading-snug">{formulas.formula}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 font-bold uppercase text-[7.5px] block">Source Field / JQL Scope:</span>
-                    <span className="text-slate-300 font-medium block mt-0.5">{formulas.source}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Advanced Trend & Correlation Analyzer (Interactive Studio) */}
-      <div className="pt-5 border-t border-white/5 space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-          <div>
-            <h3 className="text-[10px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-indigo-400" />
-              6. Agile Analytics Studio & Correlation Analyzer
-            </h3>
-            <p className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-tight mt-0.5">
-              D3-Powered Deep Historical Assessment & Regression Engine
-            </p>
+              KPI Monitors
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("correlation")}
+              className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                activeTab === "correlation"
+                  ? "bg-indigo-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <span>Correlate Metrics</span>
+              <span className="text-[7.5px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/35 px-1 py-0.2 rounded font-mono font-black uppercase">
+                Dual Axis
+              </span>
+            </button>
           </div>
 
-          {/* Export History button */}
+          <span className="text-slate-800 hidden sm:inline">|</span>
+
+          {/* Moving Average Noise Reduction Smoothing Toggle */}
           <button
             type="button"
-            onClick={handleExportHistory}
-            className="w-full sm:w-auto bg-slate-800 hover:bg-slate-750 text-slate-300 font-extrabold text-[9.5px] py-1.5 px-3 rounded-lg border border-white/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider"
+            onClick={() => {
+              setIsSmoothingActive(!isSmoothingActive);
+              addToast?.("Smoothing Toggle", isSmoothingActive ? "Raw data restored." : "3-period Simple Moving Average filter applied to trendlines.", "info", 2000);
+            }}
+            className={`text-[9.5px] font-black uppercase px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
+              isSmoothingActive
+                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/35 shadow-lg shadow-emerald-500/5"
+                : "bg-slate-950/30 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-200"
+            }`}
           >
-            <Download className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Export History (.JSON)</span>
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Smoothing: {isSmoothingActive ? "On" : "Off"}</span>
           </button>
         </div>
+      </div>
 
-        {/* Configuration Toolbar */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/30 p-3 rounded-xl border border-white/5 text-[10.5px]">
-          {/* Primary Metric dropdown selection */}
-          <div className="space-y-1">
-            <label className="text-slate-400 font-bold uppercase text-[8px] tracking-wider block">Primary Metric</label>
-            <select
-              value={primaryMetric}
-              onChange={(e) => setPrimaryMetric(e.target.value)}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg py-1.5 px-2 text-slate-200 focus:outline-none focus:border-indigo-500/80 font-semibold"
-            >
-              {metrics.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Secondary Metric dropdown selection & active toggle */}
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="text-slate-400 font-bold uppercase text-[8px] tracking-wider block">Compare Metric</label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isComparisonActive}
-                  onChange={(e) => setIsComparisonActive(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3 h-3"
-                />
-                <span className="text-indigo-400 font-black text-[7.5px] uppercase tracking-wider">Enable</span>
-              </label>
+      {/* RENDER VIEW 1: KPI Cards Grid with custom annotations & delta compare modes */}
+      {activeTab === "monitors" ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <p className="text-[11px] text-slate-400 font-medium">
+              Select and toggle active PMO metrics to track on your main executive dashboard bar. Individual cards are monitored in real-time, compute live deviations, and support custom annotations on specific data points.
+            </p>
+            <div className="flex gap-3 items-center text-[10px] font-black uppercase tracking-wider shrink-0 ml-auto sm:ml-4">
+              <button type="button" onClick={selectAll} className="text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">
+                All
+              </button>
+              <span className="text-slate-800">|</span>
+              <button type="button" onClick={clearAll} className="text-slate-500 hover:text-slate-400 transition-colors cursor-pointer">
+                None
+              </button>
             </div>
-            <select
-              value={secondaryMetric}
-              onChange={(e) => setSecondaryMetric(e.target.value)}
-              disabled={!isComparisonActive}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg py-1.5 px-2 text-slate-200 focus:outline-none focus:border-indigo-500/80 font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {metrics.map((m) => (
-                <option key={m.id} value={m.id} disabled={m.id === primaryMetric}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
           </div>
 
-          {/* Plotting Options (Trendline) */}
-          <div className="flex items-center gap-2 pt-2 md:pt-0">
-            <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
-              <input
-                type="checkbox"
-                checked={showTrendline}
-                onChange={(e) => setShowTrendline(e.target.checked)}
-                className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
-              />
-              <div>
-                <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">D3 Linear Trendline</span>
-                <span className="text-[7px] text-slate-500 font-semibold uppercase">Overlay growth slope</span>
-              </div>
-            </label>
-          </div>
+          {/* KPI Selection Card Grid with Automated Deviation Alert System */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {metrics.map((m) => {
+              const formulas = METRIC_FORMULAS[m.id] || { formula: "Default count metrics", source: "Normalized issues" };
+              
+              // Compute historical average and current deviation for red flashing alerts
+              const vals = historyData.map((h) => h.metrics[m.id] || 0);
+              const historicalAvg = vals.reduce((sum, v) => sum + v, 0) / (vals.length || 1);
+              
+              let currentVal = 0;
+              if (report && report.metrics) {
+                const rm = report.metrics;
+                if (m.id === "bugsToStoriesRatio") {
+                  const val = rm.bugsToStoriesRatio;
+                  if (typeof val === "string") {
+                    if (val.includes(":")) {
+                      const parts = val.split(":");
+                      const b = parseFloat(parts[0]) || 0;
+                      const s = parseFloat(parts[1]) || 1;
+                      currentVal = Number((b / s).toFixed(2));
+                    } else {
+                      currentVal = parseFloat(val) || 0.25;
+                    }
+                  } else {
+                    currentVal = Number(val) || 0.25;
+                  }
+                } else {
+                  currentVal = Number((rm as any)[m.id]) || 0;
+                }
+              } else {
+                currentVal = vals[vals.length - 1]; // Use last item in history if no report
+              }
 
-          {/* Plotting Options (Volatility / SD) */}
-          <div className="flex items-center gap-2 pt-2 md:pt-0">
-            <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
-              <input
-                type="checkbox"
-                checked={showStdDevShading}
-                onChange={(e) => setShowStdDevShading(e.target.checked)}
-                className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
-              />
-              <div>
-                <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">Highlight Volatility</span>
-                <span className="text-[7px] text-slate-500 font-semibold uppercase">Shade outside standard deviation</span>
-              </div>
-            </label>
+              const deviationPct = historicalAvg !== 0 ? ((currentVal - historicalAvg) / historicalAvg) * 100 : 0;
+              const isDeviationAlert = Math.abs(deviationPct) > 20;
+              const mode = cardCompareModes[m.id] || "previous";
+
+              return (
+                <div 
+                  key={m.id} 
+                  className={`relative group rounded-xl border transition-all duration-300 p-3 flex flex-col justify-between ${
+                    isDeviationAlert 
+                      ? "animate-red-flash-card border-rose-500/40 text-white"
+                      : m.enabled
+                        ? "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_8px_rgba(59,130,246,0.05)]"
+                        : "border-white/5 bg-slate-950/20 text-slate-300 hover:border-white/10 hover:bg-slate-950/30"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleMetric(m.id)}
+                    className="w-full flex items-start text-left cursor-pointer"
+                  >
+                    <div className="flex items-center h-5 mr-3 shrink-0">
+                      <div
+                        className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${
+                          m.enabled ? "bg-blue-600 border-blue-600 text-white" : "border-white/10 bg-slate-950"
+                        }`}
+                      >
+                        {m.enabled && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-200 truncate">{m.label}</span>
+                        {getMetricDelta(m.id, mode)}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium truncate">{m.description}</div>
+                    </div>
+                  </button>
+
+                  {/* D3-based Mini Sparkline Widget inside Card (supports Smoothing toggle!) */}
+                  {renderMiniD3Sparkline(m.id)}
+
+                  {/* Out-of-bounds Deviation Indicator */}
+                  {isDeviationAlert && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[8px] font-black text-rose-400 bg-rose-950/40 border border-rose-500/20 px-2 py-1 rounded-lg uppercase tracking-wider">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                      <span>ALERT: {deviationPct > 0 ? "+" : ""}{deviationPct.toFixed(0)}% from baseline avg</span>
+                    </div>
+                  )}
+
+                  {/* Custom Delta Baseline Comparison Mode Toggle Switch */}
+                  <div className="mt-2.5 flex items-center justify-between text-[8px] font-bold text-slate-500 border-t border-white/5 pt-2">
+                    <span className="uppercase tracking-wider">Delta Baseline:</span>
+                    <div className="flex gap-1 bg-slate-950/60 p-0.5 rounded-md border border-white/5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCardCompareModes(prev => ({ ...prev, [m.id]: "previous" }));
+                        }}
+                        className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase transition-all ${
+                          mode === "previous"
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        vs Prev
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCardCompareModes(prev => ({ ...prev, [m.id]: "average" }));
+                        }}
+                        className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase transition-all ${
+                          mode === "average"
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        vs 12-Spr Avg
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Custom Sprints Annotation Note Input Form */}
+                  <div className="mt-2 pt-2 border-t border-white/5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-wider">📝 Sprints Documentation Notes</span>
+                      <span className="text-[7px] text-slate-500 font-semibold uppercase">Specific Points</span>
+                    </div>
+                    
+                    {/* Select Sprint dropdown and typing Input */}
+                    <div className="flex gap-1">
+                      <select
+                        value={selectedSprintIdx[m.id] ?? 11}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setSelectedSprintIdx(prev => ({ ...prev, [m.id]: val }));
+                          setCardInputs(prev => ({ ...prev, [m.id]: annotations[m.id]?.[val] ?? "" }));
+                        }}
+                        className="bg-slate-900 border border-white/10 rounded-md py-0.5 px-1 text-[8.5px] text-slate-200 focus:outline-none focus:border-indigo-500 font-bold shrink-0"
+                      >
+                        {historyData.map((h, idx) => (
+                          <option key={idx} value={idx}>
+                            {h.name}
+                          </option>
+                        ))}
+                      </select>
+                      
+                      <input
+                        type="text"
+                        placeholder="Add documentation note..."
+                        value={cardInputs[m.id] !== undefined ? cardInputs[m.id] : (annotations[m.id]?.[selectedSprintIdx[m.id] ?? 11] ?? "")}
+                        onChange={(e) => {
+                          const text = e.target.value;
+                          setCardInputs(prev => ({ ...prev, [m.id]: text }));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const sprint = selectedSprintIdx[m.id] ?? 11;
+                            const text = cardInputs[m.id] !== undefined ? cardInputs[m.id] : (annotations[m.id]?.[sprint] ?? "");
+                            setAnnotations(prev => {
+                              const metricAnn = prev[m.id] || {};
+                              if (text.trim() === "") {
+                                const updated = { ...metricAnn };
+                                delete updated[sprint];
+                                return { ...prev, [m.id]: updated };
+                              }
+                              return { ...prev, [m.id]: { ...metricAnn, [sprint]: text.trim() } };
+                            });
+                            addToast?.("Note Saved", `Annotation updated for ${historyData[sprint].name}`, "success", 2000);
+                          }
+                        }}
+                        className="flex-1 bg-slate-900 border border-white/10 rounded-md py-0.5 px-1.5 text-[8.5px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-medium"
+                      />
+                      
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const sprint = selectedSprintIdx[m.id] ?? 11;
+                          const text = cardInputs[m.id] !== undefined ? cardInputs[m.id] : (annotations[m.id]?.[sprint] ?? "");
+                          setAnnotations(prev => {
+                            const metricAnn = prev[m.id] || {};
+                            if (text.trim() === "") {
+                              const updated = { ...metricAnn };
+                              delete updated[sprint];
+                              return { ...prev, [m.id]: updated };
+                            }
+                            return { ...prev, [m.id]: { ...metricAnn, [sprint]: text.trim() } };
+                          });
+                          addToast?.("Note Saved", `Annotation updated for ${historyData[sprint].name}`, "success", 2000);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded-md px-1.5 py-0.5 text-[8px] font-black uppercase cursor-pointer shrink-0 transition-colors"
+                      >
+                        Save
+                      </button>
+                    </div>
+
+                    {/* Saved Sprints List Box */}
+                    {Object.entries(annotations[m.id] || {}).length > 0 && (
+                      <div className="bg-slate-950/60 rounded-md p-1 border border-white/5 space-y-1 max-h-[50px] overflow-y-auto custom-scrollbar">
+                        {Object.entries(annotations[m.id] || {}).map(([sprintIdxStr, noteText]) => {
+                          const sprintIdx = parseInt(sprintIdxStr);
+                          return (
+                            <div key={sprintIdx} className="flex justify-between items-center gap-1 text-[8px] leading-tight text-slate-400 group/item">
+                              <span className="shrink-0 font-bold text-indigo-400">{historyData[sprintIdx]?.name}:</span>
+                              <span className="flex-1 italic truncate">"{noteText}"</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAnnotations(prev => {
+                                    const updated = { ...(prev[m.id] || {}) };
+                                    delete updated[sprintIdx];
+                                    return { ...prev, [m.id]: updated };
+                                  });
+                                  addToast?.("Note Removed", "Annotation deleted.", "info", 1500);
+                                }}
+                                className="text-rose-500 hover:text-rose-400 font-bold ml-1 opacity-40 group-hover/item:opacity-100 transition-opacity cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Info Tooltip */}
+                  <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-950 border border-white/10 rounded-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-200 leading-normal">
+                    <div className="text-blue-400 font-black uppercase text-[8px] tracking-widest mb-1.5 flex items-center gap-1">
+                      💡 PMO KPI Metric Formula
+                    </div>
+                    <div className="space-y-1.5 text-[10px]">
+                      <div>
+                        <span className="text-slate-500 font-bold uppercase text-[7.5px] block">Formula Expression:</span>
+                        <span className="font-mono font-bold text-slate-200 block mt-0.5 leading-snug">{formulas.formula}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 font-bold uppercase text-[7.5px] block">Source Field / JQL Scope:</span>
+                        <span className="text-slate-300 font-medium block mt-0.5">{formulas.source}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
+      ) : (
+        /* RENDER VIEW 2: Advanced Trend & Correlation Analyzer (Correlate Metrics View) */
+        <div className="pt-2 space-y-4 animate-fade-in">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div>
+              <h3 className="text-[10px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-indigo-400" />
+                6. Agile Analytics Studio & Correlation Analyzer
+              </h3>
+              <p className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-tight mt-0.5">
+                D3-Powered Deep Historical Assessment & Regression Engine {isSmoothingActive && <span className="text-emerald-400 font-bold">(Smoothed Mode)</span>}
+              </p>
+            </div>
 
-        {/* Dynamic D3 Plot Canvas */}
-        {renderInteractiveD3Chart()}
+            {/* Export History button */}
+            <button
+              type="button"
+              onClick={handleExportHistory}
+              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-750 text-slate-300 font-extrabold text-[9.5px] py-1.5 px-3 rounded-lg border border-white/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Export History (.JSON)</span>
+            </button>
+          </div>
 
-        {/* Correlation & Pearson Stats Insights Box */}
-        {isComparisonActive && correlationAnalysis && (
-          <div className="bg-indigo-950/20 border border-indigo-500/25 p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs leading-relaxed animate-fade-in">
-            <div className="flex items-start gap-2.5 min-w-0">
-              <Sparkles className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5 animate-pulse" />
-              <div>
-                <div className="font-bold text-slate-200 uppercase tracking-wide flex items-center gap-1.5">
-                  <span>Pearson Correlation Assessment:</span>
-                  <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
-                    Math.abs(correlationAnalysis.r) >= 0.7 
-                      ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/20" 
-                      : Math.abs(correlationAnalysis.r) >= 0.4
-                        ? "bg-amber-500/10 text-amber-400 border border-amber-500/10"
-                        : "bg-slate-850 text-slate-400 border border-slate-800"
-                  }`}>
-                    r = {correlationAnalysis.r}
-                  </span>
+          {/* Configuration Toolbar */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/30 p-3 rounded-xl border border-white/5 text-[10.5px]">
+            {/* Primary Metric dropdown selection */}
+            <div className="space-y-1">
+              <label className="text-slate-400 font-bold uppercase text-[8px] tracking-wider block">Primary Metric</label>
+              <select
+                value={primaryMetric}
+                onChange={(e) => setPrimaryMetric(e.target.value)}
+                className="w-full bg-slate-900 border border-white/10 rounded-lg py-1.5 px-2 text-slate-200 focus:outline-none focus:border-indigo-500/80 font-semibold"
+              >
+                {metrics.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Secondary Metric dropdown selection & active toggle */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-slate-400 font-bold uppercase text-[8px] tracking-wider block">Compare Metric</label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isComparisonActive}
+                    onChange={(e) => setIsComparisonActive(e.target.checked)}
+                    className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3 h-3"
+                  />
+                  <span className="text-indigo-400 font-black text-[7.5px] uppercase tracking-wider">Enable</span>
+                </label>
+              </div>
+              <select
+                value={secondaryMetric}
+                onChange={(e) => setSecondaryMetric(e.target.value)}
+                disabled={!isComparisonActive}
+                className="w-full bg-slate-900 border border-white/10 rounded-lg py-1.5 px-2 text-slate-200 focus:outline-none focus:border-indigo-500/80 font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {metrics.map((m) => (
+                  <option key={m.id} value={m.id} disabled={m.id === primaryMetric}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Plotting Options (Trendline) */}
+            <div className="flex items-center gap-2 pt-2 md:pt-0">
+              <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={showTrendline}
+                  onChange={(e) => setShowTrendline(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                />
+                <div>
+                  <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">D3 Linear Trendline</span>
+                  <span className="text-[7px] text-slate-500 font-semibold uppercase">Overlay growth slope</span>
                 </div>
-                <div className="text-[10.5px] text-slate-400 font-medium mt-1">
-                  The computed relationship is classified as a <span className="font-bold text-indigo-300">"{correlationAnalysis.text}"</span> over the 12-entry history.
-                  {correlationAnalysis.r < -0.4 && (
-                    <span> This indicates a strong inverse relationship: as primary KPI performance accelerates, secondary metric volume scales downwards, optimizing resource throughput.</span>
-                  )}
-                  {correlationAnalysis.r > 0.4 && (
-                    <span> This indicates a direct positive relationship: both PMO performance baselines are moving in alignment, verifying parallel productivity growth.</span>
-                  )}
-                  {Math.abs(correlationAnalysis.r) < 0.4 && (
-                    <span> The variables behave relatively independently over this period, indicating stable team scaling and minimal conflict between operations.</span>
-                  )}
+              </label>
+            </div>
+
+            {/* Plotting Options (Volatility / SD) */}
+            <div className="flex items-center gap-2 pt-2 md:pt-0">
+              <label className="flex items-center gap-2 cursor-pointer w-full bg-slate-900/55 p-2 rounded-lg border border-white/5 hover:bg-slate-900 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={showStdDevShading}
+                  onChange={(e) => setShowStdDevShading(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                />
+                <div>
+                  <span className="text-slate-300 font-bold uppercase text-[8px] tracking-wider block">Highlight Volatility</span>
+                  <span className="text-[7px] text-slate-500 font-semibold uppercase">Shade outside standard deviation</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Dynamic D3 Plot Canvas */}
+          {renderInteractiveD3Chart()}
+
+          {/* New Timeline Annotations Overlay if any exist for the currently selected metrics */}
+          {(() => {
+            const annotatedSprints = historyData.filter((h, idx) => 
+              annotations[primaryMetric]?.[idx] || (isComparisonActive && annotations[secondaryMetric]?.[idx])
+            );
+            if (annotatedSprints.length === 0) return null;
+            return (
+              <div className="bg-indigo-950/10 border border-indigo-500/10 p-3 rounded-xl text-[10.5px] space-y-2 animate-fade-in">
+                <div className="font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                  <span>📝 Historical Timeline Event Annotations ({primaryMetric} {isComparisonActive && `& ${secondaryMetric}`}):</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {annotatedSprints.map((h) => {
+                    const idx = historyData.indexOf(h);
+                    const pNote = annotations[primaryMetric]?.[idx];
+                    const sNote = isComparisonActive ? annotations[secondaryMetric]?.[idx] : null;
+                    return (
+                      <div key={idx} className="bg-slate-950/45 p-2 rounded-lg border border-white/5 text-[10px]">
+                        <div className="font-black text-indigo-300 text-[9px] mb-1">{h.name} ({h.date})</div>
+                        {pNote && (
+                          <div className="text-slate-300 font-medium leading-snug">
+                            <span className="text-blue-400 font-bold uppercase text-[7.5px] tracking-wide bg-blue-500/10 px-1 py-0.2 rounded border border-blue-500/10 mr-1">Primary:</span> "{pNote}"
+                          </div>
+                        )}
+                        {sNote && (
+                          <div className="text-slate-300 font-medium leading-snug mt-1.5">
+                            <span className="text-emerald-400 font-bold uppercase text-[7.5px] tracking-wide bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/10 mr-1">Secondary:</span> "{sNote}"
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Correlation & Pearson Stats Insights Box */}
+          {isComparisonActive && correlationAnalysis && (
+            <div className="bg-indigo-950/20 border border-indigo-500/25 p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs leading-relaxed animate-fade-in">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <Sparkles className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5 animate-pulse" />
+                <div>
+                  <div className="font-bold text-slate-200 uppercase tracking-wide flex items-center gap-1.5">
+                    <span>Pearson Correlation Assessment:</span>
+                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                      Math.abs(correlationAnalysis.r) >= 0.7 
+                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/20" 
+                        : Math.abs(correlationAnalysis.r) >= 0.4
+                          ? "bg-amber-500/10 text-amber-400 border border-amber-500/10"
+                          : "bg-slate-850 text-slate-400 border border-slate-800"
+                    }`}>
+                      r = {correlationAnalysis.r}
+                    </span>
+                  </div>
+                  <div className="text-[10.5px] text-slate-400 font-medium mt-1">
+                    The computed relationship is classified as a <span className="font-bold text-indigo-300">"{correlationAnalysis.text}"</span> over the 12-entry history.
+                    {correlationAnalysis.r < -0.4 && (
+                      <span> This indicates a strong inverse relationship: as primary KPI performance accelerates, secondary metric volume scales downwards, optimizing resource throughput.</span>
+                    )}
+                    {correlationAnalysis.r > 0.4 && (
+                      <span> This indicates a direct positive relationship: both PMO performance baselines are moving in alignment, verifying parallel productivity growth.</span>
+                    )}
+                    {Math.abs(correlationAnalysis.r) < 0.4 && (
+                      <span> The variables behave relatively independently over this period, indicating stable team scaling and minimal conflict between operations.</span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

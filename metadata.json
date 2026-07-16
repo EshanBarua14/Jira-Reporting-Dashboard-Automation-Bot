@@ -1,6 +1,6 @@
 {
-  "name": "Eshan Barua's Jira Analytics Suite",
-  "description": "A UI-driven Jira, Confluence, and Discord reporting and automated dashboard generator with read-only secure session handling and intelligent Gemini executive PMO summaries.",
+  "name": "Eshan Barua's OmniSync Suite",
+  "description": "A UI-driven Jira, Confluence, and Discord reporting and automated dashboard generator with read-only secure session handling and custom local executive PMO summaries.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

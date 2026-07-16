@@ -465,6 +465,22 @@ export const getSandboxIssues = (): JiraIssue[] => {
       resolution: issue.resolution || null,
       timeSpent: issue.timeSpent !== undefined ? issue.timeSpent : null,
       remainingEstimate: issue.remainingEstimate !== undefined ? issue.remainingEstimate : null,
+      originalEstimate: (() => {
+        const spent = issue.timeSpent !== undefined ? issue.timeSpent : null;
+        const remaining = issue.remainingEstimate !== undefined ? issue.remainingEstimate : null;
+        if (issue.key === "ALPHA-101") return 14400; // spent 28800
+        if (issue.key === "MOBI-201") return 10800; // spent 18000
+        if (issue.key === "MOBI-202") return 28800; // spent 43200
+        if (spent !== null && spent > 0) {
+          if (idx % 3 === 0) {
+            return Math.round(spent * 0.5); // High Risk Overrun
+          } else if (idx % 3 === 1) {
+            return Math.round(spent * 0.8); // Moderate Risk Overrun
+          }
+          return Math.round(spent + (remaining || 0));
+        }
+        return (issue.storyPoints || 3) * 8 * 3600;
+      })(),
       labels: issue.labels || [],
       components: issue.components || [],
     } as JiraIssue;

@@ -51,7 +51,11 @@ export function exportToPDF(
   issues: JiraIssue[], 
   columns: ColumnDefinition[],
   customNote?: string,
-  watermark?: string
+  watermark?: string,
+  logoBase64?: string,
+  headerTitle?: string,
+  headerSubtitle?: string,
+  companyName?: string
 ) {
   const activeColumns = columns.filter(c => c.enabled);
   const printWindow = window.open("", "_blank");
@@ -75,11 +79,16 @@ export function exportToPDF(
   printWindow.document.write(`
     <html>
       <head>
-        <title>${reportTitle}</title>
+        <title>${headerTitle || reportTitle}</title>
         <style>
           body { font-family: 'Inter', system-ui, sans-serif; color: #333; margin: 30px; position: relative; }
-          h1 { margin-bottom: 5px; }
-          .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
+          .header-container { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #3b82f6; padding-bottom: 15px; margin-bottom: 20px; }
+          .header-title-section { flex: 1; pr: 20px; }
+          .header-title { margin: 0; font-size: 24px; font-weight: 800; color: #0f172a; }
+          .header-subtitle { margin: 4px 0 0 0; font-size: 13px; color: #64748b; font-weight: 500; }
+          .company-name { font-size: 11px; color: #94a3b8; font-weight: 600; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+          .logo-img { max-height: 55px; max-width: 180px; object-fit: contain; }
+          .meta { font-size: 11px; color: #64748b; margin-top: 5px; font-weight: 500; }
           table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 15px; position: relative; z-index: 10; }
           ${showWatermark ? `
           .watermark {
@@ -102,8 +111,16 @@ export function exportToPDF(
       </head>
       <body>
         ${showWatermark ? `<div class="watermark">${watermark}</div>` : ""}
-        <h1>${reportTitle}</h1>
-        <div class="meta">Generated on ${new Date().toLocaleString()} | Scope: ${issues.length} Issues</div>
+        
+        <div class="header-container">
+          <div class="header-title-section">
+            <h1 class="header-title">${headerTitle || reportTitle}</h1>
+            <p class="header-subtitle">${headerSubtitle || "PMO Metrics & Target Scope Tickets"}</p>
+            <div class="company-name">${companyName || "OmniSync Suite"}</div>
+            <div class="meta">Generated on ${new Date().toLocaleString()} | Scope: ${issues.length} Issues</div>
+          </div>
+          ${logoBase64 ? `<img src="${logoBase64}" class="logo-img" />` : ""}
+        </div>
         
         ${customNote ? `
         <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px 16px; margin: 20px 0; font-size: 12px; border-radius: 6px; line-height: 1.6; color: #1e293b; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02); border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">

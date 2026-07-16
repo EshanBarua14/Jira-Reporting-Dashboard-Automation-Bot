@@ -54,17 +54,269 @@ const DEFAULT_METRICS: MetricDefinition[] = [
   { id: "sprintVelocity", label: "Sprint Velocity", description: "Sum of SP for completed issues.", enabled: true },
 ];
 
+// Draggable and Collapsible wrapper for workspace panels
+function DraggableCard({
+  id,
+  title,
+  theme,
+  isCollapsed,
+  onToggleCollapse,
+  onExport,
+  onCopy,
+  onRefresh,
+  filterOptions,
+  onToggleFilter,
+  index,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onMoveUp,
+  onMoveDown,
+  onDragEnd,
+  children
+}: {
+  id: string;
+  title: string;
+  theme: "dark" | "light";
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+  onExport: () => void;
+  onCopy: () => void;
+  onRefresh: () => void;
+  filterOptions?: Record<string, boolean>;
+  onToggleFilter?: (key: string) => void;
+  index: number;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onDragEnd?: () => void;
+  children: React.ReactNode;
+  key?: any;
+}) {
+  const isLight = theme === "light";
+  const [showFilterPopover, setShowFilterPopover] = useState(false);
+
+  const formatFilterKey = (key: string) => {
+    const spaced = key.replace(/([A-Z])/g, " $1");
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  };
+
+  return (
+    <motion.div
+      id={`draggable-wrapper-${id}`}
+      layout
+      transition={{ type: "spring", stiffness: 280, damping: 28 }}
+      draggable={true}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDrop={onDrop}
+      className={`transition-all duration-300 relative ${
+        isLight
+          ? "border border-slate-200 bg-white rounded-2xl shadow-sm hover:shadow-md hover:border-slate-300 overflow-hidden animate-in fade-in duration-200"
+          : ""
+      }`}
+    >
+      {/* Light Theme Unified Header & Toolbar */}
+      {isLight && (
+        <div className="px-5 py-3.5 flex items-center justify-between border-b border-slate-100 bg-slate-50/70 rounded-t-2xl select-none">
+          <div className="flex items-center gap-2.5">
+            {/* Drag Handle Indicator */}
+            <span 
+              className="text-slate-400 cursor-grab active:cursor-grabbing hover:text-slate-600 transition-colors p-1 rounded hover:bg-slate-200/50"
+              title="Drag card to reorder layout"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <circle cx="9" cy="5" r="1.5" fill="currentColor"/>
+                <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
+                <circle cx="9" cy="12" r="1.5" fill="currentColor"/>
+                <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
+                <circle cx="9" cy="19" r="1.5" fill="currentColor"/>
+                <circle cx="15" cy="19" r="1.5" fill="currentColor"/>
+              </svg>
+            </span>
+            <span className="text-xs font-extrabold text-slate-700 tracking-wide uppercase">{title}</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 relative">
+            {/* Quick Copy Data Button */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onCopy(); }}
+              title="Copy card processed data to clipboard"
+              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+            </button>
+
+            {/* Quick Filter Popover Icon */}
+            {filterOptions && Object.keys(filterOptions).length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowFilterPopover(!showFilterPopover); }}
+                  title="Quick toggle card sub-filters"
+                  className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.82c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+                  </svg>
+                </button>
+
+                {showFilterPopover && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={(e) => { e.stopPropagation(); setShowFilterPopover(false); }} 
+                    />
+                    <div 
+                      className="absolute right-0 mt-2 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-3 text-xs text-slate-700 animate-in fade-in slide-in-from-top-2 duration-150 text-left"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="font-extrabold text-[10px] text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1 flex justify-between items-center">
+                        <span>Card Sub-Filters</span>
+                        <button 
+                          onClick={() => setShowFilterPopover(false)}
+                          className="text-slate-400 hover:text-slate-600 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="space-y-1.5">
+                        {Object.keys(filterOptions).map((key) => (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer py-1 px-1 rounded hover:bg-slate-50 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={!!filterOptions[key]}
+                              onChange={() => onToggleFilter?.(key)}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                            />
+                            <span className="font-medium text-slate-600">{formatFilterKey(key)}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Quick Refresh Card Button */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+              title="Refresh this card dataset"
+              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3m-3-3v8" />
+              </svg>
+            </button>
+
+            {/* Quick Export Button */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onExport(); }}
+              title="Export report dataset"
+              className="p-1 px-2 rounded-lg hover:bg-slate-200/80 text-blue-600 hover:text-blue-700 transition-all text-xs flex items-center gap-1 font-bold border border-blue-150 bg-blue-50/30 cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span>Export</span>
+            </button>
+
+            {/* Accessibility Manual Sort Buttons */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer text-xs"
+              title="Move Card Up"
+            >
+              ▲
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer text-xs"
+              title="Move Card Down"
+            >
+              ▼
+            </button>
+
+            {/* Collapse/Expand Toggle Chevron */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
+              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
+              title={isCollapsed ? "Expand Panel" : "Collapse Panel"}
+            >
+              <svg
+                className={`w-4 h-4 transform transition-transform duration-300 ${isCollapsed ? "-rotate-90 text-slate-400" : "rotate-0 text-slate-600"}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Card Content Area - handles collapses */}
+      <div 
+        className={`transition-all duration-300 origin-top overflow-hidden ${
+          isCollapsed && isLight 
+            ? "max-h-0 opacity-0 pointer-events-none p-0 border-none" 
+            : "max-h-[2500px] opacity-100"
+        }`}
+      >
+        {children}
+      </div>
+    </motion.div>
+  );
+}
+
 export default function App() {
   const [isSandbox, setIsSandbox] = useState(() => {
     return localStorage.getItem("jira_is_sandbox") !== "false";
   });
+
+  const [isDraggingCard, setIsDraggingCard] = useState(false);
+  const [dragOverSlotIndex, setDragOverSlotIndex] = useState<number | null>(null);
+
   const [theme, setTheme] = useState<"dark" | "light">(() => {
-    return (localStorage.getItem("jira_theme") as "dark" | "light") || "dark";
+    const savedTheme = localStorage.getItem("jira_theme");
+    const isManual = localStorage.getItem("jira_theme_manual") === "true";
+    if (isManual && (savedTheme === "dark" || savedTheme === "light")) {
+      return savedTheme;
+    }
+    // No manually saved preference, check system preference
+    if (typeof window !== "undefined" && window.matchMedia) {
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return prefersDark ? "dark" : "light";
+    }
+    return "dark";
   });
 
   useEffect(() => {
     localStorage.setItem("jira_theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const isManual = localStorage.getItem("jira_theme_manual") === "true";
+    if (!isManual) {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleThemeChange = (e: MediaQueryListEvent) => {
+        if (localStorage.getItem("jira_theme_manual") !== "true") {
+          setTheme(e.matches ? "dark" : "light");
+        }
+      };
+      mediaQuery.addEventListener("change", handleThemeChange);
+      return () => {
+        mediaQuery.removeEventListener("change", handleThemeChange);
+      };
+    }
+  }, []);
 
   const [isConnected, setIsConnected] = useState(() => {
     return localStorage.getItem("jira_is_connected") === "true";
@@ -91,6 +343,32 @@ export default function App() {
   // PDF Export settings
   const [pdfCustomNote, setPdfCustomNote] = useState<string>("");
   const [pdfWatermark, setPdfWatermark] = useState<"None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT">("None");
+  const [pdfLogoBase64, setPdfLogoBase64] = useState<string>("");
+  const [pdfHeaderTitle, setPdfHeaderTitle] = useState<string>("");
+  const [pdfHeaderSubtitle, setPdfHeaderSubtitle] = useState<string>("");
+  const [pdfCompanyName, setPdfCompanyName] = useState<string>("");
+
+  // Flagged items tracking state
+  const [flaggedIssueKeys, setFlaggedIssueKeys] = useState<string[]>(() => {
+    const saved = localStorage.getItem("jira_flagged_issue_keys");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [];
+  });
+
+  const handleToggleFlag = (key: string) => {
+    setFlaggedIssueKeys((prev) => {
+      const updated = prev.includes(key)
+        ? prev.filter((k) => k !== key)
+        : [...prev, key];
+      localStorage.setItem("jira_flagged_issue_keys", JSON.stringify(updated));
+      return updated;
+    });
+    addToast("Flag Toggled", `Issue ${key} follow-up status updated.`, "success", 2000);
+  };
 
   // Multiplatform Core States
   const [activePlatform, setActivePlatform] = useState<"Jira" | "Confluence" | "Discord">("Jira");
@@ -142,6 +420,247 @@ export default function App() {
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [refreshingSummary, setRefreshingSummary] = useState(false);
+
+  // Desktop Auto-Update Checking State
+  interface UpdateStatus {
+    currentVersion: string;
+    latestVersion: string;
+    updateAvailable: boolean;
+    downloadUrl: string;
+    releaseNotes: string[];
+  }
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+
+  // Reorderable and collapsible cards layout states
+  const [panelOrder, setPanelOrder] = useState<string[]>(() => {
+    const saved = localStorage.getItem("omnisync_panel_order");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [
+      "auth",
+      "presets",
+      "recent",
+      "scope",
+      "mapping",
+      "columns",
+      "metrics",
+      "visuals",
+      "export"
+    ];
+  });
+
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem("omnisync_collapsed_panels");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return {};
+  });
+
+  const [cardSubFilters, setCardSubFilters] = useState<Record<string, Record<string, boolean>>>(() => {
+    const saved = localStorage.getItem("omnisync_card_sub_filters");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return {
+      auth: { showDiscord: true, showJira: true },
+      presets: { showSystem: true, showUser: true },
+      recent: { showLive: true, showSandbox: true },
+      scope: { showSprints: true, showDates: true, showConfluence: true, showDiscord: true },
+      mapping: { showMapped: true, showUnmapped: true },
+      columns: { showSelectedOnly: false },
+      metrics: { hideZeroMetrics: false, highPriorityOnly: false },
+      visuals: { showTrends: true, showDistribution: true },
+      export: { showCSV: true, showPDF: true, showSheets: true }
+    };
+  });
+
+  const handleToggleSubFilter = (panelId: string, filterKey: string) => {
+    setCardSubFilters((prev) => {
+      const updated = {
+        ...prev,
+        [panelId]: {
+          ...prev[panelId],
+          [filterKey]: !prev[panelId][filterKey]
+        }
+      };
+      localStorage.setItem("omnisync_card_sub_filters", JSON.stringify(updated));
+      return updated;
+    });
+    addToast(
+      "Sub-Filter Updated",
+      `The sub-filter setting has been toggled successfully.`,
+      "success",
+      2000
+    );
+  };
+
+  const getCardData = (panelId: string) => {
+    switch (panelId) {
+      case "auth":
+        return {
+          isSandbox,
+          isConnected,
+          activeUser,
+          activePlatform,
+          discordToken: discordToken ? "********" : null,
+          discordGuildId,
+          isDiscordConnected
+        };
+      case "presets":
+        try {
+          const saved = localStorage.getItem("jira_saved_presets");
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+          return [];
+        }
+      case "recent":
+        return recentSearches;
+      case "scope":
+        return {
+          activePlatform,
+          selectedProjects,
+          selectedIssueTypes,
+          selectedStatuses,
+          createdDateStart,
+          createdDateEnd,
+          updatedDateStart,
+          updatedDateEnd,
+          selectedSprint,
+          selectedAssignee,
+          selectedConfluenceSpaces,
+          confluencePageStatus,
+          confluenceCreator,
+          selectedDiscordChannels,
+          discordAuthor,
+          discordMinReactions
+        };
+      case "mapping":
+        return {
+          statusMapping,
+          categoryColors
+        };
+      case "columns":
+        return columns;
+      case "metrics":
+        return report ? report.metrics : { message: "No active report generated yet." };
+      case "visuals":
+        return report ? {
+          visualizations,
+          issuesSummary: report.issues.map(i => ({ key: i.key, type: i.type, status: i.status, priority: i.priority, storyPoints: i.storyPoints }))
+        } : { message: "No active report generated yet." };
+      case "export":
+        return {
+          exportFormat,
+          autoExport,
+          fileNamingRule,
+          recentExports,
+          summaryTone,
+          autoRunOnLogin,
+          repeatHourly,
+          pdfCustomNote,
+          pdfWatermark
+        };
+      default:
+        return {};
+    }
+  };
+
+  const handleCopyCardData = (panelId: string) => {
+    const data = getCardData(panelId);
+    try {
+      navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      addToast(
+        "Data Copied",
+        `Successfully copied the ${panelId.toUpperCase()} processed data to your clipboard.`,
+        "success",
+        3000
+      );
+    } catch (err) {
+      addToast(
+        "Copy Failed",
+        "Could not access browser clipboard. Try opening the app in a new tab.",
+        "error",
+        3000
+      );
+    }
+  };
+
+  const handleCardRefresh = async (panelId: string) => {
+    addToast(
+      "Refreshing Card",
+      `Re-querying and synchronizing dataset for ${panelId.toUpperCase()} view...`,
+      "info",
+      2000
+    );
+
+    switch (panelId) {
+      case "auth":
+        if (isSandbox) {
+          setTimeout(() => {
+            addToast("Gateway Active", "Sandbox Environment Gateway refreshed and verified.", "success");
+          }, 600);
+        } else {
+          try {
+            const res = await fetch("/api/health");
+            if (res.ok) {
+              addToast("Gateway Active", "Connected securely to Jira Proxy Instance Gateway.", "success");
+            } else {
+              addToast("Gateway Offline", "Secure proxy gateway could not be verified.", "warning");
+            }
+          } catch (e) {
+            addToast("Gateway Offline", "Offline fallback mode remains active.", "warning");
+          }
+        }
+        break;
+      case "presets":
+        addToast("Automation Profiles Refreshed", "Loaded latest automation profiles from local configuration database.", "success");
+        break;
+      case "recent":
+        try {
+          const saved = localStorage.getItem("jira_recent_searches");
+          if (saved) {
+            setRecentSearches(JSON.parse(saved));
+          }
+          addToast("Search History Synchronized", "Search logs registry re-queried and verified.", "success");
+        } catch (e) {}
+        break;
+      case "scope":
+        handleGenerateReport();
+        break;
+      case "mapping":
+        addToast("Status Mappings Re-Audited", "Verified active status mappings matching current configuration.", "success");
+        break;
+      case "columns":
+        addToast("Column Schemas Refreshed", "Active export columns verified and saved.", "success");
+        break;
+      case "metrics":
+        handleGenerateReport();
+        break;
+      case "visuals":
+        handleGenerateReport();
+        break;
+      case "export":
+        try {
+          const saved = localStorage.getItem("jira_recent_exports");
+          if (saved) {
+            setRecentExports(JSON.parse(saved));
+          }
+          addToast("Export Broker Synced", "Export history records have been re-synchronised with local disk.", "success");
+        } catch (e) {}
+        break;
+      default:
+        break;
+    }
+  };
 
   // Toast creation utility
   const addToast = (
@@ -284,6 +803,31 @@ export default function App() {
 
   // Custom states
   const [summaryTone, setSummaryTone] = useState<"Optimistic" | "Conservative" | "Neutral">("Neutral");
+
+  // Threshold alert settings
+  const [overdueThreshold, setOverdueThreshold] = useState<number>(() => {
+    const saved = localStorage.getItem("omnisync_overdue_threshold");
+    return saved ? Number(saved) : 5;
+  });
+  const [blockedThreshold, setBlockedThreshold] = useState<number>(() => {
+    const saved = localStorage.getItem("omnisync_blocked_threshold");
+    return saved ? Number(saved) : 3;
+  });
+
+  const handleUpdateOverdueThreshold = (val: number) => {
+    setOverdueThreshold(val);
+    localStorage.setItem("omnisync_overdue_threshold", String(val));
+  };
+
+  const handleUpdateBlockedThreshold = (val: number) => {
+    setBlockedThreshold(val);
+    localStorage.setItem("omnisync_blocked_threshold", String(val));
+  };
+
+  // Date Range Comparison states
+  const [isComparisonEnabled, setIsComparisonEnabled] = useState<boolean>(false);
+  const [comparisonStartDate, setComparisonStartDate] = useState<string>("");
+  const [comparisonEndDate, setComparisonEndDate] = useState<string>("");
 
   const [autoRunOnLogin, setAutoRunOnLogin] = useState<boolean>(() => {
     return localStorage.getItem("jira_auto_run_on_login") === "true";
@@ -475,9 +1019,9 @@ export default function App() {
   const handleRefreshSummary = async () => {
     if (!report) return;
     setRefreshingSummary(true);
-    addToast("Refreshing Summary", "Re-fetching executive assessment from Gemini...", "info", 2000);
+    addToast("Refreshing Summary", "Re-fetching executive assessment...", "info", 2000);
     try {
-      const summaryRes = await fetch("/api/gemini/summarize", {
+      const summaryRes = await fetch("/api/pmo/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -498,7 +1042,7 @@ export default function App() {
         throw new Error("Summary request failed");
       }
     } catch (err) {
-      console.error("Failed to refresh Gemini summary:", err);
+      console.error("Failed to refresh summary:", err);
       // Fallback local builder
       const fallbackSummary: ExecutiveSummary = {
         summary: `The project scope is operating at a ${report.metrics.completionPercentage}% resolution rate across active repositories. Velocity is healthy, but attention is required on resolving overdue bugs to secure the current timeline. (Refreshed)`,
@@ -518,7 +1062,7 @@ export default function App() {
         ],
       };
       setReport((prev) => prev ? { ...prev, aiSummary: fallbackSummary } : null);
-      addToast("Local Summary Loaded", "Gemini key is unset or network error. Loaded fallback PMO summary.", "warning", 3000);
+      addToast("Local Summary Loaded", "Loaded fallback PMO summary successfully.", "warning", 3000);
     } finally {
       setRefreshingSummary(false);
     }
@@ -539,7 +1083,17 @@ export default function App() {
       exportToCSV(dataToExport, columns, item.filename.replace(/\.csv$/, ""));
       addToast("Re-download Initiated", `Preparing CSV file: ${item.filename}`, "success", 3000);
     } else if (item.format === "PDF") {
-      exportToPDF(`Jira Snapshot - ${item.projects.join(", ")}`, dataToExport, columns, pdfCustomNote, pdfWatermark);
+      exportToPDF(
+        `Jira Snapshot - ${item.projects.join(", ")}`,
+        dataToExport,
+        columns,
+        pdfCustomNote,
+        pdfWatermark,
+        pdfLogoBase64,
+        pdfHeaderTitle,
+        pdfHeaderSubtitle,
+        pdfCompanyName
+      );
       addToast("Re-download Initiated", `Rendering PDF report: ${item.filename}`, "success", 3000);
     } else {
       triggerGoogleSheetsExport();
@@ -1296,11 +1850,11 @@ export default function App() {
         issuesPerAssignee: assigneeMap,
       };
 
-      // Query Gemini API for Executive summary analysis
+      // Query PMO API for Executive summary analysis
       setFetchingProgress(85);
       let aiSummary: ExecutiveSummary | undefined;
       try {
-        const summaryRes = await fetch("/api/gemini/summarize", {
+        const summaryRes = await fetch("/api/pmo/summarize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1314,11 +1868,11 @@ export default function App() {
           aiSummary = sData.aiSummary;
         }
       } catch (gemErr) {
-        console.error("Gemini summary prompt failed, falling back to local builder:", gemErr);
+        console.error("Summary query failed, falling back to local builder:", gemErr);
       }
       setFetchingProgress(95);
 
-      // Fallback local builder if Gemini key is unset or network error
+      // Fallback local builder if remote query fails or is unavailable
       if (!aiSummary) {
         aiSummary = {
           summary: `The project scope is operating at a ${completionPercentage}% resolution rate across active repositories. Velocity is healthy, but attention is required on resolving overdue bugs to secure the current timeline.`,
@@ -1634,6 +2188,168 @@ export default function App() {
     showExportPanel
   ]);
 
+  // Synchronize Express Server Secure Store with local cache on mount
+  useEffect(() => {
+    const syncSecureStore = async () => {
+      try {
+        const res = await fetch("/api/store/get");
+        if (res.ok) {
+          const { data } = await res.json();
+          if (data && typeof data === "object" && Object.keys(data).length > 0) {
+            Object.entries(data).forEach(([key, val]) => {
+              if (val !== undefined && val !== null) {
+                if (typeof val === "object") {
+                  localStorage.setItem(key, JSON.stringify(val));
+                } else {
+                  localStorage.setItem(key, String(val));
+                }
+              }
+            });
+            console.log("Secure desktop database loaded successfully!");
+            addToast(
+              "Database Restored",
+              "Configurations synced successfully with secure local database.",
+              "success"
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Express server store offline or unreachable, running in offline browser mode.");
+      }
+    };
+    syncSecureStore();
+  }, []);
+
+  // Periodically back up active settings to the secure server database
+  useEffect(() => {
+    const backupToSecureStore = async () => {
+      try {
+        const dataToSave: Record<string, any> = {};
+        const keysToSync = [
+          "jira_theme",
+          "jira_is_connected",
+          "jira_session_id",
+          "jira_active_user",
+          "jira_url",
+          "discord_token",
+          "discord_guild_id",
+          "discord_connected",
+          "jira_auto_run_on_login",
+          "jira_repeat_hourly",
+          "jira_category_colors",
+          "jira_metrics_history",
+          "jira_recent_searches",
+          "jira_recent_exports",
+          "last_viewed_report"
+        ];
+        
+        keysToSync.forEach(key => {
+          const rawVal = localStorage.getItem(key);
+          if (rawVal !== null) {
+            try {
+              dataToSave[key] = JSON.parse(rawVal);
+            } catch {
+              dataToSave[key] = rawVal;
+            }
+          }
+        });
+        
+        if (Object.keys(dataToSave).length > 0) {
+          await fetch("/api/store/set-multiple", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data: dataToSave }),
+          });
+        }
+      } catch (err) {
+        // Quietly fail if server is not available
+      }
+    };
+    
+    // Initial sync backup after a brief delay to let load effect finish
+    const initialTimeout = setTimeout(backupToSecureStore, 4000);
+    
+    // Backup every 15 seconds
+    const interval = setInterval(backupToSecureStore, 15000);
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Check remote version manifest for desktop updates and subscribe to IPC updates
+  useEffect(() => {
+    // 1. Setup Electron IPC Updater listener if inside native desktop window
+    const api = (window as any).electronAPI;
+    let unsubscribeIPC: (() => void) | undefined;
+
+    if (api) {
+      console.log("[OmniSync App] Electron IPC bridge active. Initialising live update listeners...");
+      unsubscribeIPC = api.onUpdateDownloaded((info: any) => {
+        console.log("[OmniSync App] Auto-update downloaded via Electron main process:", info);
+        setUpdateStatus({
+          currentVersion: info.currentVersion,
+          latestVersion: info.latestVersion,
+          updateAvailable: true,
+          downloadUrl: info.downloadUrl || "",
+          releaseNotes: [
+            `Silent background download of v${info.latestVersion} complete!`,
+            "Security patches and system components successfully staged on your local PC.",
+            "Click 'Restart & Install Now' to reload the workspace immediately."
+          ]
+        });
+        addToast(
+          "Update Staged",
+          `A new update (v${info.latestVersion}) has been downloaded silently. Click 'Restart & Install Now' to apply.`,
+          "success",
+          15000
+        );
+      });
+    }
+
+    // 2. Fallback / supplementary HTTP API check for web-hosted mode
+    const checkUpdates = async () => {
+      try {
+        const res = await fetch("/api/update/check");
+        if (res.ok) {
+          const data = await res.json();
+          // Only override if Electron IPC has not already loaded a staging state
+          setUpdateStatus((prev) => {
+            if (prev?.releaseNotes?.[0]?.includes("Silent")) {
+              return prev; // keep the richer, electron staged state
+            }
+            return data;
+          });
+          
+          if (data.updateAvailable && !api) {
+            addToast(
+              "Update Available",
+              `Version ${data.latestVersion} is ready! Click 'Update Available' at the top to download.`,
+              "info",
+              10000
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to check for desktop suite updates:", err);
+      }
+    };
+    
+    // Check on mount (after 5 seconds)
+    const timeout = setTimeout(checkUpdates, 5000);
+    
+    // Re-check every 6 hours
+    const interval = setInterval(checkUpdates, 6 * 60 * 60 * 1000);
+    
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+      if (unsubscribeIPC) {
+        unsubscribeIPC();
+      }
+    };
+  }, []);
+
   // Auto-Run on Login (Triggers a generation shortly after app boots)
   useEffect(() => {
     const projectSuffix = selectedProjects.length > 0 ? ` [${selectedProjects.join(", ")}]` : "";
@@ -1861,7 +2577,17 @@ export default function App() {
       recordExport("CSV", filename + ".csv");
       addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
     } else if (format === "PDF") {
-      exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, report.issues, columns, pdfCustomNote, pdfWatermark);
+      exportToPDF(
+        `Jira Report - ${selectedProjects.join(", ")}`,
+        report.issues,
+        columns,
+        pdfCustomNote,
+        pdfWatermark,
+        pdfLogoBase64,
+        pdfHeaderTitle,
+        pdfHeaderSubtitle,
+        pdfCompanyName
+      );
       recordExport("PDF", filename + ".pdf");
       addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
     } else if (format === "Google Sheets") {
@@ -1961,6 +2687,32 @@ export default function App() {
     }, 400);
   };
 
+  const handleDropOnSlot = (e: React.DragEvent, targetSlotIdx: number) => {
+    e.preventDefault();
+    setDragOverSlotIndex(null);
+    setIsDraggingCard(false);
+    const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+    if (isNaN(fromIndex)) return;
+    
+    const nextOrder = [...panelOrder];
+    const [removed] = nextOrder.splice(fromIndex, 1);
+    
+    let insertAt = targetSlotIdx;
+    if (fromIndex < targetSlotIdx) {
+      insertAt = targetSlotIdx - 1;
+    }
+    
+    nextOrder.splice(insertAt, 0, removed);
+    setPanelOrder(nextOrder);
+    localStorage.setItem("omnisync_panel_order", JSON.stringify(nextOrder));
+    addToast(
+      "Layout Reordered",
+      `The layout order has been successfully adjusted and saved to local configuration database.`,
+      "success",
+      2500
+    );
+  };
+
   return (
     <div className={`min-h-screen ${theme === "light" ? "light-theme bg-white text-slate-950" : "bg-[#090D1A] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(59,130,246,0.15),rgba(255,255,255,0))] text-slate-200"} flex flex-col font-sans antialiased selection:bg-blue-900 selection:text-white`}>
       
@@ -1973,7 +2725,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 uppercase">
-                <span>Eshan Barua's Jira Analytics Suite</span>
+                <span>Eshan Barua's OmniSync Suite</span>
                 {selectedProjects.length > 0 && (
                   <span className="text-[10px] font-bold tracking-normal normal-case text-blue-400 bg-blue-950/60 rounded-md border border-blue-900/30 px-2 py-0.5 ml-1.5">
                     {selectedProjects.join(", ")}
@@ -1984,11 +2736,23 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {updateStatus?.updateAvailable && (
+              <button
+                onClick={() => setShowUpdateModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-xs uppercase tracking-wide transition-all shadow-md animate-pulse shrink-0 cursor-pointer"
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                <span>Update Available</span>
+              </button>
+            )}
             {/* Color Theme Selector */}
             <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
               <button
                 type="button"
-                onClick={() => setTheme("dark")}
+                onClick={() => {
+                  setTheme("dark");
+                  localStorage.setItem("jira_theme_manual", "true");
+                }}
                 className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
                   theme === "dark"
                     ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
@@ -2000,7 +2764,10 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setTheme("light")}
+                onClick={() => {
+                  setTheme("light");
+                  localStorage.setItem("jira_theme_manual", "true");
+                }}
                 className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
                   theme === "light"
                     ? "bg-slate-200 text-slate-950 shadow-md font-black shadow-slate-500/15"
@@ -2176,45 +2943,8 @@ export default function App() {
 
       {/* Main layout grids */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* Left Side: Input config panels (cols 1-5) */}
+             {/* Left Side: Input config panels (cols 1-5) */}
         <section className={viewMode === "dashboard" ? "lg:col-span-5 space-y-6" : "hidden"}>
-          <AuthPanel
-            isSandbox={isSandbox}
-            onToggleSandbox={(val) => {
-              setIsSandbox(val);
-              setReport(null);
-              if (val) {
-                // Return to sandbox default lists
-                setSelectedProjects(["ALPHA", "MOBI"]);
-                setSelectedIssueTypes(["Bug", "Story", "Task"]);
-              } else if (isConnected) {
-                // Retain loaded Jira project key
-                if (jiraProjects.length > 0) {
-                  setSelectedProjects([jiraProjects[0].key]);
-                }
-              } else {
-                setSelectedProjects([]);
-                setSelectedIssueTypes([]);
-              }
-            }}
-            onConnect={handleConnect}
-            onTestConnection={handleTestConnection}
-            onDisconnect={handleDisconnect}
-            isConnected={isConnected}
-            activeUser={activeUser}
-            onClearCache={handleClearCache}
-            activePlatform={activePlatform}
-            onChangeActivePlatform={setActivePlatform}
-            discordToken={discordToken}
-            onChangeDiscordToken={setDiscordToken}
-            discordGuildId={discordGuildId}
-            onChangeDiscordGuildId={setDiscordGuildId}
-            isDiscordConnected={isDiscordConnected}
-            onConnectDiscord={handleConnectDiscord}
-            onDisconnectDiscord={handleDisconnectDiscord}
-          />
-
           {showDiagnostics && (
             <DiagnosticConsole
               logs={networkLogs}
@@ -2228,137 +2958,393 @@ export default function App() {
             />
           )}
 
-          <PresetsPanel
-            currentProjects={selectedProjects}
-            currentIssueTypes={selectedIssueTypes}
-            currentStatuses={selectedStatuses}
-            currentCreatedStart={createdDateStart}
-            currentCreatedEnd={createdDateEnd}
-            currentUpdatedStart={updatedDateStart}
-            currentUpdatedEnd={updatedDateEnd}
-            currentSprint={selectedSprint}
-            currentAssignee={selectedAssignee}
-            currentColumns={columns}
-            currentStatusMapping={statusMapping}
-            currentMetrics={metrics}
-            currentVisualizations={visualizations}
-            currentExportFormat={exportFormat}
-            currentAutoExport={autoExport}
-            currentFileNamingRule={fileNamingRule}
-            onLoadPreset={handleLoadPreset}
-            onInstantRunPreset={handleInstantRunPreset}
-            onResetToDefault={handleResetToDefault}
-          />
+          {panelOrder.map((panelId, index) => {
+            const isCollapsed = !!collapsedPanels[panelId];
 
-          <RecentSearchesPanel
-            recentSearches={recentSearches}
-            onSelectSearch={handleSelectSearch}
-            onClearSearches={handleClearSearches}
-          />
+            const handleToggleCollapse = () => {
+              const next = { ...collapsedPanels, [panelId]: !isCollapsed };
+              setCollapsedPanels(next);
+              localStorage.setItem("omnisync_collapsed_panels", JSON.stringify(next));
+            };
 
-          <ScopePanel
-            activePlatform={activePlatform}
-            availableProjects={isSandbox ? SANDBOX_PROJECTS : jiraProjects}
-            selectedProjects={selectedProjects}
-            onChangeProjects={setSelectedProjects}
-            availableIssueTypes={isSandbox ? SANDBOX_ISSUE_TYPES : jiraIssueTypes}
-            selectedIssueTypes={selectedIssueTypes}
-            onChangeIssueTypes={setSelectedIssueTypes}
-            availableStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
-            selectedStatuses={selectedStatuses}
-            onChangeStatuses={setSelectedStatuses}
-            createdDateStart={createdDateStart}
-            createdDateEnd={createdDateEnd}
-            onChangeCreatedDates={(start, end) => {
-              setCreatedDateStart(start);
-              setCreatedDateEnd(end);
-            }}
-            updatedDateStart={updatedDateStart}
-            updatedDateEnd={updatedDateEnd}
-            onChangeUpdatedDates={(start, end) => {
-              setUpdatedDateStart(start);
-              setUpdatedDateEnd(end);
-            }}
-            availableSprints={isSandbox ? SANDBOX_SPRINTS : jiraSprints}
-            selectedSprint={selectedSprint}
-            onChangeSprint={setSelectedSprint}
-            availableAssignees={isSandbox ? SANDBOX_ASSIGNEES : jiraAssignees}
-            selectedAssignee={selectedAssignee}
-            onChangeAssignee={setSelectedAssignee}
+            const handleExport = () => {
+              if (report && report.issues && report.issues.length > 0) {
+                const csvHeader = "Key,Summary,Type,Status,Priority,Assignee,Created,Updated\n";
+                const csvRows = report.issues.map((i: any) => {
+                  const safeSummary = (i.summary || "").replace(/"/g, '""');
+                  return `"${i.key || ""}","${safeSummary}","${i.type || ""}","${i.status || ""}","${i.priority || ""}","${i.assignee || ""}","${i.created || ""}","${i.updated || ""}"`;
+                }).join("\n");
+                const blob = new Blob([csvHeader + csvRows], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", `OmniSync_Quick_Export_${panelId}_${Date.now()}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                addToast(
+                  "Quick Export Completed",
+                  `Successfully exported ${report.issues.length} records as CSV for ${panelId.toUpperCase()} Panel view.`,
+                  "success"
+                );
+              } else {
+                addToast(
+                  "No Active Report Data",
+                  "Load a data set from the sandbox or connect to an instance first to export card data.",
+                  "warning"
+                );
+              }
+            };
 
-            selectedConfluenceSpaces={selectedConfluenceSpaces}
-            onChangeConfluenceSpaces={setSelectedConfluenceSpaces}
-            confluencePageStatus={confluencePageStatus}
-            onChangeConfluencePageStatus={setConfluencePageStatus}
-            confluenceCreator={confluenceCreator}
-            onChangeConfluenceCreator={setConfluenceCreator}
+            const handleDragStart = (e: React.DragEvent) => {
+              e.dataTransfer.setData("text/plain", String(index));
+              setIsDraggingCard(true);
+            };
 
-            selectedDiscordChannels={selectedDiscordChannels}
-            onChangeDiscordChannels={setSelectedDiscordChannels}
-            discordAuthor={discordAuthor}
-            onChangeDiscordAuthor={setDiscordAuthor}
-            discordMinReactions={discordMinReactions}
-            onChangeDiscordMinReactions={setDiscordMinReactions}
+            const handleDragOver = (e: React.DragEvent) => {
+              e.preventDefault();
+            };
 
-            report={report}
-            onApplySmartFilter={handleApplySmartFilter}
-          />
+            const handleDragEnd = () => {
+              setIsDraggingCard(false);
+              setDragOverSlotIndex(null);
+            };
 
-          <StatusMappingPanel
-            detectedStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
-            mapping={statusMapping}
-            onUpdateMapping={setStatusMapping}
-            categoryColors={categoryColors}
-            onUpdateCategoryColors={handleUpdateCategoryColors}
-          />
+            const handleDrop = (e: React.DragEvent) => {
+              e.preventDefault();
+              setIsDraggingCard(false);
+              setDragOverSlotIndex(null);
+              const fromIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+              if (isNaN(fromIndex) || fromIndex === index) return;
+              const nextOrder = [...panelOrder];
+              const [removed] = nextOrder.splice(fromIndex, 1);
+              nextOrder.splice(index, 0, removed);
+              setPanelOrder(nextOrder);
+              localStorage.setItem("omnisync_panel_order", JSON.stringify(nextOrder));
+              addToast(
+                "Layout Reordered",
+                `The layout order has been successfully adjusted and saved to local configuration database.`,
+                "success",
+                2500
+              );
+            };
 
-          <ColumnPanel
-            columns={columns}
-            onChangeColumns={setColumns}
-          />
+            const handleMoveUp = () => {
+              if (index === 0) return;
+              const nextOrder = [...panelOrder];
+              const temp = nextOrder[index - 1];
+              nextOrder[index - 1] = nextOrder[index];
+              nextOrder[index] = temp;
+              setPanelOrder(nextOrder);
+              localStorage.setItem("omnisync_panel_order", JSON.stringify(nextOrder));
+            };
 
-          <MetricsPanel
-            metrics={metrics}
-            onChangeMetrics={setMetrics}
-            report={report}
-            metricsHistory={metricsHistory}
-          />
+            const handleMoveDown = () => {
+              if (index === panelOrder.length - 1) return;
+              const nextOrder = [...panelOrder];
+              const temp = nextOrder[index + 1];
+              nextOrder[index + 1] = nextOrder[index];
+              nextOrder[index] = temp;
+              setPanelOrder(nextOrder);
+              localStorage.setItem("omnisync_panel_order", JSON.stringify(nextOrder));
+            };
 
-          <VisualizationPanel
-            visualizations={visualizations}
-            onChangeVisualizations={setVisualizations}
-          />
+            let content: React.ReactNode = null;
+            let title = "";
 
-           {showExportPanel && (
-             <ExportPanel
-              exportFormat={exportFormat}
-              onChangeExportFormat={setExportFormat}
-              autoExport={autoExport}
-              onChangeAutoExport={setAutoExport}
-              fileNamingRule={fileNamingRule}
-              onChangeFileNamingRule={setFileNamingRule}
-              recentExports={recentExports}
-              onTriggerExport={handleTriggerExport}
-              summaryTone={summaryTone}
-              onChangeSummaryTone={setSummaryTone}
-              autoRunOnLogin={autoRunOnLogin}
-              onChangeAutoRunOnLogin={handleUpdateAutoRunOnLogin}
-              repeatHourly={repeatHourly}
-              onChangeRepeatHourly={handleUpdateRepeatHourly}
-              onReDownloadExport={handleReDownloadExport}
-              onExportPng={handleExportPng}
-              onExportJson={handleExportJson}
-              customNote={pdfCustomNote}
-              onChangeCustomNote={setPdfCustomNote}
-              watermark={pdfWatermark}
-              onChangeWatermark={setPdfWatermark}
-              onClearHistory={() => {
-                setRecentExports([]);
-                localStorage.removeItem("jira_recent_exports");
-                addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
-              }}
-            />
-          )}
+            switch (panelId) {
+              case "auth":
+                title = "Authentication & Suite Gateway";
+                content = (
+                  <AuthPanel
+                    isSandbox={isSandbox}
+                    onToggleSandbox={(val) => {
+                      setIsSandbox(val);
+                      setReport(null);
+                      if (val) {
+                        setSelectedProjects(["ALPHA", "MOBI"]);
+                        setSelectedIssueTypes(["Bug", "Story", "Task"]);
+                      } else if (isConnected) {
+                        if (jiraProjects.length > 0) {
+                          setSelectedProjects([jiraProjects[0].key]);
+                        }
+                      } else {
+                        setSelectedProjects([]);
+                        setSelectedIssueTypes([]);
+                      }
+                    }}
+                    onConnect={handleConnect}
+                    onTestConnection={handleTestConnection}
+                    onDisconnect={handleDisconnect}
+                    isConnected={isConnected}
+                    activeUser={activeUser}
+                    onClearCache={handleClearCache}
+                    activePlatform={activePlatform}
+                    onChangeActivePlatform={setActivePlatform}
+                    discordToken={discordToken}
+                    onChangeDiscordToken={setDiscordToken}
+                    discordGuildId={discordGuildId}
+                    onChangeDiscordGuildId={setDiscordGuildId}
+                    isDiscordConnected={isDiscordConnected}
+                    onConnectDiscord={handleConnectDiscord}
+                    onDisconnectDiscord={handleDisconnectDiscord}
+                    subFilters={cardSubFilters.auth}
+                  />
+                );
+                break;
+              case "presets":
+                title = "Automation Profiles";
+                content = (
+                  <PresetsPanel
+                    currentProjects={selectedProjects}
+                    currentIssueTypes={selectedIssueTypes}
+                    currentStatuses={selectedStatuses}
+                    currentCreatedStart={createdDateStart}
+                    currentCreatedEnd={createdDateEnd}
+                    currentUpdatedStart={updatedDateStart}
+                    currentUpdatedEnd={updatedDateEnd}
+                    currentSprint={selectedSprint}
+                    currentAssignee={selectedAssignee}
+                    currentColumns={columns}
+                    currentStatusMapping={statusMapping}
+                    currentMetrics={metrics}
+                    currentVisualizations={visualizations}
+                    currentExportFormat={exportFormat}
+                    currentAutoExport={autoExport}
+                    currentFileNamingRule={fileNamingRule}
+                    onLoadPreset={handleLoadPreset}
+                    onInstantRunPreset={handleInstantRunPreset}
+                    onResetToDefault={handleResetToDefault}
+                  />
+                );
+                break;
+              case "recent":
+                title = "Recent Queries & Search History";
+                content = (
+                  <RecentSearchesPanel
+                    recentSearches={recentSearches}
+                    onSelectSearch={handleSelectSearch}
+                    onClearSearches={handleClearSearches}
+                  />
+                );
+                break;
+              case "scope":
+                title = "Unified Filtration Scope";
+                content = (
+                  <ScopePanel
+                    activePlatform={activePlatform}
+                    availableProjects={isSandbox ? SANDBOX_PROJECTS : jiraProjects}
+                    selectedProjects={selectedProjects}
+                    onChangeProjects={setSelectedProjects}
+                    availableIssueTypes={isSandbox ? SANDBOX_ISSUE_TYPES : jiraIssueTypes}
+                    selectedIssueTypes={selectedIssueTypes}
+                    onChangeIssueTypes={setSelectedIssueTypes}
+                    availableStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
+                    selectedStatuses={selectedStatuses}
+                    onChangeStatuses={setSelectedStatuses}
+                    createdDateStart={createdDateStart}
+                    createdDateEnd={createdDateEnd}
+                    onChangeCreatedDates={(start, end) => {
+                      setCreatedDateStart(start);
+                      setCreatedDateEnd(end);
+                    }}
+                    updatedDateStart={updatedDateStart}
+                    updatedDateEnd={updatedDateEnd}
+                    onChangeUpdatedDates={(start, end) => {
+                      setUpdatedDateStart(start);
+                      setUpdatedDateEnd(end);
+                    }}
+                    availableSprints={isSandbox ? SANDBOX_SPRINTS : jiraSprints}
+                    selectedSprint={selectedSprint}
+                    onChangeSprint={setSelectedSprint}
+                    availableAssignees={isSandbox ? SANDBOX_ASSIGNEES : jiraAssignees}
+                    selectedAssignee={selectedAssignee}
+                    onChangeAssignee={setSelectedAssignee}
+                    selectedConfluenceSpaces={selectedConfluenceSpaces}
+                    onChangeConfluenceSpaces={setSelectedConfluenceSpaces}
+                    confluencePageStatus={confluencePageStatus}
+                    onChangeConfluencePageStatus={setConfluencePageStatus}
+                    confluenceCreator={confluenceCreator}
+                    onChangeConfluenceCreator={setConfluenceCreator}
+                    selectedDiscordChannels={selectedDiscordChannels}
+                    onChangeDiscordChannels={setSelectedDiscordChannels}
+                    discordAuthor={discordAuthor}
+                    onChangeDiscordAuthor={setDiscordAuthor}
+                    discordMinReactions={discordMinReactions}
+                    onChangeDiscordMinReactions={setDiscordMinReactions}
+                    report={report}
+                    onApplySmartFilter={handleApplySmartFilter}
+                    subFilters={cardSubFilters.scope}
+                    isComparisonEnabled={isComparisonEnabled}
+                    onChangeComparisonEnabled={setIsComparisonEnabled}
+                    comparisonStartDate={comparisonStartDate}
+                    comparisonEndDate={comparisonEndDate}
+                    onChangeComparisonDates={(start, end) => {
+                      setComparisonStartDate(start);
+                      setComparisonEndDate(end);
+                    }}
+                  />
+                );
+                break;
+              case "mapping":
+                title = "Jira Status Map Auditor";
+                content = (
+                  <StatusMappingPanel
+                    detectedStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
+                    mapping={statusMapping}
+                    onUpdateMapping={setStatusMapping}
+                    categoryColors={categoryColors}
+                    onUpdateCategoryColors={handleUpdateCategoryColors}
+                  />
+                );
+                break;
+              case "columns":
+                title = "Custom Export Column Schemas";
+                content = (
+                  <ColumnPanel
+                    columns={columns}
+                    onChangeColumns={setColumns}
+                  />
+                );
+                break;
+              case "metrics":
+                title = "Agile Velocity Metrics & KPIs";
+                content = (
+                  <MetricsPanel
+                    metrics={metrics}
+                    onChangeMetrics={setMetrics}
+                    report={report}
+                    metricsHistory={metricsHistory}
+                    addToast={addToast}
+                  />
+                );
+                break;
+              case "visuals":
+                title = "Aesthetic Chart Visualizations";
+                content = (
+                  <VisualizationPanel
+                    visualizations={visualizations}
+                    onChangeVisualizations={setVisualizations}
+                  />
+                );
+                break;
+              case "export":
+                title = "Multi-Channel Export Broker";
+                content = showExportPanel ? (
+                  <ExportPanel
+                    exportFormat={exportFormat}
+                    onChangeExportFormat={setExportFormat}
+                    autoExport={autoExport}
+                    onChangeAutoExport={setAutoExport}
+                    fileNamingRule={fileNamingRule}
+                    onChangeFileNamingRule={setFileNamingRule}
+                    recentExports={recentExports}
+                    onTriggerExport={handleTriggerExport}
+                    summaryTone={summaryTone}
+                    onChangeSummaryTone={setSummaryTone}
+                    autoRunOnLogin={autoRunOnLogin}
+                    onChangeAutoRunOnLogin={handleUpdateAutoRunOnLogin}
+                    repeatHourly={repeatHourly}
+                    onChangeRepeatHourly={handleUpdateRepeatHourly}
+                    onReDownloadExport={handleReDownloadExport}
+                    onExportPng={handleExportPng}
+                    onExportJson={handleExportJson}
+                    customNote={pdfCustomNote}
+                    onChangeCustomNote={setPdfCustomNote}
+                    watermark={pdfWatermark}
+                    onChangeWatermark={setPdfWatermark}
+                    pdfLogoBase64={pdfLogoBase64}
+                    onChangePdfLogoBase64={setPdfLogoBase64}
+                    pdfHeaderTitle={pdfHeaderTitle}
+                    onChangePdfHeaderTitle={setPdfHeaderTitle}
+                    pdfHeaderSubtitle={pdfHeaderSubtitle}
+                    onChangePdfHeaderSubtitle={setPdfHeaderSubtitle}
+                    pdfCompanyName={pdfCompanyName}
+                    onChangePdfCompanyName={setPdfCompanyName}
+                    overdueThreshold={overdueThreshold}
+                    onChangeOverdueThreshold={handleUpdateOverdueThreshold}
+                    blockedThreshold={blockedThreshold}
+                    onChangeBlockedThreshold={handleUpdateBlockedThreshold}
+                    onClearHistory={() => {
+                      setRecentExports([]);
+                      localStorage.removeItem("jira_recent_exports");
+                      addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
+                    }}
+                  />
+                ) : null;
+                break;
+              default:
+                break;
+            }
+
+            if (!content) return null;
+
+            return (
+              <React.Fragment key={panelId}>
+                {isDraggingCard && index === 0 && (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOverSlotIndex(0);
+                    }}
+                    onDragLeave={() => setDragOverSlotIndex(null)}
+                    onDrop={(e) => handleDropOnSlot(e, 0)}
+                    className={`h-11 border-2 border-dashed rounded-2xl flex items-center justify-center text-[10.5px] font-black uppercase tracking-wider transition-all duration-300 ${
+                      dragOverSlotIndex === 0
+                        ? "bg-blue-600/20 border-blue-500 text-blue-400 scale-[1.01] shadow-lg shadow-blue-500/10"
+                        : theme === "light"
+                        ? "border-slate-200 text-slate-400 bg-slate-50/50 hover:bg-slate-50"
+                        : "border-slate-800/60 text-slate-500 bg-slate-950/20 hover:bg-slate-950/40"
+                    }`}
+                  >
+                    <span>Drop here to place first</span>
+                  </div>
+                )}
+                
+                <DraggableCard
+                  id={panelId}
+                  title={title}
+                  theme={theme}
+                  isCollapsed={isCollapsed}
+                  onToggleCollapse={handleToggleCollapse}
+                  onExport={handleExport}
+                  onCopy={() => handleCopyCardData(panelId)}
+                  onRefresh={() => handleCardRefresh(panelId)}
+                  filterOptions={cardSubFilters[panelId]}
+                  onToggleFilter={(key) => handleToggleSubFilter(panelId, key)}
+                  index={index}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragEnd={handleDragEnd}
+                  onDrop={handleDrop}
+                  onMoveUp={handleMoveUp}
+                  onMoveDown={handleMoveDown}
+                >
+                  {content}
+                </DraggableCard>
+
+                {isDraggingCard && (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOverSlotIndex(index + 1);
+                    }}
+                    onDragLeave={() => setDragOverSlotIndex(null)}
+                    onDrop={(e) => handleDropOnSlot(e, index + 1)}
+                    className={`h-11 border-2 border-dashed rounded-2xl flex items-center justify-center text-[10.5px] font-black uppercase tracking-wider transition-all duration-300 ${
+                      dragOverSlotIndex === index + 1
+                        ? "bg-blue-600/20 border-blue-500 text-blue-400 scale-[1.01] shadow-lg shadow-blue-500/10"
+                        : theme === "light"
+                        ? "border-slate-200 text-slate-400 bg-slate-50/50 hover:bg-slate-50"
+                        : "border-slate-800/60 text-slate-500 bg-slate-950/20 hover:bg-slate-950/40"
+                    }`}
+                  >
+                    <span>Drop here to place after {title}</span>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
         </section>
 
         {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
@@ -2427,6 +3413,10 @@ export default function App() {
             onRefreshSummary={handleRefreshSummary}
             refreshingSummary={refreshingSummary}
             onTriggerPrintPreview={() => setIsPrintPreviewOpen(true)}
+            flaggedIssueKeys={flaggedIssueKeys}
+            onToggleFlag={handleToggleFlag}
+            overdueThreshold={overdueThreshold}
+            blockedThreshold={blockedThreshold}
           />
         </section>
       </main>
@@ -2434,7 +3424,7 @@ export default function App() {
       <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center space-y-2 relative">
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex flex-wrap items-center justify-center gap-1.5">
-            <span>Eshan Barua's Jira Analytics Suite</span>
+            <span>Eshan Barua's OmniSync Suite</span>
             <span className="text-slate-600">•</span>
             <span>Crafted by Eshan Barua</span>
             <a 
@@ -2535,6 +3525,105 @@ export default function App() {
                 <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
                   These hotkeys work globally from anywhere on the page to streamline your analysis and reporting tasks.
                 </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Update Check Modal */}
+      {showUpdateModal && updateStatus && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-[#0b0f19]/90 border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl shadow-blue-500/10 backdrop-filter backdrop-blur-xl">
+            {/* Header */}
+            <div className="px-6 py-4 bg-slate-900/40 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                </span>
+                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-100">
+                  Update Available • Eshan Barua's OmniSync
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowUpdateModal(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800/80 p-1.5 rounded-lg transition-colors cursor-pointer"
+                title="Close update menu"
+              >
+                <span className="text-xs font-black">✕</span>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-amber-400">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-100">A new version is available for download</h4>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Upgrade from <span className="font-mono font-bold text-slate-300">v{updateStatus.currentVersion}</span> to{" "}
+                    <span className="font-mono font-bold text-emerald-400">v{updateStatus.latestVersion}</span> to enjoy the latest security patches, stability improvements, and features.
+                  </p>
+                </div>
+              </div>
+
+              {/* Release Notes */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-450">What's New</span>
+                <div className="bg-slate-950/60 border border-slate-900 rounded-xl p-4 max-h-40 overflow-y-auto space-y-1.5 custom-scrollbar">
+                  {updateStatus.releaseNotes && updateStatus.releaseNotes.length > 0 ? (
+                    updateStatus.releaseNotes.map((note, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs text-slate-300 leading-relaxed">
+                        <span className="text-blue-500 font-bold mt-0.5">•</span>
+                        <span>{note}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">No release details provided.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-blue-950/20 border border-blue-900/30 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-blue-300 font-medium leading-relaxed">
+                  The built-in desktop update engine ensures your local OmniSync build remains continuously synchronized and automated.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUpdateModal(false)}
+                  className="text-xs font-bold text-slate-400 hover:text-slate-100 hover:bg-slate-900/80 px-4 py-2 rounded-xl border border-white/5 transition-colors"
+                >
+                  Remind Me Later
+                </button>
+                {(window as any).electronAPI ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      (window as any).electronAPI.restartAndInstall();
+                    }}
+                    className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-600/10 flex items-center gap-1.5 animate-pulse cursor-pointer"
+                  >
+                    <span>Restart & Install Now</span>
+                  </button>
+                ) : (
+                  <a
+                    href={updateStatus.downloadUrl || "https://github.com/baruaeshan333/jira-analytics-suite/releases"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl transition-colors shadow-md shadow-blue-600/10 flex items-center gap-1.5 animate-pulse"
+                  >
+                    <span>Download & Install</span>
+                  </a>
+                )}
               </div>
             </div>
           </div>

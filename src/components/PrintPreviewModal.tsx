@@ -174,7 +174,7 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({
 
               {/* Page footer */}
               <div className="border-t border-slate-200 pt-3 mt-8 text-center text-[9px] text-slate-400 font-bold flex items-center justify-between">
-                <span>Jira PMO Reporting Engine • High Fidelity Export</span>
+                <span>Eshan Barua's OmniSync Suite • High Fidelity Export</span>
                 <span>Page 1 of 1</span>
               </div>
             </div>

@@ -3,12 +3,15 @@ import {
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
   Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X,
-  BellOff, Copy, Check, Share2
+  BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw
 } from "lucide-react";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
 import { exportToCSV, exportToPDF } from "../utils/export";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 import { D3PieChart } from "./D3PieChart";
+import { SprintBurndownWidget } from "./SprintBurndownWidget";
+import { ProjectImpactChart } from "./ProjectImpactChart";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -70,6 +73,11 @@ interface ReportDashboardProps {
   onRefreshSummary?: () => void;
   refreshingSummary?: boolean;
   onTriggerPrintPreview?: () => void;
+  flaggedIssueKeys?: string[];
+  onToggleFlag?: (key: string) => void;
+  onUpdateIssueStatusOrSprint?: (key: string, newStatus?: "To Do" | "In Progress" | "Done" | "Blocked", newSprint?: string) => void;
+  overdueThreshold?: number;
+  blockedThreshold?: number;
 }
 
 const containerVariants = {
@@ -147,6 +155,11 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   onRefreshSummary,
   refreshingSummary = false,
   onTriggerPrintPreview,
+  flaggedIssueKeys = [],
+  onToggleFlag,
+  onUpdateIssueStatusOrSprint,
+  overdueThreshold = 5,
+  blockedThreshold = 3,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
@@ -361,134 +374,1078 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
   // METRIC INTERACTIVE FILTER STATE
   const [activeMetricFilter, setActiveMetricFilter] = useState<string | null>(null);
 
+  // DRAG AND DROP & TIMELINE STATES
+  const [draggedIssueKey, setDraggedIssueKey] = useState<string | null>(null);
+  const [isDraggingOverTarget, setIsDraggingOverTarget] = useState<string | null>(null);
+  const [selectedTimelineKey, setSelectedTimelineKey] = useState<string>("");
+  const [selectedTimelineEventIdx, setSelectedTimelineEventIdx] = useState<number>(0);
+
+  // NEW TIMELINE INTERACTIVITY AND RESOLUTION STATES
+  const [timelineZoom, setTimelineZoom] = useState<"Daily" | "Weekly" | "Monthly">("Daily");
+  const [hoveredTimelineNodeIdx, setHoveredTimelineNodeIdx] = useState<number | null>(null);
+  const [isTimelineExportOpen, setIsTimelineExportOpen] = useState(false);
+  const [showFullHistory, setShowFullHistory] = useState(false);
+  const timelineViewportRef = React.useRef<HTMLDivElement>(null);
+
+  // TIMELINE HELPERS FOR DYNAMIC ZOOM RESOLUTION
+  const getStartOfWeek = (dateStr: string) => {
+    const d = new Date(dateStr.replace(/-/g, "/"));
+    if (isNaN(d.getTime())) return dateStr;
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    return monday.toISOString().split("T")[0];
+  };
+
+  const getMonthYear = (dateStr: string) => {
+    const d = new Date(dateStr.replace(/-/g, "/"));
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleString("default", { month: "long", year: "numeric" });
+  };
+
+  const getEventStatusCategory = (evt: any) => {
+    if (evt.type === "created") {
+      return "To Do";
+    } else if (evt.type === "status") {
+      const descLower = evt.desc.toLowerCase();
+      const labelLower = evt.label.toLowerCase();
+      if (descLower.includes("done") || labelLower.includes("done") || descLower.includes("resolved") || descLower.includes("complete")) {
+        return "Done";
+      } else if (descLower.includes("blocked") || labelLower.includes("blocked") || descLower.includes("impediment")) {
+        return "Blocked";
+      } else {
+        return "In Progress";
+      }
+    } else {
+      return "In Progress";
+    }
+  };
+
+  const getGroupedTimelineEvents = (originalEvents: { label: string; date: string; desc: string; type: "created" | "status" | "comment"; author?: string }[], zoom: "Daily" | "Weekly" | "Monthly") => {
+    const groups: Record<string, typeof originalEvents> = {};
+    
+    originalEvents.forEach((evt) => {
+      let key = "";
+      if (zoom === "Daily") {
+        key = evt.date.split(" ")[0];
+      } else if (zoom === "Weekly") {
+        key = getStartOfWeek(evt.date);
+      } else {
+        key = getMonthYear(evt.date);
+      }
+      
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(evt);
+    });
+    
+    const grouped: {
+      label: string;
+      date: string;
+      desc: string;
+      type: "created" | "status" | "comment" | "mixed";
+      statusCategory: string;
+      subEvents: typeof originalEvents;
+    }[] = [];
+    
+    Object.entries(groups).forEach(([key, items]) => {
+      items.sort((a, b) => a.date.localeCompare(b.date));
+      
+      let displayDate = key;
+      if (zoom === "Weekly") {
+        displayDate = `Week of ${key}`;
+      }
+      
+      let label = "";
+      if (items.length === 1) {
+        label = items[0].label;
+      } else {
+        const typesCount = items.reduce((acc, curr) => {
+          acc[curr.type] = (acc[curr.type] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        
+        const typesList = Object.keys(typesCount).map((t) => {
+          if (t === "created") return "Created";
+          if (t === "status") return "Transitions";
+          if (t === "comment") return "Comments";
+          return t;
+        });
+        label = `${items.length} Events (${typesList.join(" & ")})`;
+      }
+      
+      const desc = items.map((it) => `[${it.date}] ${it.label}: ${it.desc}`).join("\n\n");
+      
+      const firstType = items[0].type;
+      const isMixed = items.some((it) => it.type !== firstType);
+      const type = isMixed ? "mixed" : firstType;
+      
+      let statusCategory = "To Do";
+      const hasDone = items.some(it => getEventStatusCategory(it) === "Done");
+      const hasBlocked = items.some(it => getEventStatusCategory(it) === "Blocked");
+      const hasInProgress = items.some(it => getEventStatusCategory(it) === "In Progress");
+      
+      if (hasDone) statusCategory = "Done";
+      else if (hasBlocked) statusCategory = "Blocked";
+      else if (hasInProgress) statusCategory = "In Progress";
+      
+      grouped.push({
+        label,
+        date: displayDate,
+        desc,
+        type: type as any,
+        statusCategory,
+        subEvents: items,
+      });
+    });
+    
+    grouped.sort((a, b) => a.date.localeCompare(b.date));
+    return grouped;
+  };
+
+  // COMPILE TIMELINE EVENTS
+  const compileTimelineEvents = (issue: JiraIssue) => {
+    const events: { label: string; date: string; desc: string; type: "created" | "status" | "comment"; author?: string }[] = [];
+    
+    if (issue.created) {
+      events.push({
+        label: "Ticket Created",
+        date: issue.created,
+        desc: `Reporter ${issue.reporter || "Unknown"} compiled issue scope. Initial Priority set to ${issue.priority}.`,
+        type: "created",
+      });
+    }
+
+    if (issue.mappedStatus === "In Progress") {
+      events.push({
+        label: "Active Transition",
+        date: issue.created,
+        desc: `Status updated to 'In Progress'. Assignee ${issue.assignee || "Sarah Connor"} started execution.`,
+        type: "status",
+      });
+    } else if (issue.mappedStatus === "Done") {
+      events.push({
+        label: "Active Transition",
+        date: issue.created,
+        desc: `Status updated to 'In Progress'. Assignee started work.`,
+        type: "status",
+      });
+      if (issue.updated) {
+        events.push({
+          label: "Completed Resolution",
+          date: issue.updated,
+          desc: `Status updated to 'Done'. Work resolved by assignee.`,
+          type: "status",
+        });
+      }
+    } else if (issue.mappedStatus === "Blocked") {
+      events.push({
+        label: "Blocked Impediment",
+        date: issue.updated || issue.created,
+        desc: `Status flagged as 'Blocked'. Timeline pending resolution.`,
+        type: "status",
+      });
+    }
+
+    const coms = getCommentsForIssue(issue);
+    coms.forEach((c) => {
+      events.push({
+        label: `Comment by ${c.author}`,
+        date: c.created.split(" ")[0],
+        desc: c.body,
+        type: "comment",
+        author: c.author
+      });
+    });
+
+    events.sort((a, b) => a.date.localeCompare(b.date));
+    return events;
+  };
+
+  // EXPORT HANDLERS FOR TIMELINE WIDGET
+  const downloadTimelineCSV = (key: string) => {
+    const issues = report?.issues || [];
+    const currentIssue = issues.find((i) => i.key === key);
+    if (!currentIssue && !showFullHistory) return;
+    
+    let rawEvents = [];
+    if (showFullHistory) {
+      issues.forEach((issue) => {
+        const issueEvents = compileTimelineEvents(issue);
+        issueEvents.forEach((evt) => {
+          rawEvents.push({
+            ...evt,
+            label: `${issue.key}: ${evt.label}`,
+            desc: `[${issue.key} - ${issue.summary}] ${evt.desc}`,
+          });
+        });
+      });
+    } else if (currentIssue) {
+      rawEvents = compileTimelineEvents(currentIssue);
+    }
+    
+    const events = getGroupedTimelineEvents(rawEvents, timelineZoom);
+    
+    const headers = ["Event Date", "Event Label", "Description", "Event Type", "Status Category"];
+    const rows = events.map((evt) => {
+      return [
+        `"${evt.date.replace(/"/g, '""')}"`,
+        `"${evt.label.replace(/"/g, '""')}"`,
+        `"${evt.desc.replace(/"/g, '""')}"`,
+        `"${evt.type.replace(/"/g, '""')}"`,
+        `"${evt.statusCategory.replace(/"/g, '""')}"`
+      ].join(",");
+    });
+    const csvContent = "\ufeff" + [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    
+    const nameKey = showFullHistory ? "All_Tickets" : key;
+    const name = `Issue_Timeline_${nameKey}_${timelineZoom}_${new Date().toISOString().split("T")[0]}.csv`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", name);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addToast?.("Export Successful", `Downloaded timeline events as CSV.`, "success", 2500);
+  };
+
+  const downloadTimelinePDF = (key: string) => {
+    const issues = report?.issues || [];
+    const currentIssue = issues.find((i) => i.key === key);
+    if (!currentIssue && !showFullHistory) return;
+
+    let rawEvents = [];
+    if (showFullHistory) {
+      issues.forEach((issue) => {
+        const issueEvents = compileTimelineEvents(issue);
+        issueEvents.forEach((evt) => {
+          rawEvents.push({
+            ...evt,
+            label: `${issue.key}: ${evt.label}`,
+            desc: `[${issue.key} - ${issue.summary}] ${evt.desc}`,
+          });
+        });
+      });
+    } else if (currentIssue) {
+      rawEvents = compileTimelineEvents(currentIssue);
+    }
+    const events = getGroupedTimelineEvents(rawEvents, timelineZoom);
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      addToast?.("Export Failed", "Please enable popups to allow print export.", "error", 3000);
+      return;
+    }
+    const eventsRows = events.map((evt) => {
+      let badgeStyle = "background-color: #f1f5f9; color: #475569;";
+      if (evt.statusCategory === "Done") badgeStyle = "background-color: #dcfce7; color: #15803d;";
+      else if (evt.statusCategory === "Blocked") badgeStyle = "background-color: #fee2e2; color: #b91c1c;";
+      else if (evt.statusCategory === "In Progress") badgeStyle = "background-color: #e0f2fe; color: #0369a1;";
+
+      return `
+        <tr>
+          <td style="border: 1px solid #e2e8f0; padding: 12px; font-family: monospace; font-size: 11px;">${evt.date}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 12px; font-weight: bold; font-size: 12px;">${evt.label}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 12px; font-size: 11px; color: #475569;">
+            <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; ${badgeStyle}">
+              ${evt.statusCategory}
+            </span>
+            <br />
+            ${evt.desc.replace(/\n/g, "<br/>")}
+          </td>
+          <td style="border: 1px solid #e2e8f0; padding: 12px; font-size: 11px; text-transform: capitalize;">${evt.type}</td>
+        </tr>
+      `;
+    }).join("");
+
+    const displayKey = showFullHistory ? "All Issues" : key;
+    const headerTitle = showFullHistory ? "Combined Master Project History" : `Ticket Reference: ${key}`;
+
+    const detailsBox = showFullHistory 
+      ? `
+        <div class="issue-details">
+          <div class="issue-title">All Issues Currently in Report Dashboard Scope</div>
+          <div class="issue-summary">Aggregated status transitions, chronological milestones, and comment history for all ${issues.length} active tickets.</div>
+        </div>
+      `
+      : currentIssue ? `
+        <div class="issue-details">
+          <div class="issue-title">${key} - ${currentIssue.type} (Priority: ${currentIssue.priority})</div>
+          <div class="issue-summary">${currentIssue.summary}</div>
+          <div style="margin-top: 10px; font-size: 11px; color: #64748b;">
+            <strong>Assignee:</strong> ${currentIssue.assignee || "Unassigned"} &nbsp;&nbsp;|&nbsp;&nbsp;
+            <strong>Status:</strong> ${currentIssue.status} (${currentIssue.mappedStatus})
+          </div>
+        </div>
+      ` : "";
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Issue Timeline [${timelineZoom} View] - ${displayKey}</title>
+          <style>
+            body { font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #1e293b; margin: 40px; line-height: 1.5; }
+            .header { border-bottom: 2px solid #0284c7; padding-bottom: 16px; margin-bottom: 24px; }
+            .title { margin: 0; font-size: 22px; font-weight: 800; color: #0f172a; }
+            .subtitle { margin: 4px 0 0 0; font-size: 12px; color: #64748b; font-weight: 500; }
+            .issue-details { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+            .issue-title { margin: 0 0 8px 0; font-size: 14px; font-weight: bold; color: #0284c7; }
+            .issue-summary { margin: 0; font-size: 13px; color: #334155; font-weight: 600; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th { background-color: #f1f5f9; border: 1px solid #e2e8f0; padding: 12px; text-align: left; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; }
+            .footer { margin-top: 40px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 16px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="title">Issue Timeline Progress Tracker [${timelineZoom} Resolution]</div>
+            <div class="subtitle">Generated on ${new Date().toLocaleString()} | ${headerTitle}</div>
+          </div>
+
+          ${detailsBox}
+
+          <h3>Chronological Progress Event Logs</h3>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 20%;">Time Period</th>
+                <th style="width: 25%;">Activity Header</th>
+                <th style="width: 40%;">Sub-events & Details</th>
+                <th style="width: 15%;">Event Category</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${eventsRows}
+            </tbody>
+          </table>
+
+          <div class="footer">
+            OmniSync Bot Report Service &copy; ${new Date().getFullYear()} - Confidentially prepared for PMO Audit Review.
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    addToast?.("Timeline PDF Exported", `Print dialogue triggered for ${displayKey}.`, "success", 2500);
+  };
+
   // BULK SELECTION STATE
+  // --- NEW BULK EDIT FEATURES DECLARATIONS ---
+  interface MacroPreset {
+    id: string;
+    name: string;
+    targetStatus?: string | null;
+    addLabel?: string | null;
+    removeLabel?: string | null;
+  }
+
+  interface BulkOperationLogEntry {
+    id: string;
+    timestamp: string;
+    operationName: string;
+    affectedIssueKeys: string[];
+    previousStates: {
+      key: string;
+      status: string;
+      labels: string[];
+    }[];
+    nextStates?: {
+      key: string;
+      status: string;
+      labels: string[];
+    }[];
+    targetStatus?: string | null;
+    addedLabel?: string | null;
+    removedLabel?: string | null;
+    success: boolean;
+    errorMessage?: string;
+    undone?: boolean;
+  }
+
+  interface PendingBulkAction {
+    type: "status" | "label" | "macro" | "smart_automation";
+    targetStatus?: string;
+    label?: string;
+    macro?: MacroPreset;
+    smartUpdates?: any[];
+  }
+
+  const [macroPresets, setMacroPresets] = useState<MacroPreset[]>(() => {
+    const saved = localStorage.getItem("jira_macro_presets");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [
+      {
+        id: "macro-qa",
+        name: "Mark for QA Review",
+        targetStatus: "In Review",
+        addLabel: "QA",
+        removeLabel: "blocked"
+      },
+      {
+        id: "macro-done",
+        name: "Fast-track to Done",
+        targetStatus: "Done",
+        addLabel: "production-deploy",
+        removeLabel: "blocked"
+      },
+      {
+        id: "macro-block",
+        name: "Flag as Blocked",
+        targetStatus: "Blocked",
+        addLabel: "blocked",
+        removeLabel: null
+      }
+    ];
+  });
+
+  const [bulkLog, setBulkLog] = useState<BulkOperationLogEntry[]>([]);
+  const [isLogOpen, setIsLogOpen] = useState(false);
+  const [pendingBulkAction, setPendingBulkAction] = useState<PendingBulkAction | null>(null);
+  
+  // Smart Automation State
+  const [isSmartLoading, setIsSmartLoading] = useState(false);
+  
+  // States for Macro creation
+  const [isCreatingPreset, setIsCreatingPreset] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [newPresetStatus, setNewPresetStatus] = useState("");
+  const [newPresetAddLabel, setNewPresetAddLabel] = useState("");
+  const [newPresetRemoveLabel, setNewPresetRemoveLabel] = useState("");
+
   const [selectedIssueKeys, setSelectedIssueKeys] = useState<string[]>([]);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [newLabelInput, setNewLabelInput] = useState("");
+  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
+  const [bulkLabelFilter, setBulkLabelFilter] = useState<string>("");
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkProgressTotal, setBulkProgressTotal] = useState(0);
+  const [bulkCurrentIssueKey, setBulkCurrentIssueKey] = useState("");
+  const [bulkOperationName, setBulkOperationName] = useState("");
 
+  const availableBulkLabels = useMemo(() => {
+    const labelsSet = new Set<string>();
+    const issuesList = report?.issues ?? [];
+    selectedIssueKeys.forEach((key) => {
+      const issue = issuesList.find((i) => i.key === key);
+      if (issue && issue.labels) {
+        issue.labels.forEach(l => labelsSet.add(l));
+      }
+    });
+    return Array.from(labelsSet).sort();
+  }, [selectedIssueKeys, report?.issues]);
+
+  const filteredSelectedIssueKeys = useMemo(() => {
+    const issuesList = report?.issues ?? [];
+    let keys = selectedIssueKeys;
+
+    if (bulkSearchQuery.trim()) {
+      const q = bulkSearchQuery.toLowerCase().trim();
+      keys = keys.filter((key) => {
+        const issue = issuesList.find((i) => i.key === key);
+        return issue && issue.summary.toLowerCase().includes(q);
+      });
+    }
+
+    if (bulkLabelFilter) {
+      keys = keys.filter((key) => {
+        const issue = issuesList.find((i) => i.key === key);
+        return issue && issue.labels && issue.labels.includes(bulkLabelFilter);
+      });
+    }
+
+    return keys;
+  }, [selectedIssueKeys, bulkSearchQuery, bulkLabelFilter, report?.issues]);
+
+  React.useEffect(() => {
+    if (!pendingBulkAction) {
+      setBulkLabelFilter("");
+    }
+  }, [pendingBulkAction]);
+
+  const runBulkProgressAnimation = async (operationName: string, keys: string[]) => {
+    setBulkOperationName(operationName);
+    setBulkProgress(0);
+    setBulkProgressTotal(keys.length);
+    for (let i = 0; i < keys.length; i++) {
+      setBulkCurrentIssueKey(keys[i]);
+      // small delay per issue to show animation
+      await new Promise((resolve) => setTimeout(resolve, Math.min(300, 1500 / keys.length || 150)));
+      setBulkProgress(i + 1);
+    }
+  };
+
+  const handleSaveMacroPreset = (name: string, status: string, addLbl: string, removeLbl: string) => {
+    if (!name.trim()) return;
+    const newPreset: MacroPreset = {
+      id: "preset_" + Date.now(),
+      name: name.trim(),
+      targetStatus: status || null,
+      addLabel: addLbl.trim() || null,
+      removeLabel: removeLbl.trim() || null
+    };
+    const updatedPresets = [...macroPresets, newPreset];
+    setMacroPresets(updatedPresets);
+    localStorage.setItem("jira_macro_presets", JSON.stringify(updatedPresets));
+    setIsCreatingPreset(false);
+    setNewPresetName("");
+    setNewPresetStatus("");
+    setNewPresetAddLabel("");
+    setNewPresetRemoveLabel("");
+    addToast?.("Preset Created", `Macro preset "${name}" has been saved.`, "success", 3000);
+  };
+
+  const handleDeleteMacroPreset = (id: string, name: string) => {
+    const updatedPresets = macroPresets.filter(p => p.id !== id);
+    setMacroPresets(updatedPresets);
+    localStorage.setItem("jira_macro_presets", JSON.stringify(updatedPresets));
+    addToast?.("Preset Deleted", `Macro preset "${name}" has been removed.`, "info", 3000);
+  };
+
+  // Intercept actions to request confirmation summary
   const handleBulkAddLabel = async (label: string) => {
-    if (!label.trim() || selectedIssueKeys.length === 0) return;
-    const cleanLabel = label.trim();
+    if (!label.trim() || filteredSelectedIssueKeys.length === 0) return;
+    setPendingBulkAction({
+      type: "label",
+      label: label.trim()
+    });
+  };
+
+  const handleBulkUpdate = async (targetStatus: string) => {
+    if (filteredSelectedIssueKeys.length === 0) return;
+    setPendingBulkAction({
+      type: "status",
+      targetStatus
+    });
+  };
+
+  const handleApplyMacroPreset = (preset: MacroPreset) => {
+    if (filteredSelectedIssueKeys.length === 0) return;
+    setPendingBulkAction({
+      type: "macro",
+      macro: preset
+    });
+  };
+
+  const handleSmartAutomationRequest = async () => {
+    if (filteredSelectedIssueKeys.length === 0) return;
+    setIsSmartLoading(true);
+    try {
+      const selectedIssues = (report?.issues ?? []).filter(i => filteredSelectedIssueKeys.includes(i.key));
+      const res = await fetch("/api/pmo/suggest-bulk-updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issues: selectedIssues })
+      });
+      if (!res.ok) {
+        throw new Error("Failed to retrieve smart recommendations from server.");
+      }
+      const data = await res.json();
+      if (data.aiSuggestions) {
+        setPendingBulkAction({
+          type: "smart_automation",
+          smartUpdates: data.aiSuggestions.suggestions,
+          label: data.aiSuggestions.summaryOfCollectiveChanges // store summary paragraph in label
+        });
+      } else {
+        throw new Error("No suggestion data returned from server.");
+      }
+    } catch (err: any) {
+      addToast?.("Smart Automation Error", err.message || "Failed to contact smart recommendations engine.", "error", 5000);
+    } finally {
+      setIsSmartLoading(false);
+    }
+  };
+
+  const handleApplySmartUpdates = async (suggestions: any[]) => {
     setIsBulkUpdating(true);
-    const triggerToast = addToast || ((t, m, ty) => console.log(t, m, ty));
+    const issues = report?.issues ?? [];
+    const previousStates = filteredSelectedIssueKeys.map(key => {
+      const issue = issues.find(i => i.key === key);
+      return {
+        key,
+        status: issue?.status || "To Do",
+        labels: issue?.labels || []
+      };
+    });
 
     try {
-      const issuesList = report?.issues ?? [];
-      const updated = issuesList.map((issue) => {
-        if (selectedIssueKeys.includes(issue.key)) {
-          const currentLabels = issue.labels || [];
+      await runBulkProgressAnimation("Applying Smart AI Recommendations", filteredSelectedIssueKeys);
+
+      const updated = issues.map((issue) => {
+        const sug = suggestions.find(s => s.key === issue.key);
+        if (sug) {
+          let currentLabels = issue.labels || [];
+          const addedLabels = sug.suggestedLabels || [];
+          const finalLabels = [...currentLabels];
+          addedLabels.forEach((lbl: string) => {
+            if (!finalLabels.includes(lbl)) {
+              finalLabels.push(lbl);
+            }
+          });
+
           return {
             ...issue,
-            labels: currentLabels.includes(cleanLabel) ? currentLabels : [...currentLabels, cleanLabel]
+            status: sug.suggestedStatus || issue.status,
+            mappedStatus: (sug.suggestedStatus || issue.status) as any,
+            labels: finalLabels
           };
         }
         return issue;
       });
 
+      if (!isSandbox) {
+        for (const sug of suggestions) {
+          if (sug.suggestedStatus && sug.suggestedStatus !== sug.key) {
+            try {
+              await fetch("/api/jira/bulk-transition", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${sessionId}`
+                },
+                body: JSON.stringify({
+                  issueKeys: [sug.key],
+                  targetStatus: sug.suggestedStatus
+                })
+              });
+            } catch (e) {
+              console.error(`Failed to transition ${sug.key}`, e);
+            }
+          }
+        }
+      }
+
       if (onUpdateIssues) {
         onUpdateIssues(updated);
       }
 
-      triggerToast(
-        "Labels Added",
-        `Successfully added label '${cleanLabel}' to ${selectedIssueKeys.length} issues.`,
+      const nextStates = updated
+        .filter(i => filteredSelectedIssueKeys.includes(i.key))
+        .map(i => ({ key: i.key, status: i.status, labels: i.labels }));
+
+      const newLogEntry: BulkOperationLogEntry = {
+        id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+        timestamp: new Date().toLocaleTimeString(),
+        operationName: "AI Smart Automation Updates",
+        affectedIssueKeys: [...filteredSelectedIssueKeys],
+        previousStates,
+        nextStates,
+        success: true
+      };
+      setBulkLog(prev => [newLogEntry, ...prev]);
+
+      addToast?.(
+        "Smart Auto Applied",
+        `Successfully applied AI-suggested updates to ${filteredSelectedIssueKeys.length} issues.`,
         "success",
-        4000
+        5000
       );
-      setNewLabelInput("");
-    } catch (err: any) {
-      triggerToast("Label Assign Failed", err.message || "Could not assign labels.", "error", 5000);
-    } finally {
-      setIsBulkUpdating(false);
-    }
-  };
-
-  const handleBulkUpdate = async (targetStatus: string) => {
-    if (selectedIssueKeys.length === 0) return;
-    setIsBulkUpdating(true);
-    const issues = report?.issues ?? [];
-    
-    // Quick validation of toast helper
-    const triggerToast = addToast || ((t, m, ty) => console.log(t, m, ty));
-
-    try {
-      if (isSandbox) {
-        // Local state simulation instantly
-        const updated = issues.map((issue) => {
-          if (selectedIssueKeys.includes(issue.key)) {
-            return {
-              ...issue,
-              status: targetStatus,
-              mappedStatus: targetStatus as any // updates mapping
-            };
-          }
-          return issue;
-        });
-        
-        if (onUpdateIssues) {
-          onUpdateIssues(updated);
-        }
-        
-        triggerToast(
-          "Bulk Update Success",
-          `Successfully updated ${selectedIssueKeys.length} issues to status '${targetStatus}' (Sandbox Mode).`,
-          "success",
-          4000
-        );
-      } else {
-        // Real Jira bulk update via API proxy
-        const res = await fetch("/api/jira/bulk-transition", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionId}`
-          },
-          body: JSON.stringify({
-            issueKeys: selectedIssueKeys,
-            targetStatus
-          })
-        });
-
-        if (!res.ok) {
-          const errorData = await res.json();
-          throw new Error(errorData.error || "Failed to complete bulk status transition.");
-        }
-
-        // Apply local updates to state
-        const updated = issues.map((issue) => {
-          if (selectedIssueKeys.includes(issue.key)) {
-            return {
-              ...issue,
-              status: targetStatus,
-              mappedStatus: targetStatus as any
-            };
-          }
-          return issue;
-        });
-
-        if (onUpdateIssues) {
-          onUpdateIssues(updated);
-        }
-
-        triggerToast(
-          "Bulk Transition Success",
-          `Successfully pushed status updates for ${selectedIssueKeys.length} issues to Jira!`,
-          "success",
-          5000
-        );
-      }
       setSelectedIssueKeys([]);
+      setBulkSearchQuery("");
     } catch (err: any) {
-      triggerToast(
-        "Bulk Transition Failed",
-        err.message || "An error occurred during bulk status transition.",
-        "error",
-        6000
-      );
+      addToast?.("Smart Auto Failed", err.message || "Could not apply smart updates.", "error", 5000);
     } finally {
       setIsBulkUpdating(false);
+      setBulkProgress(0);
+      setBulkProgressTotal(0);
+      setBulkCurrentIssueKey("");
+      setBulkOperationName("");
     }
   };
+
+  const handleUndoOperation = async (entry: BulkOperationLogEntry) => {
+    const currentIssues = report?.issues ?? [];
+    
+    const updated = currentIssues.map(issue => {
+      const prev = entry.previousStates.find(p => p.key === issue.key);
+      if (prev) {
+        return {
+          ...issue,
+          status: prev.status,
+          mappedStatus: prev.status as any,
+          labels: prev.labels
+        };
+      }
+      return issue;
+    });
+
+    if (!isSandbox) {
+      setIsBulkUpdating(true);
+      setBulkOperationName(`Undoing: ${entry.operationName}`);
+      setBulkProgress(0);
+      setBulkProgressTotal(entry.previousStates.length);
+      try {
+        for (let i = 0; i < entry.previousStates.length; i++) {
+          const prev = entry.previousStates[i];
+          setBulkCurrentIssueKey(prev.key);
+          await fetch("/api/jira/bulk-transition", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sessionId}`
+            },
+            body: JSON.stringify({
+              issueKeys: [prev.key],
+              targetStatus: prev.status
+            })
+          });
+          setBulkProgress(i + 1);
+        }
+      } catch (err) {
+        console.error("Undo synchronization failed:", err);
+      } finally {
+        setIsBulkUpdating(false);
+        setBulkProgress(0);
+        setBulkProgressTotal(0);
+        setBulkCurrentIssueKey("");
+        setBulkOperationName("");
+      }
+    }
+
+    if (onUpdateIssues) {
+      onUpdateIssues(updated);
+    }
+
+    setBulkLog(prev => prev.map(e => e.id === entry.id ? { ...e, undone: true } : e));
+    addToast?.("Batch Action Undone", `Successfully reverted changes for ${entry.previousStates.length} issues.`, "success", 4000);
+  };
+
+  const handleRedoOperation = async (entry: BulkOperationLogEntry) => {
+    if (!entry.nextStates) {
+      addToast?.("Redo Failed", "No forward state stored for this action.", "error", 3000);
+      return;
+    }
+    const currentIssues = report?.issues ?? [];
+    
+    const updated = currentIssues.map(issue => {
+      const next = entry.nextStates?.find(n => n.key === issue.key);
+      if (next) {
+        return {
+          ...issue,
+          status: next.status,
+          mappedStatus: next.status as any,
+          labels: next.labels
+        };
+      }
+      return issue;
+    });
+
+    if (!isSandbox) {
+      setIsBulkUpdating(true);
+      setBulkOperationName(`Redoing: ${entry.operationName}`);
+      setBulkProgress(0);
+      setBulkProgressTotal(entry.nextStates.length);
+      try {
+        for (let i = 0; i < entry.nextStates.length; i++) {
+          const next = entry.nextStates[i];
+          setBulkCurrentIssueKey(next.key);
+          await fetch("/api/jira/bulk-transition", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sessionId}`
+            },
+            body: JSON.stringify({
+              issueKeys: [next.key],
+              targetStatus: next.status
+            })
+          });
+          setBulkProgress(i + 1);
+        }
+      } catch (err) {
+        console.error("Redo synchronization failed:", err);
+      } finally {
+        setIsBulkUpdating(false);
+        setBulkProgress(0);
+        setBulkProgressTotal(0);
+        setBulkCurrentIssueKey("");
+        setBulkOperationName("");
+      }
+    }
+
+    if (onUpdateIssues) {
+      onUpdateIssues(updated);
+    }
+
+    setBulkLog(prev => prev.map(e => e.id === entry.id ? { ...e, undone: false } : e));
+    addToast?.("Batch Action Redone", `Successfully reapplied ${entry.operationName} updates to ${entry.nextStates.length} issues.`, "success", 4000);
+  };
+
+  const executePendingBulkAction = async () => {
+    if (!pendingBulkAction) return;
+    const action = pendingBulkAction;
+    setPendingBulkAction(null);
+
+    const issues = report?.issues ?? [];
+    const previousStates = filteredSelectedIssueKeys.map(key => {
+      const issue = issues.find(i => i.key === key);
+      return {
+        key,
+        status: issue?.status || "To Do",
+        labels: issue?.labels || []
+      };
+    });
+
+    if (action.type === "status") {
+      const targetStatus = action.targetStatus!;
+      setIsBulkUpdating(true);
+      try {
+        await runBulkProgressAnimation(`Transitioning to "${targetStatus}"`, filteredSelectedIssueKeys);
+
+        if (isSandbox) {
+          const updated = issues.map((issue) => {
+            if (filteredSelectedIssueKeys.includes(issue.key)) {
+              return {
+                ...issue,
+                status: targetStatus,
+                mappedStatus: targetStatus as any
+              };
+            }
+            return issue;
+          });
+          if (onUpdateIssues) onUpdateIssues(updated);
+          addToast?.("Bulk Update Success", `Successfully updated ${filteredSelectedIssueKeys.length} issues to status '${targetStatus}' (Sandbox Mode).`, "success", 4000);
+        } else {
+          const res = await fetch("/api/jira/bulk-transition", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sessionId}`
+            },
+            body: JSON.stringify({
+              issueKeys: filteredSelectedIssueKeys,
+              targetStatus
+            })
+          });
+
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || "Failed to complete bulk status transition.");
+          }
+
+          const updated = issues.map((issue) => {
+            if (filteredSelectedIssueKeys.includes(issue.key)) {
+              return {
+                ...issue,
+                status: targetStatus,
+                mappedStatus: targetStatus as any
+              };
+            }
+            return issue;
+          });
+          if (onUpdateIssues) onUpdateIssues(updated);
+          addToast?.("Bulk Transition Success", `Successfully pushed status updates for ${filteredSelectedIssueKeys.length} issues to Jira!`, "success", 5000);
+        }
+
+        const nextStates = filteredSelectedIssueKeys.map(key => {
+          const issue = issues.find(i => i.key === key);
+          return {
+            key,
+            status: targetStatus,
+            labels: issue?.labels || []
+          };
+        });
+
+        const newLogEntry: BulkOperationLogEntry = {
+          id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+          timestamp: new Date().toLocaleTimeString(),
+          operationName: `Transition Status to "${targetStatus}"`,
+          affectedIssueKeys: [...filteredSelectedIssueKeys],
+          previousStates,
+          nextStates,
+          targetStatus,
+          success: true
+        };
+        setBulkLog(prev => [newLogEntry, ...prev]);
+
+        setSelectedIssueKeys([]);
+        setBulkSearchQuery("");
+      } catch (err: any) {
+        addToast?.("Bulk Transition Failed", err.message || "An error occurred.", "error", 6000);
+      } finally {
+        setIsBulkUpdating(false);
+        setBulkProgress(0);
+        setBulkProgressTotal(0);
+        setBulkCurrentIssueKey("");
+        setBulkOperationName("");
+      }
+    } else if (action.type === "label") {
+      const label = action.label!;
+      setIsBulkUpdating(true);
+      try {
+        await runBulkProgressAnimation(`Adding Label "${label}"`, filteredSelectedIssueKeys);
+
+        const updated = issues.map((issue) => {
+          if (filteredSelectedIssueKeys.includes(issue.key)) {
+            const currentLabels = issue.labels || [];
+            return {
+              ...issue,
+              labels: currentLabels.includes(label) ? currentLabels : [...currentLabels, label]
+            };
+          }
+          return issue;
+        });
+        if (onUpdateIssues) onUpdateIssues(updated);
+
+        addToast?.("Labels Added", `Successfully added label '${label}' to ${filteredSelectedIssueKeys.length} issues.`, "success", 4000);
+
+        const nextStates = filteredSelectedIssueKeys.map(key => {
+          const issue = issues.find(i => i.key === key);
+          const currentLabels = issue?.labels || [];
+          return {
+            key,
+            status: issue?.status || "To Do",
+            labels: currentLabels.includes(label) ? currentLabels : [...currentLabels, label]
+          };
+        });
+
+        const newLogEntry: BulkOperationLogEntry = {
+          id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+          timestamp: new Date().toLocaleTimeString(),
+          operationName: `Add Label "${label}"`,
+          affectedIssueKeys: [...filteredSelectedIssueKeys],
+          previousStates,
+          nextStates,
+          addedLabel: label,
+          success: true
+        };
+        setBulkLog(prev => [newLogEntry, ...prev]);
+
+        setNewLabelInput("");
+        setSelectedIssueKeys([]);
+        setBulkSearchQuery("");
+      } catch (err: any) {
+        addToast?.("Label Assign Failed", err.message || "Could not assign labels.", "error", 5000);
+      } finally {
+        setIsBulkUpdating(false);
+        setBulkProgress(0);
+        setBulkProgressTotal(0);
+        setBulkCurrentIssueKey("");
+        setBulkOperationName("");
+      }
+    } else if (action.type === "macro") {
+      const macro = action.macro!;
+      setIsBulkUpdating(true);
+      try {
+        let runName = `Applying Macro: ${macro.name}`;
+        await runBulkProgressAnimation(runName, filteredSelectedIssueKeys);
+
+        if (macro.targetStatus && !isSandbox) {
+          try {
+            await fetch("/api/jira/bulk-transition", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${sessionId}`
+              },
+              body: JSON.stringify({
+                issueKeys: filteredSelectedIssueKeys,
+                targetStatus: macro.targetStatus
+              })
+            });
+          } catch (e) {
+            console.warn("Macro transition failed", e);
+          }
+        }
+
+        const updated = issues.map((issue) => {
+          if (filteredSelectedIssueKeys.includes(issue.key)) {
+            let updatedIssue = { ...issue };
+            if (macro.targetStatus) {
+              updatedIssue.status = macro.targetStatus;
+              updatedIssue.mappedStatus = macro.targetStatus as any;
+            }
+            let currentLabels = updatedIssue.labels || [];
+            if (macro.addLabel) {
+              const cleanAdd = macro.addLabel.trim();
+              if (!currentLabels.includes(cleanAdd)) {
+                currentLabels = [...currentLabels, cleanAdd];
+              }
+            }
+            if (macro.removeLabel) {
+              const cleanRemove = macro.removeLabel.trim().toLowerCase();
+              currentLabels = currentLabels.filter(l => l.toLowerCase() !== cleanRemove);
+            }
+            updatedIssue.labels = currentLabels;
+            return updatedIssue;
+          }
+          return issue;
+        });
+
+        if (onUpdateIssues) onUpdateIssues(updated);
+
+        const nextStates = updated
+          .filter(i => filteredSelectedIssueKeys.includes(i.key))
+          .map(i => ({ key: i.key, status: i.status, labels: i.labels }));
+
+        addToast?.("Macro Preset Applied", `Successfully executed operations from preset '${macro.name}' across ${filteredSelectedIssueKeys.length} issues.`, "success", 4500);
+
+        const newLogEntry: BulkOperationLogEntry = {
+          id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+          timestamp: new Date().toLocaleTimeString(),
+          operationName: `Macro: ${macro.name}`,
+          affectedIssueKeys: [...filteredSelectedIssueKeys],
+          previousStates,
+          nextStates,
+          targetStatus: macro.targetStatus,
+          addedLabel: macro.addLabel,
+          removedLabel: macro.removeLabel,
+          success: true
+        };
+        setBulkLog(prev => [newLogEntry, ...prev]);
+
+        setSelectedIssueKeys([]);
+        setBulkSearchQuery("");
+      } catch (err: any) {
+        addToast?.("Macro Execution Failed", err.message || "An error occurred.", "error", 5000);
+      } finally {
+        setIsBulkUpdating(false);
+        setBulkProgress(0);
+        setBulkProgressTotal(0);
+        setBulkCurrentIssueKey("");
+        setBulkOperationName("");
+      }
+    } else if (action.type === "smart_automation") {
+      await handleApplySmartUpdates(action.smartUpdates!);
+    }
+  };
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!pendingBulkAction) return;
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setPendingBulkAction(null);
+        addToast?.("Modal Closed", "Batch operation cancelled.", "info", 1500);
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        executePendingBulkAction();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [pendingBulkAction, executePendingBulkAction]);
 
   const toggleRow = (issueKey: string) => {
     setExpandedRows((prev) => ({
@@ -723,6 +1680,11 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     });
   }, [report?.issues]);
 
+  const flaggedIssues = useMemo(() => {
+    const issuesList = report?.issues ?? [];
+    return issuesList.filter((i) => flaggedIssueKeys.includes(i.key));
+  }, [report?.issues, flaggedIssueKeys]);
+
   // Search, sort, and KPI filter on detailed issue list
   const filteredIssues = useMemo(() => {
     const issuesList = report?.issues ?? [];
@@ -815,9 +1777,9 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           <div className="w-12 h-12 rounded-full border-4 border-slate-800 border-t-blue-500 animate-spin"></div>
           <Sparkles className="w-5 h-5 text-blue-400 absolute animate-pulse" />
         </div>
-        <h3 className="text-sm font-bold text-white">Processing Jira Reporting Bot Matrix...</h3>
+        <h3 className="text-sm font-bold text-white">Processing OmniSync Reporting Bot Matrix...</h3>
         <p className="text-xs text-slate-400 mt-2 max-w-md leading-relaxed">
-          Retrieving projects, consolidating custom workflow status maps, calculating agile velocity metrics, and drafting Gemini AI summaries...
+          Retrieving projects, consolidating custom workflow status maps, calculating agile velocity metrics, and drafting executive summaries...
         </p>
       </div>
     );
@@ -901,6 +1863,65 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     }
   };
 
+  const downloadSelectedCSV = () => {
+    if (filteredSelectedIssueKeys.length === 0) return;
+    const selectedIssues = issues.filter((i) => filteredSelectedIssueKeys.includes(i.key));
+    const name = "Selected_Issues_" + safeConfig.fileNamingRule
+      .replace("{project}", safeConfig.selectedProjects.join("_"))
+      .replace("{date}", new Date().toISOString().split("T")[0]) + ".csv";
+    exportToCSV(selectedIssues, safeConfig.columns, name);
+    if (onRecordExport) {
+      onRecordExport("CSV", name);
+    }
+    addToast?.("Export Selected Successful", `Exported ${selectedIssues.length} selected issues to CSV.`, "success", 2000);
+  };
+
+  const downloadSelectedPDF = () => {
+    if (filteredSelectedIssueKeys.length === 0) return;
+    const selectedIssues = issues.filter((i) => filteredSelectedIssueKeys.includes(i.key));
+    const name = "Selected_Issues_" + safeConfig.fileNamingRule
+      .replace("{project}", safeConfig.selectedProjects.join("_"))
+      .replace("{date}", new Date().toISOString().split("T")[0]) + ".pdf";
+    exportToPDF(`Jira Executive Report - Selected Issues (${selectedIssues.length})`, selectedIssues, safeConfig.columns);
+    if (onRecordExport) {
+      onRecordExport("PDF", name);
+    }
+    addToast?.("Export Selected Successful", `Exported ${selectedIssues.length} selected issues to PDF.`, "success", 2000);
+  };
+
+  const exportBulkLogToCSV = () => {
+    if (bulkLog.length === 0) {
+      addToast?.("Export Failed", "There are no entries in the activity log to export.", "error", 2000);
+      return;
+    }
+    const headers = ["ID", "Timestamp", "Operation Name", "Target Status", "Added Label", "Removed Label", "Affected Issues Count", "Affected Issues", "Success"];
+    const rows = bulkLog.map(entry => {
+      return [
+        entry.id,
+        entry.timestamp,
+        `"${entry.operationName.replace(/"/g, '""')}"`,
+        `"${(entry.targetStatus || "").replace(/"/g, '""')}"`,
+        `"${(entry.addedLabel || "").replace(/"/g, '""')}"`,
+        `"${(entry.removedLabel || "").replace(/"/g, '""')}"`,
+        entry.affectedIssueKeys.length,
+        `"${entry.affectedIssueKeys.join(", ")}"`,
+        entry.success ? "YES" : "NO"
+      ];
+    });
+    
+    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Bulk_Operations_Audit_Log_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addToast?.("Export Successful", "Audit log saved as CSV file.", "success", 2000);
+  };
+
   const toggleMetricFilter = (metricId: string) => {
     setActiveMetricFilter((prev) => (prev === metricId ? null : metricId));
     setCurrentPage(1);
@@ -908,6 +1929,36 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
   // Real-time Trend Calculator
   const getTrendUI = (metricId: string, currentVal: number) => {
+    // Overriding trend calculator when Comparison is active
+    if (report?.comparisonConfig?.enabled && report?.comparisonMetrics) {
+      const compMetrics = report.comparisonMetrics as any;
+      let prevVal = 0;
+      if (metricId === "bugsToStoriesRatio") {
+        prevVal = Number(compMetrics.bugsCount) || 0;
+      } else {
+        prevVal = Number(compMetrics[metricId]) || 0;
+      }
+
+      let curVal = currentVal;
+      if (metricId === "bugsToStoriesRatio") {
+        curVal = report?.issues.filter(i => i.type === "Bug").length || 0;
+      }
+
+      const diff = curVal - prevVal;
+      const pct = prevVal === 0 ? 0 : Math.round((diff / prevVal) * 100);
+      if (diff === 0) return <span className="text-[9px] text-slate-500 font-bold ml-1">Stable (vs Baseline)</span>;
+
+      const isBadMetric = ["overdueIssues", "unassignedIssues"].includes(metricId);
+      const isUp = diff > 0;
+      const isGood = isBadMetric ? !isUp : isUp;
+
+      return (
+        <span className={`text-[9.5px] font-black flex items-center ml-1 shrink-0 ${isGood ? "text-emerald-400" : "text-rose-400"}`} title={`Baseline value was ${prevVal}`}>
+          {isUp ? "▲" : "▼"} {diff > 0 ? "+" : ""}{diff} ({Math.abs(pct)}% vs Comp)
+        </span>
+      );
+    }
+
     if (!metricsHistory || metricsHistory.length < 2) return null;
     const prevEntry = metricsHistory[metricsHistory.length - 2]; // Compare with second-to-last item (most recent previous run)
     if (!prevEntry) return null;
@@ -1250,7 +2301,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         <div>
           <h2 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Active Jira Backlog Report Overview
+            Active OmniSync Backlog Report Overview
           </h2>
           <p className="text-[10px] text-slate-400 font-medium mt-1 font-mono">
             COMPILED AT: {new Date(timestamp).toLocaleString()} • PLATFORM: {isSandbox ? "OFFLINE SANDBOX" : "LIVE ATLASTIAN SERVER"}
@@ -1400,13 +2451,27 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
         {/* Overdue Task Alert Notification Banner */}
         {overdueIssuesList.length > 0 && (
-          <div className="bg-red-500/10 border border-red-500/25 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold">
-            <div className="flex items-center gap-2.5 min-w-0 text-red-200">
-              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 animate-pulse" />
+          <div className={`p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-300 ${
+            overdueIssuesList.length > overdueThreshold 
+              ? "bg-rose-500/15 border border-rose-500/35 text-rose-200" 
+              : "bg-red-500/10 border border-red-500/25 text-red-200"
+          }`}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <AlertCircle className={`w-5 h-5 shrink-0 ${overdueIssuesList.length > overdueThreshold ? "text-rose-500 animate-bounce" : "text-red-400 animate-pulse"}`} />
               <div>
-                <div className="font-bold text-slate-100">Overdue Task Alert Notification</div>
-                <div className="text-[10px] text-red-300/80 font-medium mt-0.5">
-                  You have <span className="font-extrabold text-red-450">{overdueIssuesList.length}</span> overdue items past due dates. Hitting "Snooze" will temporarily hide notifications for 24 hours.
+                <div className="font-bold text-slate-100">
+                  {overdueIssuesList.length > overdueThreshold ? "Overdue Tasks Limit Exceeded" : "Overdue Task Alert Notification"}
+                </div>
+                <div className="text-[10px] text-slate-300 font-medium mt-0.5 leading-relaxed">
+                  {overdueIssuesList.length > overdueThreshold ? (
+                    <>
+                      Currently, <span className="font-extrabold text-rose-400">{overdueIssuesList.length}</span> tickets are past their due dates, which <span className="text-rose-400 font-bold">exceeds</span> your configured threshold alert limit of <span className="font-black text-white">{overdueThreshold}</span>. Immediate attention is required.
+                    </>
+                  ) : (
+                    <>
+                      You have <span className="font-extrabold text-red-400">{overdueIssuesList.length}</span> overdue items past their due dates. Hitting "Snooze" will temporarily hide notifications for 24 hours.
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1420,10 +2485,29 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                   setSnoozedAlerts(newSnoozed);
                   localStorage.setItem("snoozed_overdue_alerts", JSON.stringify(newSnoozed));
                 }} 
-                className="text-[10px] uppercase font-black tracking-wider px-3 py-1.5 bg-red-950 hover:bg-red-900 text-red-300 hover:text-red-100 rounded-lg transition-colors border border-red-500/30 flex items-center gap-1 shadow-sm cursor-pointer"
+                className={`text-[10px] uppercase font-black tracking-wider px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm cursor-pointer ${
+                  overdueIssuesList.length > overdueThreshold
+                    ? "bg-rose-950 hover:bg-rose-900 text-rose-300 hover:text-rose-100 border border-rose-500/30"
+                    : "bg-red-950 hover:bg-red-900 text-red-300 hover:text-red-100 border border-red-500/30"
+                }`}
               >
                 <BellOff className="w-3.5 h-3.5" /> Snooze All (24h)
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Blocked Tickets Alert Notification Banner */}
+        {metrics.blockedCount > blockedThreshold && (
+          <div className="bg-amber-500/10 border border-amber-500/25 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center gap-2.5 min-w-0 text-amber-200">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 animate-bounce" />
+              <div>
+                <div className="font-bold text-slate-100">Blocked Tickets Limit Exceeded</div>
+                <div className="text-[10px] text-amber-300/80 font-medium mt-0.5">
+                  Currently, <span className="font-extrabold text-amber-450">{metrics.blockedCount}</span> tickets are in Blocked status, which exceeds your configured threshold alert limit of <span className="font-black text-white">{blockedThreshold}</span>. Immediate action is recommended.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1555,11 +2639,18 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             className={`p-3.5 rounded-xl border shadow-sm transition-all duration-300 hover:border-red-500/40 cursor-pointer relative group ${
               activeMetricFilter === "overdueIssues" 
                 ? "ring-2 ring-red-500 border-red-500/30 bg-red-500/10" 
-                : metrics.overdueIssues > 0 
-                  ? "border-red-500/20 bg-red-500/5" 
-                  : "bg-[#1E293B] border-slate-800"
+                : metrics.overdueIssues > overdueThreshold 
+                  ? "border-rose-500/50 bg-rose-500/10" 
+                  : metrics.overdueIssues > 0 
+                    ? "border-red-500/20 bg-red-500/5" 
+                    : "bg-[#1E293B] border-slate-800"
             }`}
           >
+            {metrics.overdueIssues > overdueThreshold && (
+              <span className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white border border-rose-400 font-mono text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-bounce shadow-md">
+                Breach ({metrics.overdueIssues}/{overdueThreshold})
+              </span>
+            )}
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between gap-1">
               <span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 text-red-400" /> Overdue Target</span>
               {getTrendUI("overdueIssues", metrics.overdueIssues)}
@@ -1736,7 +2827,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         )}
         </motion.div>
 
-        {/* 2. Gemini AI Executive Smart Summary */}
+        {/* 2. Executive Smart Summary */}
         {aiSummary && (
           <motion.div
             id="jira-report-summary-container"
@@ -1745,14 +2836,14 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             transition={{ duration: 0.45, ease: "easeOut" }}
             className="bg-gradient-to-r from-blue-950/20 to-indigo-950/10 rounded-xl border border-blue-900/30 p-5 shadow-sm relative overflow-hidden"
           >
-            <div className="absolute right-4 top-4 text-blue-950/40 font-bold text-7xl select-none pointer-events-none">AI</div>
+            <div className="absolute right-4 top-4 text-blue-950/40 font-bold text-7xl select-none pointer-events-none">PMO</div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3.5 border-b border-blue-900/20 pb-3">
               <div className="flex items-center gap-2">
                 <div className="bg-blue-600 text-white p-1 rounded">
                   <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-bold text-blue-200 uppercase tracking-wider">Gemini AI Executive Assessment</h3>
+                  <h3 className="text-xs font-bold text-blue-200 uppercase tracking-wider">Executive Smart Assessment</h3>
                   <p className="text-[9px] text-blue-400 mt-0.5 font-mono">Analyzed at {new Date(timestamp).toLocaleTimeString()}</p>
                 </div>
               </div>
@@ -2014,6 +3105,242 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           </div>
         )}
 
+        {/* --- DATE RANGE COMPARISON ASSESSMENT PANEL --- */}
+        {report?.comparisonConfig?.enabled && report?.comparisonMetrics && (
+          <div className="bg-[#1E293B]/40 rounded-xl border border-slate-800/85 p-5 shadow-sm relative overflow-hidden backdrop-blur-md animate-in fade-in slide-in-from-top-3 duration-300">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4 border-b border-slate-800/80 pb-3">
+              <div>
+                <h3 className="text-xs font-black text-white uppercase tracking-widest flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-emerald-400" /> Date Range Comparison Assessment
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Comparing current scope period against the selected baseline period (<span className="text-emerald-400 font-mono font-bold">{report.comparisonConfig.startDate}</span> to <span className="text-emerald-400 font-mono font-bold">{report.comparisonConfig.endDate}</span>)
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 bg-slate-900/60 border border-slate-800/80 px-2.5 py-1 rounded-lg text-[10px] text-slate-400 self-start md:self-auto">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Active Baseline Compare
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[9px] font-bold">
+                    <th className="py-2.5 px-3">Performance Metric</th>
+                    <th className="py-2.5 px-3 text-right">Baseline Period</th>
+                    <th className="py-2.5 px-3 text-right text-blue-300 font-extrabold font-mono">Current Period</th>
+                    <th className="py-2.5 px-3 text-right">Absolute Growth & Rate</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40">
+                  {/* Total Issues Row */}
+                  {(() => {
+                    const prev = report.comparisonMetrics!.totalIssues;
+                    const curr = report.metrics.totalIssues;
+                    const diff = curr - prev;
+                    const pct = prev > 0 ? Math.round((diff / prev) * 100) : 0;
+                    return (
+                      <tr className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-slate-350">Total Tickets in Scope</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-400">{prev}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-white font-semibold">{curr}</td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            diff > 0 
+                              ? "bg-blue-500/10 text-blue-400" 
+                              : diff < 0 
+                                ? "bg-amber-500/10 text-amber-400" 
+                                : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {diff > 0 ? `+${diff}` : diff} ({diff > 0 ? `+${pct}` : pct}%)
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
+
+                  {/* Done Count Row */}
+                  {(() => {
+                    const prev = report.comparisonMetrics!.doneCount;
+                    const curr = report.metrics.doneCount;
+                    const diff = curr - prev;
+                    const pct = prev > 0 ? Math.round((diff / prev) * 100) : 0;
+                    return (
+                      <tr className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-slate-350">Resolved Tickets (Done)</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-400">{prev}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-white font-semibold">{curr}</td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            diff > 0 
+                              ? "bg-emerald-500/10 text-emerald-400" 
+                              : diff < 0 
+                                ? "bg-rose-500/10 text-rose-400" 
+                                : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {diff > 0 ? `+${diff}` : diff} ({diff > 0 ? `+${pct}` : pct}%)
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
+
+                  {/* Completion Rate Row */}
+                  {(() => {
+                    const prev = report.comparisonMetrics!.completionPercentage;
+                    const curr = report.metrics.completionPercentage;
+                    const diff = curr - prev;
+                    return (
+                      <tr className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-slate-350">Resolution Completion Rate</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-400">{prev}%</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-white font-semibold">{curr}%</td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            diff > 0 
+                              ? "bg-emerald-500/10 text-emerald-400" 
+                              : diff < 0 
+                                ? "bg-rose-500/10 text-rose-400" 
+                                : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {diff > 0 ? `+${diff}` : diff} pp
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
+
+                  {/* Blocked Count Row */}
+                  {(() => {
+                    const prev = report.comparisonMetrics!.blockedCount;
+                    const curr = report.metrics.blockedCount;
+                    const diff = curr - prev;
+                    const pct = prev > 0 ? Math.round((diff / prev) * 100) : 0;
+                    return (
+                      <tr className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-slate-350">Blocked Tickets</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-400">{prev}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-white font-semibold">{curr}</td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            diff < 0 
+                              ? "bg-emerald-500/10 text-emerald-400" 
+                              : diff > 0 
+                                ? "bg-rose-500/10 text-rose-400" 
+                                : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {diff > 0 ? `+${diff}` : diff} ({diff > 0 ? `+${pct}` : pct}%)
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
+
+                  {/* Overdue Count Row */}
+                  {(() => {
+                    const prev = report.comparisonMetrics!.overdueIssues;
+                    const curr = report.metrics.overdueIssues;
+                    const diff = curr - prev;
+                    const pct = prev > 0 ? Math.round((diff / prev) * 100) : 0;
+                    return (
+                      <tr className="hover:bg-slate-800/20 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-slate-350">Overdue Task Items</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-400">{prev}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-white font-semibold">{curr}</td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            diff < 0 
+                              ? "bg-emerald-500/10 text-emerald-400" 
+                              : diff > 0 
+                                ? "bg-rose-500/10 text-rose-400" 
+                                : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {diff > 0 ? `+${diff}` : diff} ({diff > 0 ? `+${pct}` : pct}%)
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Sprint Burndown & Flagged Items Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Sprint Burndown Widget */}
+          <SprintBurndownWidget 
+            issues={report?.issues ?? []} 
+            selectedSprint={report?.config?.selectedSprint || ""} 
+          />
+
+          {/* Flagged Items Summary Panel */}
+          <div className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm flex flex-col justify-between">
+            <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+              <div>
+                <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Flag className="w-4 h-4 text-rose-500" fill="currentColor" />
+                  Flagged Items for Follow-up
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Critical items marked for priority review and action
+                </p>
+              </div>
+              <span className="bg-rose-950/45 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-full font-mono text-[9px] font-bold">
+                {flaggedIssues.length} items
+              </span>
+            </div>
+
+            <div className="flex-1 my-3 overflow-y-auto max-h-[190px] pr-1 space-y-2">
+              {flaggedIssues.length === 0 ? (
+                <div className="h-full flex flex-col justify-center items-center text-center py-8">
+                  <Flag className="w-8 h-8 text-slate-600 mb-2" />
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">No Flagged Items</span>
+                  <p className="text-[10px] text-slate-500 mt-1 max-w-xs leading-relaxed">
+                    Click the flag icon next to any ticket in the issue list below to mark it for follow-up review.
+                  </p>
+                </div>
+              ) : (
+                flaggedIssues.map((issue) => {
+                  const customColor = categoryColors[issue.mappedStatus] || "#64748b";
+                  return (
+                    <div 
+                      key={issue.key}
+                      className="p-3 bg-slate-950/45 border border-slate-800/80 rounded-xl flex items-center justify-between gap-3 hover:border-rose-500/20 transition-all"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono font-black text-blue-400 hover:underline cursor-pointer" onClick={() => setSelectedIssueForModal(issue)}>
+                            {issue.key}
+                          </span>
+                          <span 
+                            style={{ color: customColor, backgroundColor: `${customColor}15`, borderColor: `${customColor}25` }}
+                            className="px-1.5 py-0.2 rounded border font-bold uppercase text-[8px] tracking-wider"
+                          >
+                            {issue.status}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-300 font-bold mt-1 truncate max-w-[280px]" title={issue.summary}>
+                          {issue.summary}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => onToggleFlag?.(issue.key)}
+                        className="p-1 hover:bg-slate-850 rounded transition-colors text-rose-500 hover:text-slate-400 cursor-pointer"
+                        title="Remove flag"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* 3. Visualizations Row (Pie, Bar, Line) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {/* Donut Pie Chart (Status Distribution) */}
@@ -2183,6 +3510,398 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
             </div>
           )}
+        </div>
+ 
+        {/* 4. Issue Timeline Progress Tracker Widget */}
+        <div id="issue-timeline-tracker-section" className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/5 pb-3">
+            <div>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-sky-400" />
+                Issue Timeline Progress Tracker
+              </h3>
+              <p className="text-[10px] text-slate-500 font-semibold">
+                Horizontal progression axis tracking status transitions, comments, and milestones
+              </p>
+            </div>
+
+            {(() => {
+              const issues = report?.issues || [];
+              const currentIssue = issues.find((i) => i.key === (selectedTimelineKey || (issues[0]?.key || "")));
+              
+              if (issues.length === 0) return null;
+              
+              let rawEvents = [];
+              if (showFullHistory) {
+                issues.forEach((issue) => {
+                  const issueEvents = compileTimelineEvents(issue);
+                  issueEvents.forEach((evt) => {
+                    rawEvents.push({
+                      ...evt,
+                      label: `${issue.key}: ${evt.label}`,
+                      desc: `[${issue.key} - ${issue.summary}] ${evt.desc}`,
+                    });
+                  });
+                });
+              } else if (currentIssue) {
+                rawEvents = compileTimelineEvents(currentIssue);
+              }
+              const events = getGroupedTimelineEvents(rawEvents, timelineZoom);
+              
+              return (
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Resolution Zoom Level Selector */}
+                  <div className="flex items-center gap-1 bg-slate-950 border border-white/5 p-1 rounded-lg">
+                    {(["Daily", "Weekly", "Monthly"] as const).map((z) => {
+                      const isSelected = timelineZoom === z;
+                      return (
+                        <button
+                          key={z}
+                          onClick={() => {
+                            setTimelineZoom(z);
+                            setSelectedTimelineEventIdx(0);
+                          }}
+                          className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-md transition-all cursor-pointer ${
+                            isSelected 
+                              ? "bg-sky-500 text-slate-950 shadow-sm font-extrabold" 
+                              : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                          }`}
+                        >
+                          {z}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Show Full History Toggle */}
+                  <button
+                    onClick={() => {
+                      setShowFullHistory(!showFullHistory);
+                      setSelectedTimelineEventIdx(0);
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer ${
+                      showFullHistory
+                        ? "bg-indigo-500/25 text-indigo-350 border-indigo-500/40 shadow-sm ring-1 ring-indigo-500/30"
+                        : "bg-slate-900 border-white/10 text-slate-400 hover:text-white"
+                    }`}
+                    title="Toggle display of all issues' status transitions vs active ticket"
+                  >
+                    <Users className="w-3.5 h-3.5 text-indigo-400" />
+                    Full History: {showFullHistory ? "ON" : "OFF"}
+                  </button>
+
+                  {/* Auto-scroll to Latest Event */}
+                  <button
+                    onClick={() => {
+                      if (timelineViewportRef.current) {
+                        const el = timelineViewportRef.current;
+                        el.scrollTo({
+                          left: el.scrollWidth - el.clientWidth,
+                          behavior: "smooth",
+                        });
+                      }
+                      setSelectedTimelineEventIdx(events.length - 1);
+                      addToast?.("Centered Timeline", "Scrolled to the most recent chronological event.", "info", 2000);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 text-[10px] font-black uppercase tracking-wider text-slate-350 hover:text-white rounded-lg border border-white/10 transition-colors shadow-sm cursor-pointer"
+                    title="Auto-scroll viewport to the latest event node"
+                  >
+                    <ArrowUpDown className="w-3.5 h-3.5 rotate-90 text-sky-400" />
+                    Latest Event
+                  </button>
+
+                  {/* Dedicated Export Button Dropdown */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsTimelineExportOpen(!isTimelineExportOpen)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 text-[10px] font-black uppercase tracking-wider text-slate-350 hover:text-white rounded-lg border border-white/10 transition-colors shadow-sm cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-sky-400" /> Export <ChevronDown className="w-3 h-3 text-slate-500" />
+                    </button>
+                    
+                    {isTimelineExportOpen && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-40" 
+                          onClick={() => setIsTimelineExportOpen(false)}
+                        />
+                        <div className="absolute right-0 mt-1.5 w-40 bg-slate-950 border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-150 text-left">
+                          <button
+                            onClick={() => {
+                              downloadTimelineCSV(currentIssue?.key || "");
+                              setIsTimelineExportOpen(false);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 text-[10px] font-black uppercase tracking-wider text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg transition-colors cursor-pointer text-left"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 font-bold" /> Save as CSV
+                          </button>
+                          <button
+                            onClick={() => {
+                              downloadTimelinePDF(currentIssue?.key || "");
+                              setIsTimelineExportOpen(false);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 text-[10px] font-black uppercase tracking-wider text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg transition-colors cursor-pointer text-left"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-rose-400 font-bold" /> Print / Save PDF
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Issue Selector Dropdown */}
+                  <div className={`flex items-center gap-2 bg-slate-950 border border-white/5 p-1 rounded-lg transition-all ${showFullHistory ? "opacity-40 cursor-not-allowed pointer-events-none" : ""}`}>
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider pl-1.5">Ticket:</span>
+                    <select
+                      value={selectedTimelineKey || (issues[0]?.key || "")}
+                      onChange={(e) => {
+                        setSelectedTimelineKey(e.target.value);
+                        setSelectedTimelineEventIdx(0);
+                      }}
+                      disabled={showFullHistory}
+                      className="bg-transparent text-xs font-mono font-bold text-slate-200 px-2.5 py-1 focus:outline-none transition-all cursor-pointer max-w-[150px] sm:max-w-[250px]"
+                    >
+                      {issues.map((issue) => (
+                        <option key={issue.key} value={issue.key} className="bg-slate-950">
+                          {issue.key} - {issue.summary.slice(0, 25)}...
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {(() => {
+            const issues = report?.issues || [];
+            const currentIssue = issues.find((i) => i.key === (selectedTimelineKey || (issues[0]?.key || "")));
+            
+            if (issues.length === 0) {
+              return <p className="text-xs text-slate-500 py-6 text-center font-bold">No issues in the current report to plot.</p>;
+            }
+            if (!currentIssue && !showFullHistory) {
+              return <p className="text-xs text-slate-500 py-6 text-center font-bold">Select a ticket or toggle 'Full History' to plot.</p>;
+            }
+
+            let rawEvents = [];
+            if (showFullHistory) {
+              issues.forEach((issue) => {
+                const issueEvents = compileTimelineEvents(issue);
+                issueEvents.forEach((evt) => {
+                  rawEvents.push({
+                    ...evt,
+                    label: `${issue.key}: ${evt.label}`,
+                    desc: `[${issue.key} - ${issue.summary}] ${evt.desc}`,
+                  });
+                });
+              });
+            } else if (currentIssue) {
+              rawEvents = compileTimelineEvents(currentIssue);
+            }
+
+            const events = getGroupedTimelineEvents(rawEvents, timelineZoom);
+            const activeEventIdx = Math.min(selectedTimelineEventIdx, Math.max(0, events.length - 1));
+
+            if (events.length === 0) {
+              return <p className="text-xs text-slate-500 py-10 text-center font-bold">No timeline logs recorded for this zoom level.</p>;
+            }
+
+            return (
+              <div className="space-y-6 pt-2">
+                {/* Visual Horizontal Timeline Axis */}
+                <div 
+                  ref={timelineViewportRef} 
+                  className="relative pt-8 pb-4 px-4 overflow-x-auto scrollbar-thin scroll-smooth"
+                >
+                  {/* Progress Line */}
+                  <div className="absolute top-[52px] left-8 right-8 h-1.5 bg-slate-950 rounded-full">
+                    <div 
+                      className="bg-gradient-to-r from-sky-500 to-indigo-500 h-full rounded-full transition-all duration-500" 
+                      style={{ width: `${events.length > 1 ? 100 : 0}%` }}
+                    />
+                  </div>
+
+                  {/* Axis Nodes */}
+                  <div className="relative flex justify-between min-w-[600px] gap-8">
+                    {events.map((evt, idx) => {
+                      const isCreated = evt.type === "created";
+                      const isStatus = evt.type === "status";
+                      const isComment = evt.type === "comment";
+                      const isMixed = evt.type === "mixed";
+                      const isSelectedNode = activeEventIdx === idx;
+
+                      // COLOR CODING BASED ON STATUS CATEGORY (Done: green, In Progress: blue, Blocked: red, To Do: Slate)
+                      let nodeColorClass = "bg-slate-500/10 border-slate-400 text-slate-350 hover:border-slate-300";
+                      if (evt.statusCategory === "Done") {
+                        nodeColorClass = "bg-emerald-500/10 border-emerald-400 text-emerald-400 hover:border-emerald-300";
+                      } else if (evt.statusCategory === "In Progress") {
+                        nodeColorClass = "bg-sky-500/10 border-sky-400 text-sky-400 hover:border-sky-300";
+                      } else if (evt.statusCategory === "Blocked") {
+                        nodeColorClass = "bg-rose-500/10 border-rose-400 text-rose-400 hover:border-rose-300";
+                      }
+
+                      return (
+                        <motion.div 
+                          key={`${selectedTimelineKey}-${timelineZoom}-${showFullHistory}-${idx}`} 
+                          initial={{ opacity: 0, y: 12, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={{ duration: 0.25, delay: Math.min(idx * 0.03, 0.4) }}
+                          className="flex flex-col items-center flex-1 cursor-pointer group relative"
+                          onClick={() => setSelectedTimelineEventIdx(idx)}
+                          onMouseEnter={() => setHoveredTimelineNodeIdx(idx)}
+                          onMouseLeave={() => setHoveredTimelineNodeIdx(null)}
+                        >
+                          {/* Hover Tooltip for Event Node */}
+                          <AnimatePresence>
+                            {hoveredTimelineNodeIdx === idx && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                transition={{ duration: 0.15 }}
+                                className="absolute bottom-[105%] left-1/2 -translate-x-1/2 mb-2 bg-slate-950 border border-sky-500/30 rounded-xl p-3 shadow-2xl z-50 text-left min-w-[220px] max-w-[280px] pointer-events-none backdrop-blur-md"
+                              >
+                                <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-1.5 mb-1.5">
+                                  <span className="text-[10px] font-black text-white uppercase tracking-wider truncate">
+                                    {evt.label}
+                                  </span>
+                                  <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded font-mono ${
+                                    evt.statusCategory === "Done" 
+                                      ? "bg-emerald-500/20 text-emerald-400" 
+                                      : evt.statusCategory === "Blocked"
+                                        ? "bg-rose-500/20 text-rose-400"
+                                        : evt.statusCategory === "In Progress"
+                                          ? "bg-sky-500/20 text-sky-400"
+                                          : "bg-slate-500/20 text-slate-350"
+                                  }`}>
+                                    {evt.statusCategory}
+                                  </span>
+                                </div>
+                                <div className="text-[9px] text-slate-400 font-bold font-mono flex items-center gap-1 mb-1">
+                                  <Clock className="w-3 h-3 text-sky-400" />
+                                  {evt.date}
+                                </div>
+                                <p className="text-[9.5px] text-slate-300 font-medium leading-relaxed whitespace-pre-line line-clamp-4">
+                                  {evt.desc}
+                                </p>
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 rotate-45 bg-slate-950 border-r border-b border-sky-500/30"></div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+
+                          {/* Event Date above */}
+                          <span className="text-[8.5px] font-mono font-bold text-slate-500 mb-2 group-hover:text-slate-300 transition-colors">
+                            {evt.date}
+                          </span>
+
+                          {/* Node bubble */}
+                          <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-350 z-10 ${nodeColorClass} ${
+                            isSelectedNode 
+                              ? "ring-4 ring-sky-500/30 scale-110 shadow-lg shadow-sky-500/20" 
+                              : "group-hover:scale-105"
+                          }`}>
+                            {isCreated && <CheckSquare className="w-4 h-4 animate-in zoom-in-50" />}
+                            {isStatus && <ArrowRight className="w-4 h-4 animate-in zoom-in-50" />}
+                            {isComment && <MessageSquare className="w-4 h-4 animate-in zoom-in-50" />}
+                            {isMixed && <Sparkles className="w-4 h-4 text-amber-400 animate-in zoom-in-50" />}
+                          </div>
+
+                          {/* Event Short Label below */}
+                          <span className={`text-[9.5px] font-black uppercase tracking-wider text-center mt-3 truncate max-w-[120px] ${
+                            isSelectedNode ? "text-sky-400 font-extrabold" : "text-slate-400 group-hover:text-slate-300"
+                          }`}>
+                            {evt.label}
+                          </span>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Event Detail Card */}
+                {events[activeEventIdx] && (
+                  <div className="bg-slate-950/60 border border-white/5 rounded-xl p-4 flex gap-4 items-start animate-in fade-in slide-in-from-bottom-2 duration-300 text-left">
+                    <div className="p-3 rounded-xl bg-[#1E293B] border border-white/5 shrink-0">
+                      {events[activeEventIdx].type === "created" && <CheckSquare className="w-5 h-5 text-blue-400" />}
+                      {events[activeEventIdx].type === "status" && <ArrowRight className="w-5 h-5 text-emerald-400" />}
+                      {events[activeEventIdx].type === "comment" && <MessageSquare className="w-5 h-5 text-amber-400" />}
+                      {events[activeEventIdx].type === "mixed" && <Sparkles className="w-5 h-5 text-indigo-400" />}
+                    </div>
+                    <div className="space-y-1 text-left min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-100 uppercase tracking-wide">
+                            {events[activeEventIdx].label}
+                          </span>
+                          <span className="font-mono text-[9px] font-bold text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">
+                            {events[activeEventIdx].date}
+                          </span>
+                        </div>
+                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                          events[activeEventIdx].statusCategory === "Done" 
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                            : events[activeEventIdx].statusCategory === "Blocked"
+                              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                              : events[activeEventIdx].statusCategory === "In Progress"
+                                ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                                : "bg-slate-500/10 text-slate-350 border border-slate-500/20"
+                        }`}>
+                          {events[activeEventIdx].statusCategory}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 leading-relaxed font-medium whitespace-pre-line mt-1 font-sans">
+                        {events[activeEventIdx].desc}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Visual Legend of Color Coding & Icons */}
+                <div className="border-t border-white/5 pt-4 mt-2 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-[10px] font-semibold text-slate-400">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Status Colors:</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-500/20 border border-slate-400" />
+                      <span>To Do</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500/20 border border-sky-400" />
+                      <span>In Progress</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500/20 border border-rose-400" />
+                      <span>Blocked</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/20 border border-emerald-400" />
+                      <span>Done / Resolved</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Event Types:</span>
+                    <div className="flex items-center gap-1">
+                      <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Created</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Transition</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Comment</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Mixed</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Historical Metrics Performance Trends Section */}
@@ -2437,6 +4156,100 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
             </div>
           </div>
+
+          {/* Recharts Sprint Velocity & Performance Trend */}
+          <div className="bg-slate-950/45 border border-white/5 rounded-xl p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-3">
+              <div>
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-indigo-400" />
+                  Velocity & Completion Trend (Last 5 Sprints)
+                </h4>
+                <p className="text-[10px] text-slate-500">
+                  Sprint velocity and completion rate progress comparison over the last 5 active iterations
+                </p>
+              </div>
+              <div className="flex items-center gap-4 text-[10px] font-mono">
+                <span className="flex items-center gap-1.5 text-blue-400">
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span> Velocity (SP)
+                </span>
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Completion Rate (%)
+                </span>
+              </div>
+            </div>
+
+            <div className="h-56 w-full text-xs">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={(() => {
+                    const currentSprintName = sprintComparison?.currentSprintName || "Sprint 5";
+                    const currentVelocity = sprintComparison?.currentMetrics?.sprintVelocity || 48;
+                    const previousSprintName = sprintComparison?.previousSprintName || "Sprint 4";
+                    const previousVelocity = sprintComparison?.previousMetrics?.sprintVelocity || 42;
+                    const prevBugs = sprintComparison?.previousMetrics?.bugsCount || 4;
+                    const currBugs = sprintComparison?.currentMetrics?.bugsCount || 2;
+                    
+                    return [
+                      { sprint: "Sprint 1", velocity: 28, completionRate: 60, bugs: 7 },
+                      { sprint: "Sprint 2", velocity: 35, completionRate: 72, bugs: 5 },
+                      { sprint: "Sprint 3", velocity: 38, completionRate: 75, bugs: 4 },
+                      { sprint: previousSprintName, velocity: previousVelocity, completionRate: 82, bugs: prevBugs },
+                      { sprint: currentSprintName, velocity: currentVelocity, completionRate: 90, bugs: currBugs }
+                    ];
+                  })()}
+                  margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis 
+                    dataKey="sprint" 
+                    stroke="#64748b" 
+                    fontSize={9}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis 
+                    stroke="#64748b" 
+                    fontSize={9}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <RechartsTooltip
+                    contentStyle={{
+                      backgroundColor: "rgba(15, 23, 42, 0.95)",
+                      borderColor: "rgba(255, 255, 255, 0.1)",
+                      borderRadius: "8px",
+                      fontSize: "10px",
+                      color: "#fff"
+                    }}
+                  />
+                  <Legend 
+                    verticalAlign="top" 
+                    height={36} 
+                    content={() => null}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="velocity" 
+                    name="Velocity (SP)"
+                    stroke="#3b82f6" 
+                    strokeWidth={2.5}
+                    activeDot={{ r: 6 }} 
+                    dot={{ r: 4 }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="completionRate" 
+                    name="Completion Rate (%)"
+                    stroke="#10b981" 
+                    strokeWidth={2.5}
+                    activeDot={{ r: 6 }}
+                    dot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2543,14 +4356,142 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
       {/* 4. Filterable Interactive Table Section */}
       {safeConfig.visualizations.table && (
         <div className="bg-[#1E293B] rounded-xl border border-slate-800 shadow-sm overflow-hidden">
+          {/* Dynamic Drag and Drop Targets Panel (Visible only when an issue row is actively dragged) */}
+          <AnimatePresence>
+            {draggedIssueKey && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-slate-950 border-b border-blue-500/20 px-5 py-4 overflow-hidden"
+              >
+                <div className="flex flex-col md:flex-row gap-5 items-stretch">
+                  {/* Status Dropspots */}
+                  <div className="flex-1 space-y-2">
+                    <h4 className="text-[10px] font-black uppercase text-blue-400 tracking-wider flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5" /> Drop to Reassign Status
+                    </h4>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(["To Do", "In Progress", "Done", "Blocked"] as const).map((status) => {
+                        const isOver = isDraggingOverTarget === `status-${status}`;
+                        return (
+                          <div
+                            key={status}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setIsDraggingOverTarget(`status-${status}`);
+                            }}
+                            onDragLeave={() => setIsDraggingOverTarget(null)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDraggingOverTarget(null);
+                              if (draggedIssueKey) {
+                                onUpdateIssueStatusOrSprint?.(draggedIssueKey, status, undefined);
+                              }
+                            }}
+                            className={`py-3 px-2 rounded-xl border text-center transition-all duration-200 flex flex-col items-center justify-center cursor-pointer ${
+                              isOver
+                                ? "bg-blue-600/25 border-blue-400 text-blue-300 scale-[1.03] shadow-[0_0_15px_rgba(59,130,246,0.2)]"
+                                : "bg-slate-900 border-white/5 hover:border-white/10 text-slate-400"
+                            }`}
+                          >
+                            <span className="text-[10.5px] font-extrabold uppercase tracking-wide">{status}</span>
+                            <span className="text-[8px] font-mono opacity-50 mt-1">Drop Zone</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sprint Dropspots */}
+                  <div className="flex-1 space-y-2">
+                    <h4 className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5" /> Drop to Reassign Sprint
+                    </h4>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(["Sprint 1", "Sprint 2", "Sprint 3", "Backlog"] as const).map((sprintName) => {
+                        const isOver = isDraggingOverTarget === `sprint-${sprintName}`;
+                        const sprintVal = sprintName === "Backlog" ? "" : sprintName;
+                        return (
+                          <div
+                            key={sprintName}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setIsDraggingOverTarget(`sprint-${sprintName}`);
+                            }}
+                            onDragLeave={() => setIsDraggingOverTarget(null)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDraggingOverTarget(null);
+                              if (draggedIssueKey) {
+                                onUpdateIssueStatusOrSprint?.(draggedIssueKey, undefined, sprintVal);
+                              }
+                            }}
+                            className={`py-3 px-2 rounded-xl border text-center transition-all duration-200 flex flex-col items-center justify-center cursor-pointer ${
+                              isOver
+                                ? "bg-indigo-600/25 border-indigo-400 text-indigo-300 scale-[1.03] shadow-[0_0_15px_rgba(99,102,241,0.2)]"
+                                : "bg-slate-900 border-white/5 hover:border-white/10 text-slate-400"
+                            }`}
+                          >
+                            <span className="text-[10.5px] font-extrabold uppercase tracking-wide">{sprintName}</span>
+                            <span className="text-[8px] font-mono opacity-50 mt-1">Drop Zone</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Table Header Controls */}
           <div className="p-4 bg-slate-900/30 border-b border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             {selectedIssueKeys.length > 0 ? (
-              <div className="bg-blue-950/45 border border-blue-500/25 px-3 py-1 rounded-xl flex flex-wrap items-center gap-2.5 shrink-0 animate-in fade-in slide-in-from-top-1 duration-200">
-                <span className="text-[10px] font-black text-blue-300 flex items-center gap-1 uppercase tracking-wider">
-                  ⚡ {selectedIssueKeys.length} items selected:
-                </span>
-                <div className="flex items-center gap-1.5">
+              <div className="bg-blue-950/45 border border-blue-500/25 px-3 py-1.5 rounded-xl flex flex-col md:flex-row md:items-center gap-2.5 shrink-0 animate-in fade-in slide-in-from-top-1 duration-200 w-full md:w-auto">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black text-blue-300 flex items-center gap-1 uppercase tracking-wider whitespace-nowrap">
+                    ⚡ {selectedIssueKeys.length} selected ({filteredSelectedIssueKeys.length} filtered):
+                  </span>
+                  
+                  {/* Select All Visible checkbox */}
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300 hover:text-white cursor-pointer select-none border-l border-slate-700 pl-2 shrink-0">
+                    <input
+                      type="checkbox"
+                      id="bulk-select-all-visible-checkbox"
+                      checked={filteredIssues.length > 0 && filteredIssues.every(i => selectedIssueKeys.includes(i.key))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const keysToSelect = filteredIssues.map(i => i.key);
+                          setSelectedIssueKeys(Array.from(new Set([...selectedIssueKeys, ...keysToSelect])));
+                        } else {
+                          const keysToRemove = filteredIssues.map(i => i.key);
+                          setSelectedIssueKeys(prev => prev.filter(k => !keysToRemove.includes(k)));
+                        }
+                      }}
+                      className="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                    />
+                    <span>Select All Visible</span>
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-slate-800 font-black hidden md:inline">|</span>
+                  
+                  {/* Substring Search Input */}
+                  <div className="relative shrink-0">
+                    <Search className="w-3 h-3 text-slate-500 absolute left-2 top-2" />
+                    <input
+                      type="text"
+                      placeholder="Filter selected..."
+                      value={bulkSearchQuery}
+                      onChange={(e) => setBulkSearchQuery(e.target.value)}
+                      className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-[10px] rounded pl-6 pr-2 py-1 w-32 focus:outline-none focus:border-blue-500 placeholder-slate-650 font-medium"
+                    />
+                  </div>
+
+                  <span className="text-slate-800 font-black">|</span>
+
                   <select
                     id="bulk-update-status-select"
                     className="bg-slate-950 border border-slate-700 text-slate-200 text-[10px] rounded px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 font-extrabold cursor-pointer"
@@ -2567,15 +4508,40 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                       const sel = document.getElementById("bulk-update-status-select") as HTMLSelectElement;
                       if (sel) handleBulkUpdate(sel.value);
                     }}
-                    disabled={isBulkUpdating}
+                    disabled={isBulkUpdating || filteredSelectedIssueKeys.length === 0}
                     className="bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-[9.5px] px-3 py-1 rounded transition-all disabled:opacity-45 cursor-pointer flex items-center gap-1 uppercase tracking-wider"
                   >
                     {isBulkUpdating ? "Updating..." : "Transition Status"}
                   </button>
+                  <span className="text-slate-800 font-black">|</span>
                   <button
                     type="button"
-                    onClick={() => setSelectedIssueKeys([])}
-                    className="text-slate-400 hover:text-slate-200 text-[9.5px] uppercase font-bold px-1.5 py-1 hover:bg-white/5 rounded transition-all"
+                    onClick={downloadSelectedCSV}
+                    disabled={filteredSelectedIssueKeys.length === 0}
+                    className="bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 px-2.5 py-1 rounded text-[9.5px] font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-40"
+                    title="Export filtered selected items to CSV spreadsheet"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Export CSV</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadSelectedPDF}
+                    disabled={filteredSelectedIssueKeys.length === 0}
+                    className="bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 px-2.5 py-1 rounded text-[9.5px] font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-40"
+                    title="Export filtered selected items to PDF report"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Export PDF</span>
+                  </button>
+                  <span className="text-slate-800 font-black">|</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedIssueKeys([]);
+                      setBulkSearchQuery("");
+                    }}
+                    className="text-slate-400 hover:text-slate-200 text-[9.5px] uppercase font-bold px-1.5 py-1 hover:bg-white/5 rounded transition-all cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -2651,26 +4617,34 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               {/* Quick-filter Pills */}
               <div className="flex items-center gap-1.5 bg-slate-950/40 p-1 rounded border border-slate-800">
                 <span className="text-[9px] uppercase font-black text-slate-500 tracking-wider px-1.5">Filter:</span>
-                {(["All", "Overdue", "Unassigned", "Blocked"] as const).map((filter) => {
-                  const isActive = tableQuickFilter === filter;
-                  return (
-                    <button
-                      key={filter}
-                      type="button"
-                      onClick={() => {
-                        setTableQuickFilter(filter);
-                        setCurrentPage(1);
-                      }}
-                      className={`text-[9.5px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer uppercase tracking-wider ${
-                        isActive
-                          ? "bg-blue-600 text-white shadow-md font-extrabold"
-                          : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
-                      }`}
-                    >
-                      {filter}
-                    </button>
-                  );
-                })}
+                {(() => {
+                  const blockedIssuesCount = (report?.issues || []).filter(i => i.mappedStatus === "Blocked").length;
+                  return (["All", "Overdue", "Unassigned", "Blocked"] as const).map((filter) => {
+                    const isActive = tableQuickFilter === filter;
+                    return (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => {
+                          setTableQuickFilter(filter);
+                          setCurrentPage(1);
+                        }}
+                        className={`text-[9.5px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer uppercase tracking-wider flex items-center ${
+                          isActive
+                            ? "bg-blue-600 text-white shadow-md font-extrabold"
+                            : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                        }`}
+                      >
+                        <span>{filter}</span>
+                        {filter === "Blocked" && blockedIssuesCount > blockedThreshold && (
+                          <span className="ml-1.5 bg-rose-600 border border-rose-400 text-white text-[7.5px] font-extrabold px-1 rounded-full animate-bounce shadow-md" title={`Blocked tickets exceed safety limit of ${blockedThreshold}!`}>
+                            {blockedIssuesCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  });
+                })()}
               </div>
 
               {/* Rows Per Page */}
@@ -2798,11 +4772,23 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                 ) : (
                   paginatedIssues.map((issue) => {
                     const isExpanded = !!expandedRows[issue.key];
+                    const isBeingDragged = draggedIssueKey === issue.key;
                     return (
                       <React.Fragment key={issue.id}>
                         <tr 
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedIssueKey(issue.key);
+                            e.dataTransfer.setData("text/plain", issue.key);
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragEnd={() => {
+                            setDraggedIssueKey(null);
+                          }}
                           onClick={() => handleRowClick(issue)}
-                          className={`cursor-pointer select-none border-b border-slate-800/50 transition-all duration-350 origin-center transform-gpu ${
+                          className={`cursor-grab active:cursor-grabbing select-none border-b border-slate-800/50 transition-all duration-350 origin-center transform-gpu ${
+                            isBeingDragged ? "opacity-35 bg-slate-900 border-2 border-dashed border-blue-500/40" : ""
+                          } ${
                             isExpanded ? "bg-slate-900/40 border-l-2 border-l-blue-500" : ""
                           } ${
                             justClickedRowKey === issue.key
@@ -2847,6 +4833,22 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                       >
                                         <ChevronRight className={`w-3.5 h-3.5 transform transition-transform duration-200 ${isExpanded ? "rotate-90 text-blue-400" : "text-slate-500"}`} />
                                       </button>
+
+                                      {/* Flag toggle button */}
+                                      <button
+                                        onClick={(btnEvt) => {
+                                          btnEvt.stopPropagation();
+                                          onToggleFlag?.(issue.key);
+                                        }}
+                                        className={`p-1 rounded transition-colors shrink-0 cursor-pointer ${
+                                          flaggedIssueKeys.includes(issue.key)
+                                            ? "text-rose-500 hover:text-rose-400"
+                                            : "text-slate-600 hover:text-slate-400"
+                                        }`}
+                                        title={flaggedIssueKeys.includes(issue.key) ? "Unflag Issue for follow-up" : "Flag Issue for follow-up"}
+                                      >
+                                        <Flag className="w-3.5 h-3.5" fill={flaggedIssueKeys.includes(issue.key) ? "currentColor" : "none"} />
+                                      </button>
                                       <a 
                                         href={ticketUrl} 
                                         target="_blank" 
@@ -2864,10 +4866,48 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                               );
                             }
                             if (col.id === "summary") {
+                              const ts = issue.timeSpent || 0;
+                              const oe = issue.originalEstimate || 0;
+                              const hasOverrun = ts > oe && oe > 0;
+                              const overrunAmount = ts - oe;
+                              const overrunPercent = oe > 0 ? Math.round((overrunAmount / oe) * 100) : 0;
+                              
+                              let riskBadge = null;
+                              if (hasOverrun) {
+                                if (overrunPercent >= 50) {
+                                  riskBadge = (
+                                    <span className="shrink-0 bg-rose-500/15 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded font-black text-[8.5px] uppercase tracking-wider animate-pulse" title={`Critical Estimation Overrun: Spent ${ts}h / Est ${oe}h (+${overrunPercent}%)`}>
+                                      ⚠️ Crit Risk (+{overrunAmount}h)
+                                    </span>
+                                  );
+                                } else {
+                                  riskBadge = (
+                                    <span className="shrink-0 bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-black text-[8.5px] uppercase tracking-wider" title={`Estimation Overrun: Spent ${ts}h / Est ${oe}h (+${overrunPercent}%)`}>
+                                      ⚡ Warning (+{overrunAmount}h)
+                                    </span>
+                                  );
+                                }
+                              }
+
+                              const isBulkMatch = selectedIssueKeys.includes(issue.key) && 
+                                                 bulkSearchQuery.trim() !== "" && 
+                                                 filteredSelectedIssueKeys.includes(issue.key);
+
                               return (
                                 <td key={col.id} className="p-3 font-bold text-slate-200 max-w-sm leading-normal">
                                   <div className="flex items-center justify-between gap-2 group/cell">
-                                    <span className="truncate">{highlightText(val, searchQuery)}</span>
+                                    <div className="flex items-center gap-2 truncate min-w-0">
+                                      <span className="truncate">
+                                        {isBulkMatch ? (
+                                          <span className="bg-emerald-500/20 border border-emerald-500/35 px-1 py-0.5 rounded text-emerald-200" title="Matches Bulk Edit filter criteria">
+                                            {highlightText(val, bulkSearchQuery)}
+                                          </span>
+                                        ) : (
+                                          highlightText(val, searchQuery)
+                                        )}
+                                      </span>
+                                      {riskBadge}
+                                    </div>
                                     <CellCopyButton text={String(val)} cellId={`${issue.key}-summary`} />
                                   </div>
                                 </td>
@@ -3021,6 +5061,31 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                       )}
                                     </div>
                                     <CellCopyButton text={val ? String(val) : ""} cellId={`${issue.key}-dueDate`} />
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (col.id === "originalEstimate") {
+                              return (
+                                <td key={col.id} className="p-3 font-mono text-xs font-semibold text-slate-350">
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <span>{val !== null && val !== undefined ? `${val}h` : <span className="text-slate-600">-</span>}</span>
+                                    <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (col.id === "timeSpent") {
+                              const oe = issue.originalEstimate || 0;
+                              const ts = val || 0;
+                              const isOver = ts > oe && oe > 0;
+                              return (
+                                <td key={col.id} className={`p-3 font-mono text-xs font-bold ${isOver ? "text-rose-400" : "text-slate-300"}`}>
+                                  <div className="flex items-center justify-between gap-2 group/cell">
+                                    <span>{val !== null && val !== undefined ? `${val}h` : <span className="text-slate-600">-</span>}</span>
+                                    <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
                                   </div>
                                 </td>
                               );
@@ -3202,7 +5267,24 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             </div>
             <div>
               <div className="text-white font-extrabold uppercase tracking-wider text-[10px]">Batch Processing Active</div>
-              <p className="text-[9px] text-blue-400 font-bold">{selectedIssueKeys.length} issues selected</p>
+              <p className="text-[9px] text-blue-400 font-bold">{selectedIssueKeys.length} selected ({filteredSelectedIssueKeys.length} filtered)</p>
+            </div>
+          </div>
+
+          <div className="h-8 w-[1px] bg-white/10 hidden lg:block" />
+
+          {/* Substring Search Input inside Floating Toolbar */}
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-extrabold uppercase text-slate-400 tracking-wider">Search Selected:</span>
+            <div className="relative">
+              <Search className="w-3 h-3 text-slate-500 absolute left-2 top-2" />
+              <input
+                type="text"
+                placeholder="Filter selected..."
+                value={bulkSearchQuery}
+                onChange={(e) => setBulkSearchQuery(e.target.value)}
+                className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-[10.5px] rounded-lg px-6 py-1.5 focus:outline-none focus:border-blue-500 placeholder-slate-600 font-medium w-full max-w-[130px]"
+              />
             </div>
           </div>
 
@@ -3216,7 +5298,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                 <button
                   type="button"
                   key={st}
-                  disabled={isBulkUpdating}
+                  disabled={isBulkUpdating || filteredSelectedIssueKeys.length === 0}
                   onClick={() => handleBulkUpdate(st)}
                   className="bg-slate-950 hover:bg-slate-800 text-slate-350 font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg border border-white/5 hover:border-white/10 hover:text-white transition-all disabled:opacity-50 uppercase tracking-wider cursor-pointer"
                 >
@@ -3249,7 +5331,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               />
               <button
                 type="submit"
-                disabled={isBulkUpdating || !newLabelInput.trim()}
+                disabled={isBulkUpdating || !newLabelInput.trim() || filteredSelectedIssueKeys.length === 0}
                 className="bg-blue-600 hover:bg-blue-550 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg transition-all disabled:opacity-40 uppercase tracking-wider shrink-0 cursor-pointer"
               >
                 Apply
@@ -3259,10 +5341,356 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
           <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
 
+          {/* Action 3: Batch Export */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-extrabold uppercase text-slate-400 tracking-wider">Export:</span>
+            <button
+              type="button"
+              onClick={downloadSelectedCSV}
+              disabled={filteredSelectedIssueKeys.length === 0}
+              className="bg-emerald-950/45 hover:bg-emerald-900 border border-emerald-500/30 text-emerald-400 font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40"
+              title="Download selected items as CSV"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={downloadSelectedPDF}
+              disabled={filteredSelectedIssueKeys.length === 0}
+              className="bg-indigo-950/45 hover:bg-indigo-900 border border-indigo-500/30 text-indigo-400 font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40"
+              title="Download selected items as PDF"
+            >
+              <Printer className="w-3.5 h-3.5 text-indigo-400" />
+              <span>PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const selectedIssues = (report?.issues ?? []).filter((i) => filteredSelectedIssueKeys.includes(i.key));
+                const formattedList = selectedIssues
+                  .map(issue => `- [${issue.key}] ${issue.summary} (Status: ${issue.status}${issue.assignee ? `, Assignee: ${issue.assignee}` : ""})`)
+                  .join("\n");
+                navigator.clipboard.writeText(formattedList).then(() => {
+                  addToast?.("Copied Agenda List", "Formatted summaries list of selected issues copied to clipboard.", "success", 3000);
+                }).catch(() => {
+                  addToast?.("Copy Failed", "Unable to copy to clipboard.", "error", 2000);
+                });
+              }}
+              disabled={filteredSelectedIssueKeys.length === 0}
+              className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-350 hover:text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40"
+              title="Copy formatted summaries list for agendas"
+            >
+              <Copy className="w-3.5 h-3.5 text-blue-400" />
+              <span>Copy Agenda</span>
+            </button>
+          </div>
+
+          <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
+
+          {/* Action 4: Intelligent PMO Smart Automation */}
+          <button
+            type="button"
+            onClick={handleSmartAutomationRequest}
+            disabled={isBulkUpdating || filteredSelectedIssueKeys.length === 0 || isSmartLoading}
+            className="bg-gradient-to-r from-blue-600 to-indigo-650 hover:from-blue-500 hover:to-indigo-550 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg transition-all disabled:opacity-40 uppercase tracking-wider shrink-0 cursor-pointer flex items-center gap-1.5 shadow-lg shadow-blue-500/10"
+            title="Let the intelligent rules engine suggest optimal status and label transitions based on issue descriptions"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+            <span>{isSmartLoading ? "Analyzing..." : "Smart Auto"}</span>
+          </button>
+
+          <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
+
+          {/* Action 5: Macro Presets Dropup */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setIsCreatingPreset(false);
+                const el = document.getElementById("macro-panel");
+                if (el) el.classList.toggle("hidden");
+                const other = document.getElementById("log-panel");
+                if (other) other.classList.add("hidden");
+              }}
+              className="bg-indigo-950/40 hover:bg-indigo-900 border border-indigo-500/30 text-indigo-400 font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1"
+              title="Apply or create Macro Presets"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-450 animate-pulse" />
+              <span>Macros</span>
+              <ChevronDown className="w-3 h-3 text-indigo-400" />
+            </button>
+            
+            {/* Macro Panel Dropup content */}
+            <div 
+              id="macro-panel" 
+              className="hidden absolute bottom-12 right-0 z-[110] bg-slate-900/95 border border-slate-800 rounded-xl shadow-2xl p-4 w-[280px] space-y-3 backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-[10px] font-black uppercase text-slate-300 tracking-wider">Macro Presets</span>
+                <button 
+                  onClick={() => setIsCreatingPreset(!isCreatingPreset)}
+                  className="text-blue-400 hover:text-blue-300 font-bold text-[10px] flex items-center gap-0.5"
+                >
+                  {isCreatingPreset ? "View Presets" : "+ Create New"}
+                </button>
+              </div>
+
+              {isCreatingPreset ? (
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSaveMacroPreset(newPresetName, newPresetStatus, newPresetAddLabel, newPresetRemoveLabel);
+                  }}
+                  className="space-y-2.5 text-left"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-extrabold uppercase text-slate-500">Preset Name</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Move to next sprint..." 
+                      value={newPresetName}
+                      onChange={e => setNewPresetName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-extrabold uppercase text-slate-500">Set Status</label>
+                      <select 
+                        value={newPresetStatus} 
+                        onChange={e => setNewPresetStatus(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white select-none"
+                      >
+                        <option value="">None</option>
+                        <option value="To Do">To Do</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="In Review">In Review</option>
+                        <option value="Done">Done</option>
+                        <option value="Blocked">Blocked</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-extrabold uppercase text-slate-500">Add Label</label>
+                      <input 
+                        type="text" 
+                        placeholder="Label name" 
+                        value={newPresetAddLabel}
+                        onChange={e => setNewPresetAddLabel(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-extrabold uppercase text-slate-500">Remove Label (Optional)</label>
+                    <input 
+                      type="text" 
+                      placeholder="Label to delete" 
+                      value={newPresetRemoveLabel}
+                      onChange={e => setNewPresetRemoveLabel(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white"
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-550 text-white font-extrabold text-[10px] py-1.5 rounded-lg uppercase tracking-wider cursor-pointer"
+                  >
+                    Save Preset
+                  </button>
+                </form>
+              ) : (
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
+                  {macroPresets.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 italic text-center py-2">No presets configured.</p>
+                  ) : (
+                    macroPresets.map((preset) => (
+                      <div 
+                        key={preset.id} 
+                        className="flex items-center justify-between p-2 bg-slate-950/40 hover:bg-slate-950/80 border border-slate-800 rounded-lg group transition-all"
+                      >
+                        <div className="text-left min-w-0 flex-1 font-sans">
+                          <div className="font-bold text-[10.5px] text-slate-200 truncate">{preset.name}</div>
+                          <div className="flex flex-wrap gap-1 mt-0.5 text-[8px] text-slate-400 font-semibold uppercase">
+                            {preset.targetStatus && <span className="bg-slate-900 px-1 rounded text-blue-400">{preset.targetStatus}</span>}
+                            {preset.addLabel && <span className="bg-slate-900 px-1 rounded text-emerald-400">+{preset.addLabel}</span>}
+                            {preset.removeLabel && <span className="bg-slate-900 px-1 rounded text-rose-400">-{preset.removeLabel}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <button
+                            onClick={() => {
+                              handleApplyMacroPreset(preset);
+                              const el = document.getElementById("macro-panel");
+                              if (el) el.classList.add("hidden");
+                            }}
+                            disabled={filteredSelectedIssueKeys.length === 0}
+                            className="bg-blue-600/90 hover:bg-blue-500 text-white font-extrabold text-[9px] px-2 py-1 rounded transition-colors disabled:opacity-40 cursor-pointer"
+                          >
+                            Run
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMacroPreset(preset.id, preset.name)}
+                            className="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-opacity duration-200 cursor-pointer"
+                            title="Delete preset"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
+
+          {/* Action 6: Bulk Operation History popover */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById("log-panel");
+                if (el) el.classList.toggle("hidden");
+                const other = document.getElementById("macro-panel");
+                if (other) other.classList.add("hidden");
+              }}
+              className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1"
+              title="View history of bulk operations done in this session"
+            >
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>History</span>
+              {bulkLog.length > 0 && (
+                <span className="bg-blue-600 text-white font-extrabold text-[8px] h-4 min-w-4 px-1 rounded-full flex items-center justify-center shrink-0">
+                  {bulkLog.length}
+                </span>
+              )}
+            </button>
+            
+            {/* Bulk History Log content */}
+            <div 
+              id="log-panel" 
+              className="hidden absolute bottom-12 right-0 z-[110] bg-slate-900/95 border border-slate-800 rounded-xl shadow-2xl p-4 w-[350px] space-y-2.5 backdrop-blur-md animate-fade-in"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-slate-350 tracking-wider block">Session Activity Log</span>
+                  <span className="text-[8px] text-slate-500 font-semibold uppercase tracking-tight">Timeline Visualizer</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {bulkLog.length > 0 && (
+                    <button
+                      onClick={exportBulkLogToCSV}
+                      className="text-emerald-400 hover:text-emerald-350 hover:bg-white/5 p-1 rounded transition-colors cursor-pointer"
+                      title="Export operation history as CSV"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => {
+                      const el = document.getElementById("log-panel");
+                      if (el) el.classList.add("hidden");
+                    }}
+                    className="text-slate-500 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3 max-h-[250px] overflow-y-auto pr-1">
+                {bulkLog.length === 0 ? (
+                  <div className="text-center py-5 text-slate-500 text-[10px] italic space-y-1">
+                    <p>No bulk actions completed yet.</p>
+                    <p className="text-[8px] text-slate-600 font-semibold uppercase">History logs clear on page refresh.</p>
+                  </div>
+                ) : (
+                  <div className="relative pl-3.5 border-l border-slate-800 space-y-4 ml-1.5 pt-1">
+                    {bulkLog.map((entry, idx) => {
+                      const isUndone = !!entry.undone;
+                      return (
+                        <div key={entry.id} className="relative group">
+                          {/* Timeline Dot Node */}
+                          <div className={`absolute -left-[23px] top-1.5 h-3 w-3 rounded-full border-2 flex items-center justify-center transition-all ${
+                            isUndone 
+                              ? "bg-slate-950 border-slate-600 text-slate-500" 
+                              : "bg-blue-900 border-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)]"
+                          }`}>
+                            <div className={`h-1 w-1 rounded-full ${isUndone ? "bg-slate-600" : "bg-blue-400"}`} />
+                          </div>
+
+                          {/* Activity card */}
+                          <div className={`p-2.5 bg-slate-950/40 border rounded-xl text-left space-y-1.5 hover:bg-slate-950/80 transition-all font-sans ${
+                            isUndone ? "border-slate-800/40 opacity-55" : "border-slate-850 hover:border-slate-800"
+                          }`}>
+                            <div className="flex items-center justify-between text-[9px]">
+                              <span className={`font-extrabold uppercase tracking-wider truncate max-w-[170px] ${
+                                isUndone ? "text-slate-500 line-through" : "text-blue-400"
+                              }`}>
+                                {entry.operationName}
+                              </span>
+                              <span className="text-slate-500 font-semibold font-mono whitespace-nowrap">
+                                {entry.timestamp}
+                              </span>
+                            </div>
+
+                            <div className="text-[9.5px] text-slate-450 font-medium">
+                              Scope: <span className={`font-bold ${isUndone ? "text-slate-500" : "text-slate-200"}`}>{entry.affectedIssueKeys.length} issues</span>
+                              <div className="font-mono text-[8px] text-slate-500 truncate mt-0.5" title={entry.affectedIssueKeys.join(", ")}>
+                                {entry.affectedIssueKeys.join(", ")}
+                              </div>
+                            </div>
+
+                            {/* Quick Action Toggle for Undo/Redo */}
+                            {isUndone ? (
+                              <button
+                                onClick={() => {
+                                  handleRedoOperation(entry);
+                                  const el = document.getElementById("log-panel");
+                                  if (el) el.classList.add("hidden");
+                                }}
+                                className="w-full bg-emerald-950/20 hover:bg-emerald-900/35 hover:border-emerald-500/40 text-emerald-400 font-extrabold text-[8.5px] py-1 rounded-lg border border-emerald-900/20 transition-all flex items-center justify-center gap-1 cursor-pointer font-sans uppercase tracking-wider"
+                                title="Reapply this operation"
+                              >
+                                <RotateCw className="w-3 h-3 shrink-0 text-emerald-400" />
+                                <span>Redo Update</span>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  handleUndoOperation(entry);
+                                  const el = document.getElementById("log-panel");
+                                  if (el) el.classList.add("hidden");
+                                }}
+                                className="w-full bg-slate-900/60 hover:bg-rose-950/30 hover:border-rose-500/40 hover:text-rose-450 text-slate-400 font-extrabold text-[8.5px] py-1 rounded-lg border border-slate-800 transition-all flex items-center justify-center gap-1 cursor-pointer font-sans uppercase tracking-wider"
+                                title="Revert these updates"
+                              >
+                                <RotateCcw className="w-3 h-3 shrink-0 text-rose-400" />
+                                <span>Undo Update</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
+
           {/* Cancel button */}
           <button
             type="button"
-            onClick={() => setSelectedIssueKeys([])}
+            onClick={() => {
+              setSelectedIssueKeys([]);
+              setBulkSearchQuery("");
+            }}
             className="text-slate-400 hover:text-white hover:bg-white/5 p-1.5 rounded-lg transition-all uppercase text-[10px] font-bold shrink-0 cursor-pointer"
           >
             Clear Selected
@@ -3270,146 +5698,537 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         </div>
       )}
 
-      {/* 6. High-Fidelity Extended Issue Details Overlay Modal */}
-      {selectedIssueForModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto"
-          onClick={() => setSelectedIssueForModal(null)}
-        >
-          <div 
-            className="relative bg-[#1E293B] border border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-left flex flex-col max-h-[90vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="p-6 bg-slate-900 border-b border-slate-800 flex items-start justify-between gap-4">
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <span className={`px-2 py-0.5 rounded-full font-black uppercase text-[8.5px] ${
-                    selectedIssueForModal.type === "Bug" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
-                    selectedIssueForModal.type === "Story" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                    "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                  }`}>
-                    {selectedIssueForModal.type}
-                  </span>
-                  <span className="font-mono text-slate-400 font-bold tracking-wide">
-                    {selectedIssueForModal.key}
-                  </span>
-                  <a 
-                    href={`${isSandbox ? "https://sandbox-jira.atlassian.net" : (jiraUrl ? jiraUrl.replace(/\/+$/, "") : "https://jira.atlassian.net")}/browse/${selectedIssueForModal.key}`}
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline inline-flex items-center gap-0.5"
-                  >
-                    Open in Jira <span className="text-[10px]">↗</span>
-                  </a>
-                </div>
-                <h2 className="text-base font-black text-white leading-normal tracking-tight">
-                  {selectedIssueForModal.summary}
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedIssueForModal(null)}
-                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
-                title="Close overlay"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* NEW FEATURE: Confirmation Summary & Smart Automation Preview Modal */}
+      <AnimatePresence>
+        {pendingBulkAction && (() => {
+          const issuesList = report?.issues ?? [];
+          const selectedList = issuesList.filter((i) => filteredSelectedIssueKeys.includes(i.key));
+          const projCounts: Record<string, number> = {};
+          const typeCounts: Record<string, number> = {};
+          selectedList.forEach((issue) => {
+            const proj = issue.key.split("-")[0] || "Unknown";
+            projCounts[proj] = (projCounts[proj] || 0) + 1;
+            const type = issue.type || "Task";
+            typeCounts[type] = (typeCounts[type] || 0) + 1;
+          });
+          const selectedIssuesByProject = Object.entries(projCounts);
+          const selectedIssuesByType = Object.entries(typeCounts);
 
-            {/* Scrollable Body Container */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-[#1E293B]">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Left Columns (Main Fields - 2 Cols) */}
-                <div className="lg:col-span-2 space-y-6">
-                  
-                  {/* Description */}
-                  <div className="space-y-2">
-                    <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Description</h3>
-                    <div className="bg-slate-950/40 border border-white/5 p-4 rounded-xl text-slate-300 text-xs leading-relaxed whitespace-pre-wrap font-medium">
-                      {selectedIssueForModal.description || "No description provided for this ticket."}
+          const totalEstimatedEffort = selectedList.reduce((acc, issue) => acc + (issue.storyPoints || 0), 0);
+
+          return (
+            <React.Fragment key="confirmation-modal">
+              {/* Backdrop Overlay */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[100] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
+              >
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  transition={{ type: "spring", duration: 0.3 }}
+                  className="bg-[#1E293B] border border-blue-500/35 p-6 rounded-2xl shadow-2xl max-w-2xl w-full space-y-5 text-left font-sans"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-blue-600 text-white rounded-lg p-1.5 flex items-center justify-center">
+                        <Sparkles className="w-5 h-5 text-yellow-300" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                          {pendingBulkAction.type === "smart_automation" ? "AI Smart Automation Recommendation" : "Confirm Batch Action"}
+                        </h3>
+                        <p className="text-[10.5px] text-slate-400 font-bold">
+                          Analyze affected scope before committing updates.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setPendingBulkAction(null)}
+                      className="p-1 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Scope Filtering & Effort Metrics Bar */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/40 p-3.5 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <Tag className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                        Filter Scope by Label:
+                      </span>
+                      <select
+                        value={bulkLabelFilter}
+                        onChange={(e) => setBulkLabelFilter(e.target.value)}
+                        className="bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 max-w-[160px] truncate cursor-pointer font-semibold"
+                      >
+                        <option value="">All Labels ({availableBulkLabels.length})</option>
+                        {availableBulkLabels.map((lbl) => (
+                          <option key={lbl} value={lbl}>
+                            {lbl}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-blue-950/30 border border-blue-900/40 px-3.5 py-1.5 rounded-lg shrink-0">
+                      <Clock className="w-3.5 h-3.5 text-blue-400 shrink-0 animate-pulse" />
+                      <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">
+                        Estimated Completion Effort:
+                      </span>
+                      <span className="text-xs font-mono font-black text-white">
+                        {totalEstimatedEffort} {totalEstimatedEffort === 1 ? "Story Point" : "Story Points"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Sub-tasks */}
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                        Sub-tasks ({getSubtasksForIssue(selectedIssueForModal).length})
-                      </h3>
-                      {getSubtasksForIssue(selectedIssueForModal).length > 0 && (
-                        <span className="text-[9px] text-slate-500 font-mono font-bold">
-                          {getSubtasksForIssue(selectedIssueForModal).filter(s => s.status === "Done").length} / {getSubtasksForIssue(selectedIssueForModal).length} Resolved
-                        </span>
+                  {/* Operations To Apply details */}
+                  <div className="bg-slate-950/45 p-3.5 rounded-xl border border-white/5 space-y-2">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 font-black block">Action Specification</span>
+                    <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                      <div>
+                        <span className="text-slate-500 font-semibold">Action Type:</span>{" "}
+                        <span className="font-extrabold text-blue-400 uppercase tracking-wider">{pendingBulkAction.type}</span>
+                      </div>
+                      {pendingBulkAction.type === "status" && (
+                        <div>
+                          <span className="text-slate-500 font-semibold">Target Status:</span>{" "}
+                          <span className="font-bold text-white bg-blue-950 border border-blue-900/40 px-2 py-0.5 rounded font-mono text-[10.5px]">{pendingBulkAction.targetStatus}</span>
+                        </div>
+                      )}
+                      {pendingBulkAction.type === "label" && (
+                        <div>
+                          <span className="text-slate-500 font-semibold">Apply Label:</span>{" "}
+                          <span className="font-bold text-emerald-400 bg-emerald-950/30 border border-emerald-900/40 px-2 py-0.5 rounded font-mono text-[10.5px]">+{pendingBulkAction.label}</span>
+                        </div>
+                      )}
+                      {pendingBulkAction.type === "macro" && pendingBulkAction.macro && (
+                        <div className="space-y-1 w-full">
+                          <div className="font-bold text-white text-[12.5px]">{pendingBulkAction.macro.name}</div>
+                          <div className="flex gap-2 text-[10.5px]">
+                            {pendingBulkAction.macro.targetStatus && (
+                              <span>Set Status: <strong className="text-blue-400">{pendingBulkAction.macro.targetStatus}</strong></span>
+                            )}
+                            {pendingBulkAction.macro.addLabel && (
+                              <span>Add Label: <strong className="text-emerald-400">+{pendingBulkAction.macro.addLabel}</strong></span>
+                            )}
+                            {pendingBulkAction.macro.removeLabel && (
+                              <span>Remove Label: <strong className="text-rose-400">-{pendingBulkAction.macro.removeLabel}</strong></span>
+                            )}
+                          </div>
+                        </div>
                       )}
                     </div>
-                    {getSubtasksForIssue(selectedIssueForModal).length === 0 ? (
-                      <p className="text-xs text-slate-500 italic">No sub-tasks nested under this ticket scope.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {getSubtasksForIssue(selectedIssueForModal).map((sub, i) => (
-                          <div 
-                            key={sub.key || i} 
-                            className="flex items-center justify-between p-3 bg-slate-950/30 border border-white/5 rounded-xl text-xs hover:border-slate-800 transition-all"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-mono text-[10px] text-slate-400 font-bold shrink-0">{sub.key}</span>
-                              <span className="text-slate-200 truncate font-semibold">{sub.summary}</span>
-                            </div>
-                            <span className={`text-[8.5px] font-black uppercase px-2 py-0.5 rounded-full ${
-                              sub.status === "Done" ? "bg-emerald-500/10 text-emerald-400" :
-                              sub.status === "In Progress" ? "bg-blue-500/10 text-blue-400" :
-                              "bg-slate-800 text-slate-400"
-                            }`}>
-                              {sub.status}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
 
-                  {/* Comments */}
-                  <div className="space-y-3">
-                    <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                      Collaborative Comments ({getCommentsForIssue(selectedIssueForModal).length})
-                    </h3>
-                    {getCommentsForIssue(selectedIssueForModal).length === 0 ? (
-                      <p className="text-xs text-slate-500 italic">No historical comments logged on this ticket.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {getCommentsForIssue(selectedIssueForModal).map((c) => (
-                          <div key={c.id} className="p-3.5 bg-slate-950/20 border border-white/5 rounded-xl space-y-2">
-                            <div className="flex items-center justify-between text-[10px]">
-                              <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] font-black text-white uppercase shadow-inner font-bold">
-                                  {c.author.substring(0, 2)}
-                                </div>
-                                <span className="font-bold text-slate-200">{c.author}</span>
+                  {/* Affected Items Breakdown (Summary View) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-black">
+                        Affected Scope Summary ({filteredSelectedIssueKeys.length} issues)
+                      </span>
+                      {/* Copy Summary to Clipboard Feature */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const formattedList = selectedList
+                            .map(issue => `- [${issue.key}] ${issue.summary} (Status: ${issue.status}${issue.assignee ? `, Assignee: ${issue.assignee}` : ""})`)
+                            .join("\n");
+                          navigator.clipboard.writeText(formattedList).then(() => {
+                            addToast?.("Copied Agenda List", "Formatted summary of selected issues copied to clipboard.", "success", 3000);
+                          }).catch(() => {
+                            addToast?.("Copy Failed", "Unable to copy to clipboard.", "error", 2000);
+                          });
+                        }}
+                        className="bg-slate-900 border border-slate-800 text-slate-350 hover:bg-slate-800 hover:text-white px-2.5 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm shrink-0"
+                        title="Copy formatted summaries list for agendas"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Copy Summary to Clipboard</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Projects affected */}
+                      <div className="bg-slate-900/30 p-3 rounded-xl border border-white/5 space-y-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-500">By Project</span>
+                        {selectedIssuesByProject.length === 0 ? (
+                          <p className="text-[10px] text-slate-500 italic">None</p>
+                        ) : (
+                          <div className="space-y-1 max-h-[80px] overflow-y-auto">
+                            {selectedIssuesByProject.map(([proj, count]) => (
+                              <div key={proj} className="flex items-center justify-between text-xs font-semibold">
+                                <span className="text-slate-350 font-mono">{proj}</span>
+                                <span className="bg-slate-950 border border-white/5 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  {count} {count === 1 ? "issue" : "issues"}
+                                </span>
                               </div>
-                              <span className="text-slate-500 font-mono font-bold">{c.created}</span>
-                            </div>
-                            <p className="text-slate-300 text-xs leading-relaxed pl-7 font-medium">
-                              {c.body}
-                            </p>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
-                    )}
+
+                      {/* Issue Types affected */}
+                      <div className="bg-slate-900/30 p-3 rounded-xl border border-white/5 space-y-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-500">By Issue Type</span>
+                        {selectedIssuesByType.length === 0 ? (
+                          <p className="text-[10px] text-slate-500 italic">None</p>
+                        ) : (
+                          <div className="space-y-1 max-h-[80px] overflow-y-auto">
+                            {selectedIssuesByType.map(([type, count]) => (
+                              <div key={type} className="flex items-center justify-between text-xs font-semibold">
+                                <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold ${
+                                  type === "Bug" ? "text-rose-400 bg-rose-950/10" :
+                                  type === "Story" ? "text-emerald-400 bg-emerald-950/10" :
+                                  "text-blue-400 bg-blue-950/10"
+                                }`}>
+                                  {type}
+                                </span>
+                                <span className="bg-slate-950 border border-white/5 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  {count} {count === 1 ? "issue" : "issues"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
+                  {/* Project Impact Chart */}
+                  <ProjectImpactChart
+                    allIssues={issuesList}
+                    filteredSelectedIssueKeys={filteredSelectedIssueKeys}
+                    pendingBulkAction={pendingBulkAction}
+                  />
+
+                  {/* Smart Automation recommendations listing */}
+                  {pendingBulkAction.type === "smart_automation" && (
+                    <div className="space-y-3.5 pt-1">
+                      {/* AI Executive Summary paragraph */}
+                      <div className="bg-blue-950/20 border border-blue-500/20 p-3.5 rounded-xl text-slate-200 text-xs leading-relaxed space-y-1">
+                        <div className="flex items-center gap-1 text-[10px] uppercase font-black tracking-wider text-blue-400">
+                          <Sparkles className="w-3.5 h-3.5 animate-pulse text-blue-400 shrink-0" />
+                          <span>AI Executive Summary</span>
+                        </div>
+                        <p className="font-medium text-[11px] leading-relaxed">
+                          {pendingBulkAction.label}
+                        </p>
+                      </div>
+
+                      {/* Recommendations per issue */}
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] uppercase tracking-wider text-slate-400 font-black">AI Proposed Changes Per Issue</span>
+                        <div className="space-y-2 max-h-[180px] overflow-y-auto border border-white/5 p-2 rounded-xl bg-slate-950/20">
+                          {pendingBulkAction.smartUpdates?.map((sug: any) => {
+                            const originalIssue = selectedList.find(i => i.key === sug.key);
+                            const hasStatusChange = sug.suggestedStatus && sug.suggestedStatus !== originalIssue?.status;
+                            const hasLabels = sug.suggestedLabels && sug.suggestedLabels.length > 0;
+                            
+                            return (
+                              <div key={sug.key} className="p-2.5 bg-[#1E293B] border border-slate-800 rounded-lg space-y-1 text-xs">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="font-mono font-bold text-slate-300 text-[10.5px]">
+                                    {sug.key} <span className="text-slate-500 font-sans font-medium">— {originalIssue?.summary || ""}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-x-4 text-[10px] text-slate-400 font-semibold uppercase">
+                                  {hasStatusChange && (
+                                    <div>
+                                      Status: <span className="text-slate-500 font-bold strike-through">{originalIssue?.status}</span> ➡️{" "}
+                                      <strong className="text-blue-400 font-black uppercase">{sug.suggestedStatus}</strong>
+                                    </div>
+                                  )}
+                                  {hasLabels && (
+                                    <div>
+                                      Labels: <span className="text-slate-500 font-bold">[{originalIssue?.labels?.join(", ") || "none"}]</span> ➡️{" "}
+                                      <strong className="text-emerald-400 font-black">{sug.suggestedLabels.map((l: string) => `+${l}`).join(", ")}</strong>
+                                    </div>
+                                  )}
+                                </div>
+                                {sug.reasoning && (
+                                  <p className="text-[10px] text-slate-400 italic bg-slate-950/45 p-1 px-2 rounded mt-1">
+                                    Reasoning: {sug.reasoning}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Footer Controls */}
+                  <div className="flex justify-end gap-3.5 pt-3 border-t border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => setPendingBulkAction(null)}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-extrabold uppercase px-4 py-2.5 rounded-xl transition-colors cursor-pointer"
+                      title="Press 'Esc' key to cancel"
+                    >
+                      Cancel Action (Esc)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={executePendingBulkAction}
+                      className="bg-gradient-to-r from-blue-600 to-indigo-650 hover:from-blue-500 hover:to-indigo-550 text-white text-[10.5px] font-black uppercase px-6 py-2.5 rounded-xl transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-lg shadow-blue-500/15"
+                      title="Press 'Ctrl+S' key to execute"
+                    >
+                      <CheckSquare className="w-4 h-4 shrink-0" />
+                      <span>Confirm & Execute (Ctrl+S)</span>
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            </React.Fragment>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* Bulk Update Progress Modal */}
+      <AnimatePresence>
+        {isBulkUpdating && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
+            >
+              {/* Modal Card */}
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ type: "spring", duration: 0.3 }}
+                className="bg-slate-900 border border-blue-500/35 p-6 rounded-2xl shadow-2xl max-w-md w-full text-center space-y-5"
+              >
+                <div className="flex justify-center">
+                  <div className="relative flex items-center justify-center animate-bounce">
+                    <div className="w-14 h-14 rounded-full border-4 border-slate-800 border-t-blue-500 animate-spin"></div>
+                    <RefreshCw className="w-6 h-6 text-blue-400 absolute animate-pulse" />
+                  </div>
                 </div>
 
-                {/* Right Column (Ticket Meta Attributes - 1 Col) */}
-                <div className="space-y-5 bg-slate-950/20 p-4 border border-white/5 rounded-2xl h-fit">
-                  <h3 className="text-[10px] font-black uppercase text-slate-350 tracking-wider border-b border-white/5 pb-2">Ticket Attributes</h3>
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    {bulkOperationName || "Executing Batch Process"}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-semibold">
+                    Synthesizing bulk updates across selected Jira issue records.
+                  </p>
+                </div>
+
+                {/* Progress Tracking Details */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-mono font-bold">
+                    <span className="text-blue-400">
+                      {bulkCurrentIssueKey ? `Processing ${bulkCurrentIssueKey}...` : "Initiating batch job..."}
+                    </span>
+                    <span className="text-slate-300">
+                      {bulkProgress} / {bulkProgressTotal} Issues
+                    </span>
+                  </div>
+
+                  {/* Visual Progress Bar track */}
+                  <div className="w-full bg-slate-950 rounded-full h-3 overflow-hidden border border-white/5 relative">
+                    <motion.div
+                      className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full"
+                      initial={{ width: "0%" }}
+                      animate={{ width: `${bulkProgressTotal > 0 ? (bulkProgress / bulkProgressTotal) * 100 : 0}%` }}
+                      transition={{ ease: "easeInOut", duration: 0.15 }}
+                    />
+                  </div>
+
+                  <div className="text-right text-[10px] font-mono text-slate-500 font-bold">
+                    {Math.round(bulkProgressTotal > 0 ? (bulkProgress / bulkProgressTotal) * 100 : 0)}% Complete
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-slate-500 font-medium leading-relaxed bg-slate-950/45 p-3 rounded-xl border border-white/5">
+                  ⚠️ Please keep this tab active. Status changes and label synchronizations are being committed both locally and propagated to the target project scope database.
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* 6. Premium Slide-Over Panel (Framer Motion) */}
+      <AnimatePresence>
+        {selectedIssueForModal && (
+          <>
+            {/* Backdrop Overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedIssueForModal(null)}
+              className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm"
+            />
+
+            {/* Sliding Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-lg bg-[#1E293B] border-l border-white/10 shadow-2xl flex flex-col h-full overflow-hidden text-left"
+            >
+              {/* Slide-Over Header */}
+              <div className="p-5 bg-slate-900 border-b border-slate-800 flex items-start justify-between gap-4">
+                <div className="space-y-1.5 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <span className={`px-2 py-0.5 rounded-full font-black uppercase text-[8px] tracking-wider ${
+                      selectedIssueForModal.type === "Bug" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
+                      selectedIssueForModal.type === "Story" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                      "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                    }`}>
+                      {selectedIssueForModal.type}
+                    </span>
+                    <span className="font-mono text-slate-400 font-bold tracking-wide text-[10px]">
+                      {selectedIssueForModal.key}
+                    </span>
+                    <a 
+                      href={`${isSandbox ? "https://sandbox-jira.atlassian.net" : (jiraUrl ? jiraUrl.replace(/\/+$/, "") : "https://jira.atlassian.net")}/browse/${selectedIssueForModal.key}`}
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline inline-flex items-center gap-0.5 text-[10px]"
+                    >
+                      Open in Jira <span className="text-[9px]">↗</span>
+                    </a>
+                  </div>
+                  <h2 className="text-sm font-black text-white leading-normal tracking-tight">
+                    {selectedIssueForModal.summary}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIssueForModal(null)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors cursor-pointer shrink-0"
+                  title="Close panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Slide-Over Body (Scrollable) */}
+              <div className="p-5 overflow-y-auto space-y-5 flex-1 bg-[#1E293B]">
+                
+                {/* Description */}
+                <div className="space-y-1.5">
+                  <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Description</h3>
+                  <div className="bg-slate-950/40 border border-white/5 p-3 rounded-xl text-slate-300 text-[11px] leading-relaxed whitespace-pre-wrap font-medium">
+                    {selectedIssueForModal.description || "No description provided for this ticket."}
+                  </div>
+                </div>
+
+                {/* Sub-tasks Progress Tracker */}
+                {(() => {
+                  const subtasks = getSubtasksForIssue(selectedIssueForModal);
+                  const doneSubtasks = subtasks.filter(s => s.status === "Done").length;
+                  const progressPct = subtasks.length > 0 ? Math.round((doneSubtasks / subtasks.length) * 100) : 0;
                   
-                  <div className="space-y-3 text-xs leading-normal">
+                  return (
+                    <div className="space-y-2.5 bg-slate-950/25 border border-white/5 p-3 rounded-xl">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <h3 className="font-black uppercase text-slate-400 tracking-wider">
+                          Sub-tasks ({subtasks.length})
+                        </h3>
+                        <span className="text-[9px] text-blue-400 font-mono font-bold">
+                          {doneSubtasks} / {subtasks.length} Completed ({progressPct}%)
+                        </span>
+                      </div>
+                      
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-white/5">
+                        <div 
+                          className="bg-blue-500 h-full rounded-full transition-all duration-300"
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+
+                      {subtasks.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 italic">No nested sub-tasks.</p>
+                      ) : (
+                        <div className="space-y-1.5 pt-1">
+                          {subtasks.map((sub, i) => (
+                            <div 
+                              key={sub.key || i} 
+                              className="flex items-center justify-between p-2 bg-slate-950/30 border border-white/5 rounded-lg text-[10px]"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-mono text-[9px] text-slate-500 font-bold shrink-0">{sub.key}</span>
+                                <span className="text-slate-300 truncate font-semibold">{sub.summary}</span>
+                              </div>
+                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                sub.status === "Done" ? "bg-emerald-500/10 text-emerald-400" :
+                                sub.status === "In Progress" ? "bg-blue-500/10 text-blue-400" :
+                                "bg-slate-800 text-slate-400"
+                              }`}>
+                                {sub.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Risk Assessment & Time Spent Widget */}
+                {(() => {
+                  const ts = selectedIssueForModal.timeSpent || 0;
+                  const oe = selectedIssueForModal.originalEstimate || 0;
+                  const hasOverrun = ts > oe && oe > 0;
+                  const overrunAmount = ts - oe;
+                  const overrunPercent = oe > 0 ? Math.round((overrunAmount / oe) * 100) : 0;
+                  
+                  return (
+                    <div className="space-y-2 bg-slate-950/20 border border-white/5 p-3.5 rounded-xl">
+                      <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Risk & Estimations</h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-slate-900/40 p-2 rounded-lg border border-white/5">
+                          <span className="text-[8px] text-slate-500 uppercase font-bold block">Original Estimate</span>
+                          <span className="text-white font-mono font-bold text-xs">{oe > 0 ? `${oe} hours` : "Not Estimated"}</span>
+                        </div>
+                        <div className="bg-slate-900/40 p-2 rounded-lg border border-white/5">
+                          <span className="text-[8px] text-slate-500 uppercase font-bold block">Actual Time Spent</span>
+                          <span className={`font-mono font-bold text-xs ${hasOverrun ? "text-rose-400" : "text-white"}`}>{ts} hours</span>
+                        </div>
+                      </div>
+
+                      {hasOverrun && (
+                        <div className="bg-rose-950/20 border border-rose-500/20 p-2.5 rounded-lg flex items-start gap-2 text-[10.5px]">
+                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <span className="font-black text-rose-400 uppercase tracking-wide text-[9px] block">CRITICAL TIME OVERRUN</span>
+                            <p className="text-slate-300 font-medium">
+                              This ticket has exceeded its original estimate by <span className="text-rose-400 font-bold">{overrunAmount} hours</span> (+{overrunPercent}%). Prompt review of scope creep or resource blockers is recommended.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Metadata Fields Card */}
+                <div className="space-y-3 bg-slate-950/20 p-3.5 border border-white/5 rounded-xl">
+                  <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider border-b border-white/5 pb-1.5">Ticket Attributes</h3>
+                  
+                  <div className="space-y-2 text-[11px] leading-normal">
                     {/* Status */}
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-semibold">Workflow Status</span>
-                      <span className={`text-[9.5px] font-black uppercase px-2 py-0.5 rounded ${
+                      <span className={`text-[8.5px] font-black uppercase px-2 py-0.5 rounded ${
                         selectedIssueForModal.mappedStatus === "Done" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                         selectedIssueForModal.mappedStatus === "Blocked" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
                         selectedIssueForModal.mappedStatus === "In Progress" ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" :
@@ -3421,7 +6240,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
                     {/* Priority */}
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-semibold">Ticket Priority</span>
+                      <span className="text-slate-500 font-semibold">Priority Level</span>
                       <span className="font-bold text-slate-200">{selectedIssueForModal.priority}</span>
                     </div>
 
@@ -3429,7 +6248,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-semibold">Assignee</span>
                       <span className="font-bold text-indigo-300 inline-flex items-center gap-1">
-                        <User className="w-3 h-3 text-indigo-400" />
+                        <User className="w-3.5 h-3.5 text-indigo-400" />
                         {selectedIssueForModal.assignee === "Unassigned" ? "Unallocated" : selectedIssueForModal.assignee}
                       </span>
                     </div>
@@ -3444,8 +6263,8 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
                     {/* Story Points */}
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-semibold">Agile Estimation</span>
-                      <span className="font-mono font-bold text-slate-200 bg-slate-900 px-2 py-0.5 rounded border border-white/5">
+                      <span className="text-slate-500 font-semibold">Story Points</span>
+                      <span className="font-mono font-bold text-slate-200 bg-slate-900 px-1.5 py-0.2 rounded border border-white/5">
                         {selectedIssueForModal.storyPoints !== undefined ? `${selectedIssueForModal.storyPoints} pts` : "--"}
                       </span>
                     </div>
@@ -3453,53 +6272,87 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                     {/* Sprint */}
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-semibold">Sprint Assignment</span>
-                      <span className="font-bold text-slate-300 max-w-[120px] truncate" title={selectedIssueForModal.sprint}>
+                      <span className="font-bold text-slate-300 max-w-[150px] truncate" title={selectedIssueForModal.sprint}>
                         {selectedIssueForModal.sprint || "--"}
                       </span>
-                    </div>
-
-                    {/* Dates */}
-                    <div className="border-t border-white/5 my-2 pt-2 space-y-2">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-slate-500 font-semibold">Created Date</span>
-                        <span className="text-slate-400 font-mono">{selectedIssueForModal.created ? new Date(selectedIssueForModal.created).toLocaleDateString() : "--"}</span>
-                      </div>
-                      {selectedIssueForModal.updated && (
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-500 font-semibold">Updated Date</span>
-                          <span className="text-slate-400 font-mono">{new Date(selectedIssueForModal.updated).toLocaleDateString()}</span>
-                        </div>
-                      )}
-                      {selectedIssueForModal.dueDate && (
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-500 font-semibold">Due Target</span>
-                          <span className={`font-mono font-bold ${
-                            selectedIssueForModal.dueDate < new Date().toISOString().substring(0, 10) && selectedIssueForModal.mappedStatus !== "Done"
-                              ? "text-rose-400"
-                              : "text-slate-400"
-                          }`}>{new Date(selectedIssueForModal.dueDate).toLocaleDateString()}</span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
 
-              </div>
-            </div>
+                {/* Comments Thread */}
+                <div className="space-y-2.5">
+                  <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider">
+                    Collaborative Comments ({getCommentsForIssue(selectedIssueForModal).length})
+                  </h3>
+                  {getCommentsForIssue(selectedIssueForModal).length === 0 ? (
+                    <p className="text-[11px] text-slate-500 italic">No comments logged.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {getCommentsForIssue(selectedIssueForModal).map((c) => (
+                        <div key={c.id} className="p-3 bg-slate-950/20 border border-white/5 rounded-xl space-y-1.5">
+                          <div className="flex items-center justify-between text-[9px]">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[8px] font-black text-white uppercase font-bold">
+                                {c.author.substring(0, 2)}
+                              </div>
+                              <span className="font-bold text-slate-200">{c.author}</span>
+                            </div>
+                            <span className="text-slate-500 font-mono">{c.created}</span>
+                          </div>
+                          <p className="text-slate-300 text-[10.5px] leading-relaxed pl-5 font-medium">
+                            {c.body}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-            {/* Footer */}
-            <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedIssueForModal(null)}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-5 py-2 rounded-xl transition-colors cursor-pointer"
-              >
-                Close Ticket Overview
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </div>
+
+              {/* Slide-Over Footer */}
+              <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedIssueForModal(null)}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-4 py-2 rounded-xl transition-colors cursor-pointer"
+                >
+                  Close Details
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* 7. One-Click Instant Status Report FAB */}
+      <button
+        type="button"
+        onClick={() => {
+          const dateStr = new Date().toISOString().split("T")[0];
+          const filename = `OneClick_Status_Report_${dateStr}.pdf`;
+          exportToPDF(
+            `One-Click Status Report (${filteredIssues.length} Current Scope Tickets)`,
+            filteredIssues,
+            safeConfig.columns,
+            filename
+          );
+          if (onRecordExport) {
+            onRecordExport("PDF", filename);
+          }
+          addToast?.(
+            "Quick PDF Exported",
+            `Successfully built a comprehensive status report for all ${filteredIssues.length} currently filtered issues.`,
+            "success",
+            4000
+          );
+        }}
+        className="fixed bottom-6 right-6 z-40 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-[10px] px-4.5 py-3 rounded-full shadow-2xl shadow-indigo-500/20 hover:scale-105 transition-all duration-200 flex items-center gap-2 border border-blue-500/30 group cursor-pointer"
+        title="One-Click generate status report for current filtered view"
+      >
+        <Sparkles className="w-4 h-4 text-amber-300 animate-pulse group-hover:rotate-12 transition-transform" />
+        <span className="uppercase tracking-widest font-black">QUICK REPORT ({filteredIssues.length})</span>
+      </button>
     </motion.div>
   );
 };

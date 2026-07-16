@@ -2,8 +2,19 @@ import express from "express";
 import path from "path";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import fs from "fs";
+import os from "os";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
+import {
+  initDatabase,
+  getSetting,
+  setSetting,
+  getAllSettings,
+  deleteSetting,
+  saveReport,
+  getAllReports,
+  deleteReport
+} from "./database";
 
 dotenv.config();
 
@@ -12,15 +23,130 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || "",
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Initialize SQLite Database
+initDatabase();
+
+// --- SECURE DESKTOP-OPTIMIZED STORAGE ENGINE ---
+// Storage APIs
+app.post("/api/store/set", (req, res) => {
+  const { key, value } = req.body;
+  if (!key) {
+    return res.status(400).json({ error: "Key is required" });
+  }
+  setSetting(key, value);
+  res.json({ success: true });
+});
+
+app.post("/api/store/set-multiple", (req, res) => {
+  const { data } = req.body;
+  if (!data || typeof data !== "object") {
+    return res.status(400).json({ error: "Invalid data" });
+  }
+  for (const [key, value] of Object.entries(data)) {
+    setSetting(key, value);
+  }
+  res.json({ success: true });
+});
+
+app.get("/api/store/get", (req, res) => {
+  const { key } = req.query;
+  if (key) {
+    res.json({ value: getSetting(key as string) });
+  } else {
+    res.json({ data: getAllSettings() });
   }
 });
+
+app.post("/api/store/delete", (req, res) => {
+  const { key } = req.body;
+  if (key) {
+    deleteSetting(key);
+  }
+  res.json({ success: true });
+});
+
+// Structured Reports DB APIs
+app.post("/api/reports/save", (req, res) => {
+  const { id, timestamp, config, summary, issues } = req.body;
+  if (!id || !timestamp) {
+    return res.status(400).json({ error: "id and timestamp are required" });
+  }
+  saveReport(id, timestamp, config, summary, issues);
+  res.json({ success: true });
+});
+
+app.get("/api/reports/get", (req, res) => {
+  try {
+    const reports = getAllReports();
+    res.json({ reports });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/reports/delete", (req, res) => {
+  const { id } = req.body;
+  if (id) {
+    deleteReport(id);
+  }
+  res.json({ success: true });
+});
+
+// --- DESKTOP AUTO-UPDATE ENGINE ---
+app.get("/api/update/check", async (req, res) => {
+  try {
+    const currentVersion = "1.0.0";
+    const manifestUrl = process.env.UPDATE_MANIFEST_URL || "https://raw.githubusercontent.com/baruaeshan333/jira-analytics-suite/main/version-manifest.json";
+    
+    const response = await fetch(manifestUrl).catch(() => null);
+    if (response && response.ok) {
+      const manifest: any = await response.json();
+      const latestVersion = manifest.version || "1.0.0";
+      const downloadUrl = manifest.downloadUrl || "";
+      const releaseNotes = manifest.releaseNotes || [];
+      
+      const updateAvailable = compareVersions(currentVersion, latestVersion) < 0;
+      return res.json({
+        currentVersion,
+        latestVersion,
+        updateAvailable,
+        downloadUrl,
+        releaseNotes,
+      });
+    }
+    
+    // Fallback if GitHub/Remote is not yet populated
+    res.json({
+      currentVersion,
+      latestVersion: "1.0.0",
+      updateAvailable: false,
+      downloadUrl: "",
+      releaseNotes: ["First stable desktop release of Eshan Barua's Jira Analytics Suite."],
+    });
+  } catch (err: any) {
+    res.json({
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      updateAvailable: false,
+      error: err.message,
+    });
+  }
+});
+
+// Helper to compare semver versions
+function compareVersions(v1: string, v2: string) {
+  const parts1 = v1.split(".").map(Number);
+  const parts2 = v2.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const p1 = parts1[i] || 0;
+    const p2 = parts2[i] || 0;
+    if (p1 < p2) return -1;
+    if (p1 > p2) return 1;
+  }
+  return 0;
+}
+
+
 
 // Short-lived session store for Jira credentials (In-Memory Only, never stored in DB or logged)
 interface SessionData {
@@ -726,7 +852,7 @@ app.post("/api/discord/messages", async (req, res) => {
 });
 
 // --- ZERO-DEPENDENCY INTELLIGENT EXECUTIVE SUMMARIES ---
-app.post("/api/gemini/summarize", async (req, res) => {
+app.post("/api/pmo/summarize", async (req, res) => {
   try {
     const { metrics, projectScope, summaryTone } = req.body;
 
@@ -740,73 +866,7 @@ app.post("/api/gemini/summarize", async (req, res) => {
     const projectsStr = (projectScope && projectScope.length > 0) ? projectScope.join(", ") : "active repositories";
     const tone = summaryTone || "Neutral";
 
-    // Try real Gemini API first if apiKey exists
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const prompt = `You are an expert Project Management Officer (PMO) reporting system.
-Perform an executive summary analysis for the project scope covering: "${projectsStr}".
-
-Current Metrics:
-- Total Issues: ${total}
-- Completed (Done): ${metrics.doneCount || 0}
-- In Progress: ${metrics.inProgressCount || 0}
-- To Do: ${metrics.todoCount || 0}
-- Blocked: ${blocked}
-- Completion Percentage: ${completion}%
-- Overdue Issues: ${overdue}
-- Unassigned Issues: ${unassigned}
-- Sprint Velocity: ${velocity} Story Points
-- Average Cycle Time: ${cycleTime} Days
-
-Your tone must be strictly: ${tone}.
-- If 'Optimistic': emphasize team velocity, successful resolutions, positive cadence, and treat risks as exciting learning/improvement opportunities.
-- If 'Conservative': emphasize risk management, overdue tasks, resource bottlenecks, unassigned work, and treat success cautiously.
-- If 'Neutral': provide a balanced, highly objective PMO reporting format.
-
-Generate a JSON object containing:
-1. summary (string, under 100 words, summarizing project status in the selected tone)
-2. keyInsights (array of exactly 3 strings, key data observations in the selected tone)
-3. bottlenecks (array of exactly 2 strings, critical team blockers or resource constraints in the selected tone)
-4. recommendations (array of exactly 3 strings, concrete actionable next steps in the selected tone)`;
-
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                summary: { type: Type.STRING },
-                keyInsights: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                bottlenecks: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                recommendations: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                }
-              },
-              required: ["summary", "keyInsights", "bottlenecks", "recommendations"]
-            }
-          }
-        });
-
-        const resultText = response.text;
-        if (resultText) {
-          const parsed = JSON.parse(resultText);
-          return res.json({ aiSummary: parsed });
-        }
-      } catch (apiErr) {
-        console.error("Gemini API call failed, falling back to local analyzer:", apiErr);
-      }
-    }
-
-    // 1. Dynamic Summary Paragraph (Under 100 words) - Fallback
+    // 1. Dynamic Summary Paragraph (Under 100 words)
     let summaryText = "";
     if (total === 0) {
       summaryText = `The report scope for ${projectsStr} currently contains no active tickets matching the selected criteria. Please adjust your filters or status mapping parameters to compile project data.`;
@@ -828,7 +888,7 @@ Generate a JSON object containing:
       }
     }
 
-    // 2. Dynamic Insights (EXACTLY 3) - Fallback
+    // 2. Dynamic Insights (EXACTLY 3)
     const keyInsights = [
       `Completed delivery velocity stands at ${velocity} story points, proving a robust engineering cadence.`,
       total > 0 
@@ -837,7 +897,7 @@ Generate a JSON object containing:
       `Average cycle time of ${cycleTime} days indicates stable pull-request review and deployment throughput.`
     ];
 
-    // 3. Dynamic Bottlenecks (EXACTLY 2) - Fallback
+    // 3. Dynamic Bottlenecks (EXACTLY 2)
     const bottlenecks = [
       overdue > 0 
         ? `${overdue} committed deliverables have missed scheduled deadlines, creating downstream sprint risk.` 
@@ -849,7 +909,7 @@ Generate a JSON object containing:
           : `WIP allocation is solid, with 100% of high-priority tickets actively owned by a team member.`
     ];
 
-    // 4. Dynamic Recommendations (EXACTLY 3) - Fallback
+    // 4. Dynamic Recommendations (EXACTLY 3)
     const recommendations = [
       unassigned > 0 
         ? `Triage the ${unassigned} unassigned issues immediately in tomorrow's standup to restore clean resource ownership.` 
@@ -875,8 +935,8 @@ Generate a JSON object containing:
   }
 });
 
-// --- SMART FILTER JQL SUGGESTIONS WITH GEMINI ---
-app.post("/api/gemini/suggest-filters", async (req, res) => {
+// --- SMART FILTER JQL SUGGESTIONS ---
+app.post("/api/pmo/suggest-filters", async (req, res) => {
   try {
     const { metrics, config } = req.body;
     
@@ -887,75 +947,7 @@ app.post("/api/gemini/suggest-filters", async (req, res) => {
     const currentSprint = config?.selectedSprint || "";
     const activeProjects = config?.selectedProjects || [];
 
-    // If real Gemini API key is present, let's use it for highly contextual JQL generation!
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const prompt = `You are a Jira query tuning assistant. Based on the current sprint metrics and configuration, suggest a targeted JQL refinement to isolate and resolve project bottlenecks.
-
-Current Context:
-- Active Projects: ${JSON.stringify(activeProjects)}
-- Active Sprint: "${currentSprint}"
-- Overdue Issues: ${overdue}
-- Unassigned Issues: ${unassigned}
-- Blocked Issues: ${blocked}
-- Total Issues: ${total}
-
-JQL Refinement Guidelines:
-- If Overdue tickets are high, generate a JQL targeting overdue items, e.g., 'duedate < now() AND statusCategory != Done'.
-- If Unassigned tickets are high, target 'assignee is EMPTY AND statusCategory != Done'.
-- If Blocked tickets are high, target 'status = Blocked OR summary ~ "blocked"'.
-- Provide structured refinements to let the user automatically apply them in the UI.
-
-Generate a JSON object containing:
-1. suggestedJql (string, clean valid JQL statement)
-2. selectedProjects (array of strings, suggested projects from existing: ${JSON.stringify(activeProjects)})
-3. selectedIssueTypes (array of strings, e.g., ["Bug"] or ["Story"] or existing list)
-4. selectedStatuses (array of strings, e.g., ["Blocked"] or ["To Do"])
-5. selectedSprint (string, suggested sprint filter name)
-6. selectedAssignee (string, e.g. "Unassigned" or specific assignee name)
-7. reasoning (string, a clean explanation under 100 words of why this refinement isolates the bottlenecks)`;
-
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                suggestedJql: { type: Type.STRING },
-                selectedProjects: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                selectedIssueTypes: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                selectedStatuses: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                selectedSprint: { type: Type.STRING },
-                selectedAssignee: { type: Type.STRING },
-                reasoning: { type: Type.STRING }
-              },
-              required: ["suggestedJql", "selectedProjects", "selectedIssueTypes", "selectedStatuses", "selectedSprint", "selectedAssignee", "reasoning"]
-            }
-          }
-        });
-
-        const resultText = response.text;
-        if (resultText) {
-          const parsed = JSON.parse(resultText);
-          return res.json({ suggestion: parsed });
-        }
-      } catch (apiErr) {
-        console.error("Gemini suggestion failed, falling back to local suggestion engine:", apiErr);
-      }
-    }
-
-    // Dynamic, high-fidelity local fallback suggestions
+    // Dynamic, high-fidelity local suggestions
     let suggestedJql = `project IN (${activeProjects.map((p: string) => `"${p}"`).join(", ") || '"ALPHA"'}) AND statusCategory != Done`;
     let selectedStatuses = ["To Do", "In Progress", "Blocked"];
     let selectedIssueTypes = config?.selectedIssueTypes || [];
@@ -992,6 +984,62 @@ Generate a JSON object containing:
     });
   } catch (error: any) {
     return res.status(500).json({ error: "Failed to generate filter suggestions.", details: error.message });
+  }
+});
+
+// --- SMART AUTOMATION FOR BULK ISSUES ---
+app.post("/api/pmo/suggest-bulk-updates", async (req, res) => {
+  try {
+    const { issues } = req.body;
+    if (!issues || !Array.isArray(issues) || issues.length === 0) {
+      return res.status(400).json({ error: "No issues provided for smart automation suggestion." });
+    }
+
+    // High fidelity local rules engine
+    const suggestions = issues.map((i: any) => {
+      let suggestedStatus = i.status;
+      const suggestedLabels: string[] = [];
+      let reasoning = "Preserving current state based on default metadata baseline.";
+
+      const summaryLower = (i.summary || "").toLowerCase();
+      const descLower = (i.description || "").toLowerCase();
+
+      // Simple rules
+      if (summaryLower.includes("bug") || summaryLower.includes("fix") || summaryLower.includes("error") || summaryLower.includes("fail")) {
+        suggestedLabels.push("hotfix");
+        reasoning = "Flagged as potential hotfix/bug due to 'bug' or 'fix' keywords in summary.";
+      }
+
+      if (summaryLower.includes("test") || summaryLower.includes("verify") || summaryLower.includes("qa")) {
+        suggestedStatus = "In Review";
+        suggestedLabels.push("qa-needed");
+        reasoning = "Routed to 'In Review' with 'qa-needed' label based on QA/Test keywords.";
+      } else if (summaryLower.includes("block") || descLower.includes("blocked") || descLower.includes("depend")) {
+        suggestedStatus = "Blocked";
+        suggestedLabels.push("blocked");
+        reasoning = "Shifted to 'Blocked' due to blocking keywords or dependency signals.";
+      } else if (i.priority === "Highest" || i.priority === "High") {
+        suggestedLabels.push("high-priority");
+        reasoning = "Tagged with 'high-priority' label based on the ticket's severity field.";
+      }
+
+      return {
+        key: i.key,
+        suggestedStatus,
+        suggestedLabels,
+        reasoning
+      };
+    });
+
+    return res.json({
+      aiSuggestions: {
+        suggestions,
+        summaryOfCollectiveChanges: "Applied local heuristic mapping rules to align statuses and tag categories based on issue keyword analysis."
+      }
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({ error: "Failed to process smart automation suggestions.", details: error.message });
   }
 });
 

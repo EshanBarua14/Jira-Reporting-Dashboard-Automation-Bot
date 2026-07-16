@@ -32,6 +32,20 @@ interface ExportPanelProps {
   onChangeCustomNote: (val: string) => void;
   watermark: "None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT";
   onChangeWatermark: (val: "None" | "CONFIDENTIAL" | "INTERNAL ONLY" | "DRAFT") => void;
+
+  // PDF Branding props
+  pdfLogoBase64: string;
+  onChangePdfLogoBase64: (val: string) => void;
+  pdfHeaderTitle: string;
+  onChangePdfHeaderTitle: (val: string) => void;
+  pdfHeaderSubtitle: string;
+  onChangePdfHeaderSubtitle: (val: string) => void;
+  pdfCompanyName: string;
+  onChangePdfCompanyName: (val: string) => void;
+  overdueThreshold: number;
+  onChangeOverdueThreshold: (val: number) => void;
+  blockedThreshold: number;
+  onChangeBlockedThreshold: (val: number) => void;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
@@ -59,11 +73,25 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onChangeCustomNote,
   watermark,
   onChangeWatermark,
+
+  pdfLogoBase64,
+  onChangePdfLogoBase64,
+  pdfHeaderTitle,
+  onChangePdfHeaderTitle,
+  pdfHeaderSubtitle,
+  onChangePdfHeaderSubtitle,
+  pdfCompanyName,
+  onChangePdfCompanyName,
+  overdueThreshold,
+  onChangeOverdueThreshold,
+  blockedThreshold,
+  onChangeBlockedThreshold,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalFormatFilter, setModalFormatFilter] = useState<string>("All");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleShare = async (item: RecentExport, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -142,11 +170,11 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             <Sliders className="w-3 h-3 text-indigo-400" /> Executive Summary Tone
           </label>
           <span className="text-[8px] font-mono text-indigo-400 font-bold bg-indigo-500/10 px-1.5 py-0.2 rounded border border-indigo-500/20">
-            Gemini Pref
+            PMO Pref
           </span>
         </div>
         <p className="text-[10px] text-slate-500 font-medium">
-          Customize the AI personality and emphasis when drafting report summaries.
+          Customize the tone and emphasis when drafting executive report summaries.
         </p>
         <div className="grid grid-cols-3 gap-1.5 pt-1">
           {(["Neutral", "Optimistic", "Conservative"] as const).map((tone) => {
@@ -218,6 +246,60 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                 }`}
               />
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* --- CUSTOM THRESHOLD ALARM LIMITS --- */}
+      <div className="space-y-3 p-3.5 bg-slate-950/20 border border-white/5 rounded-xl">
+        <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Custom Threshold Alarm Limits
+        </label>
+        <p className="text-[10px] text-slate-500 font-medium leading-normal">
+          Define maximum limits for active items. Overstepping these limits triggers alert warning states in your metrics.
+        </p>
+
+        <div className="space-y-3 pt-1">
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-center">
+              <label className="block text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest">
+                Overdue Tickets Threshold
+              </label>
+              <span className="text-[10.5px] font-mono text-slate-200 font-bold bg-slate-950/60 border border-white/5 px-1.5 py-0.5 rounded">
+                {overdueThreshold} Issues
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min="1"
+                max="20"
+                value={overdueThreshold}
+                onChange={(e) => onChangeOverdueThreshold(Number(e.target.value))}
+                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-center">
+              <label className="block text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest">
+                Blocked Tickets Threshold
+              </label>
+              <span className="text-[10.5px] font-mono text-slate-200 font-bold bg-slate-950/60 border border-white/5 px-1.5 py-0.5 rounded">
+                {blockedThreshold} Issues
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min="1"
+                max="20"
+                value={blockedThreshold}
+                onChange={(e) => onChangeBlockedThreshold(Number(e.target.value))}
+                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -327,6 +409,114 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Custom PDF Header Branding details */}
+          <div className="space-y-3 border-t border-white/5 pt-3 mt-1.5">
+            <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
+              💼 Brand & Header Customization
+            </span>
+            
+            <div className="space-y-1.5">
+              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-widest">
+                Company / Department Name
+              </label>
+              <input
+                type="text"
+                value={pdfCompanyName}
+                onChange={(e) => onChangePdfCompanyName(e.target.value)}
+                placeholder="e.g. OmniSync Suite"
+                className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg px-2.5 py-1.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 placeholder-slate-600 transition-all"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-widest">
+                  Header Title
+                </label>
+                <input
+                  type="text"
+                  value={pdfHeaderTitle}
+                  onChange={(e) => onChangePdfHeaderTitle(e.target.value)}
+                  placeholder="e.g. Jira Executive Report"
+                  className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg px-2.5 py-1.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 placeholder-slate-600 transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-widest">
+                  Header Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={pdfHeaderSubtitle}
+                  onChange={(e) => onChangePdfHeaderSubtitle(e.target.value)}
+                  placeholder="e.g. PMO Metrics Overview"
+                  className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg px-2.5 py-1.5 font-sans text-slate-200 focus:outline-none focus:border-blue-500/80 placeholder-slate-600 transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-widest">
+                Company Logo Image
+              </label>
+              <div 
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      onChangePdfLogoBase64(reader.result as string);
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+                className={`border border-dashed rounded-xl p-3 text-center transition-all cursor-pointer ${
+                  isDragging ? "border-blue-500 bg-blue-500/10" : "border-white/10 hover:border-white/20 bg-slate-950/40"
+                }`}
+                onClick={() => document.getElementById("pdf-logo-upload-input")?.click()}
+              >
+                {pdfLogoBase64 ? (
+                  <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+                    <img src={pdfLogoBase64} alt="Company logo" className="max-h-8 object-contain rounded" />
+                    <button 
+                      type="button" 
+                      onClick={() => onChangePdfLogoBase64("")} 
+                      className="text-red-400 hover:text-red-300 text-[10px] font-bold uppercase tracking-wider bg-slate-900 border border-red-500/20 px-2 py-1 rounded"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-300 font-bold">Drag logo here or click to upload</p>
+                    <p className="text-[9px] text-slate-500 font-medium">Supports PNG, JPG (Max 500KB)</p>
+                  </div>
+                )}
+                <input 
+                  id="pdf-logo-upload-input" 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        onChangePdfLogoBase64(reader.result as string);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>

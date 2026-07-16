@@ -22,6 +22,7 @@ interface AuthPanelProps {
   isDiscordConnected: boolean;
   onConnectDiscord: () => void;
   onDisconnectDiscord: () => void;
+  subFilters?: { showDiscord?: boolean; showJira?: boolean };
 }
 
 export const AuthPanel: React.FC<AuthPanelProps> = ({
@@ -44,6 +45,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   isDiscordConnected,
   onConnectDiscord,
   onDisconnectDiscord,
+  subFilters,
 }) => {
   const [jiraUrl, setJiraUrl] = useState(() => {
     return localStorage.getItem("jira_url") || "https://your-domain.atlassian.net";
@@ -113,44 +115,52 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
       <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Unified Platform Selection Tab Menu */}
-      <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center justify-between shrink-0 select-none">
-        <button
-          type="button"
-          onClick={() => onChangeActivePlatform("Jira")}
-          className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activePlatform === "Jira"
-              ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
-              : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-          }`}
-        >
-          <Compass className="w-3.5 h-3.5" />
-          Jira
-        </button>
-        <button
-          type="button"
-          onClick={() => onChangeActivePlatform("Confluence")}
-          className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activePlatform === "Confluence"
-              ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
-              : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          Confluence
-        </button>
-        <button
-          type="button"
-          onClick={() => onChangeActivePlatform("Discord")}
-          className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activePlatform === "Discord"
-              ? "bg-purple-600 text-white shadow-md shadow-purple-500/10"
-              : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-          }`}
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
-          Discord
-        </button>
-      </div>
+      {!(subFilters?.showJira === false && subFilters?.showDiscord === false) && (
+        <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center justify-between shrink-0 select-none">
+          {subFilters?.showJira !== false && (
+            <button
+              type="button"
+              onClick={() => onChangeActivePlatform("Jira")}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+                activePlatform === "Jira"
+                  ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              Jira
+            </button>
+          )}
+          {subFilters?.showJira !== false && (
+            <button
+              type="button"
+              onClick={() => onChangeActivePlatform("Confluence")}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+                activePlatform === "Confluence"
+                  ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Confluence
+            </button>
+          )}
+          {subFilters?.showDiscord !== false && (
+            <button
+              type="button"
+              onClick={() => onChangeActivePlatform("Discord")}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+                activePlatform === "Discord"
+                  ? "bg-purple-600 text-white shadow-md shadow-purple-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              Discord
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between pb-2 border-b border-white/5">
         <h2 className="text-xs font-black text-white flex items-center gap-2 uppercase tracking-wider">

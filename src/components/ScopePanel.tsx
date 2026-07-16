@@ -52,6 +52,14 @@ interface ScopePanelProps {
   // Smart Filter Props
   report?: any;
   onApplySmartFilter?: (suggestion: any) => void;
+  subFilters?: { showSprints?: boolean; showDates?: boolean; showConfluence?: boolean; showDiscord?: boolean };
+
+  // Comparison Props
+  isComparisonEnabled?: boolean;
+  onChangeComparisonEnabled?: (val: boolean) => void;
+  comparisonStartDate?: string;
+  comparisonEndDate?: string;
+  onChangeComparisonDates?: (start: string, end: string) => void;
 }
 
 export const ScopePanel: React.FC<ScopePanelProps> = ({
@@ -99,6 +107,14 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
   // Smart Filter
   report,
   onApplySmartFilter,
+  subFilters,
+
+  // Comparison Props
+  isComparisonEnabled = false,
+  onChangeComparisonEnabled,
+  comparisonStartDate = "",
+  comparisonEndDate = "",
+  onChangeComparisonDates,
 }) => {
   const [loadingSuggestion, setLoadingSuggestion] = React.useState(false);
   const [aiSuggestion, setAiSuggestion] = React.useState<any | null>(null);
@@ -110,7 +126,7 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
     setShowAiBox(true);
     setAiSuggestion(null);
     try {
-      const response = await fetch("/api/gemini/suggest-filters", {
+      const response = await fetch("/api/pmo/suggest-filters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -247,7 +263,7 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
                   <span className="text-[10px] font-black uppercase text-indigo-200 tracking-wider">
-                    Gemini AI Smart Filter
+                    Intelligent PMO Smart Filter
                   </span>
                 </div>
                 <button
@@ -256,7 +272,7 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
                   disabled={loadingSuggestion}
                   className="text-[9px] font-black uppercase bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded-lg px-2.5 py-1.5 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-md"
                 >
-                  {loadingSuggestion ? "Analyzing..." : "Ask Gemini"}
+                  {loadingSuggestion ? "Analyzing..." : "Analyze Scope"}
                 </button>
               </div>
 
@@ -265,7 +281,7 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
                   {loadingSuggestion ? (
                     <div className="flex items-center gap-2 py-1.5 text-blue-400">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
-                      <span>Gemini is analyzing project bottlenecks & drafting queries...</span>
+                      <span>Analyzing project bottlenecks & drafting queries...</span>
                     </div>
                   ) : aiSuggestion ? (
                     <div className="space-y-2.5">
@@ -444,93 +460,151 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
           </div>
 
           {/* Date Created/Updated Ranges */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-slate-500" /> Created Range
-                </label>
-                <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider">
-                  <button type="button" onClick={() => setDateShortcut("created", 7)} className="text-blue-500 hover:underline">
-                    7d
-                  </button>
-                  <span className="text-slate-800">|</span>
-                  <button type="button" onClick={() => setDateShortcut("created", 30)} className="text-blue-500 hover:underline">
-                    30d
-                  </button>
+          {subFilters?.showDates !== false && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" /> Created Range
+                  </label>
+                  <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider">
+                    <button type="button" onClick={() => setDateShortcut("created", 7)} className="text-blue-500 hover:underline">
+                      7d
+                    </button>
+                    <span className="text-slate-800">|</span>
+                    <button type="button" onClick={() => setDateShortcut("created", 30)} className="text-blue-500 hover:underline">
+                      30d
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={createdDateStart}
+                    onChange={(e) => onChangeCreatedDates(e.target.value, createdDateEnd)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
+                  />
+                  <span className="text-slate-600 text-xs font-semibold">to</span>
+                  <input
+                    type="date"
+                    value={createdDateEnd}
+                    onChange={(e) => onChangeCreatedDates(createdDateStart, e.target.value)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
+                  />
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={createdDateStart}
-                  onChange={(e) => onChangeCreatedDates(e.target.value, createdDateEnd)}
-                  className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
-                />
-                <span className="text-slate-600 text-xs font-semibold">to</span>
-                <input
-                  type="date"
-                  value={createdDateEnd}
-                  onChange={(e) => onChangeCreatedDates(createdDateStart, e.target.value)}
-                  className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
-                />
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" /> Updated Range
+                  </label>
+                  <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider">
+                    <button type="button" onClick={() => setDateShortcut("updated", 7)} className="text-blue-500 hover:underline">
+                      7d
+                    </button>
+                    <span className="text-slate-800">|</span>
+                    <button type="button" onClick={() => setDateShortcut("updated", 30)} className="text-blue-500 hover:underline">
+                      30d
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={updatedDateStart}
+                    onChange={(e) => onChangeUpdatedDates(e.target.value, updatedDateEnd)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
+                  />
+                  <span className="text-slate-600 text-xs font-semibold">to</span>
+                  <input
+                    type="date"
+                    value={updatedDateEnd}
+                    onChange={(e) => onChangeUpdatedDates(updatedDateStart, e.target.value)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
+                  />
+                </div>
               </div>
+            </div>
+          )}
+
+          {/* Date Range Comparison Toggle and Inputs */}
+          <div className="space-y-3 border-t border-white/5 pt-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="block text-[10px] font-black text-slate-200 uppercase tracking-wider">
+                  📊 Date Range Comparison
+                </span>
+                <p className="text-[9px] text-slate-500 font-semibold mt-0.5">
+                  Compare metrics between two distinct time periods
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChangeComparisonEnabled?.(!isComparisonEnabled)}
+                className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  isComparisonEnabled ? "bg-gradient-to-r from-emerald-500 to-teal-600" : "bg-slate-800"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                    isComparisonEnabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-slate-500" /> Updated Range
-                </label>
-                <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider">
-                  <button type="button" onClick={() => setDateShortcut("updated", 7)} className="text-blue-500 hover:underline">
-                    7d
-                  </button>
-                  <span className="text-slate-800">|</span>
-                  <button type="button" onClick={() => setDateShortcut("updated", 30)} className="text-blue-500 hover:underline">
-                    30d
-                  </button>
+            {isComparisonEnabled && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="space-y-1.5">
+                  <label className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest block">
+                    Comparison Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={comparisonStartDate}
+                    onChange={(e) => onChangeComparisonDates?.(e.target.value, comparisonEndDate)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-emerald-500/80 transition-all font-medium font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest block">
+                    Comparison End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={comparisonEndDate}
+                    onChange={(e) => onChangeComparisonDates?.(comparisonStartDate, e.target.value)}
+                    className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-emerald-500/80 transition-all font-medium font-mono"
+                  />
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={updatedDateStart}
-                  onChange={(e) => onChangeUpdatedDates(e.target.value, updatedDateEnd)}
-                  className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
-                />
-                <span className="text-slate-600 text-xs font-semibold">to</span>
-                <input
-                  type="date"
-                  value={updatedDateEnd}
-                  onChange={(e) => onChangeUpdatedDates(updatedDateStart, e.target.value)}
-                  className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500/80 transition-all font-medium font-mono"
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Sprints & Assignee Optional Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                <Compass className="w-3.5 h-3.5 text-slate-500" /> Target Sprint
-              </label>
-              <select
-                value={selectedSprint}
-                onChange={(e) => onChangeSprint(e.target.value)}
-                className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2.5 focus:outline-none focus:border-blue-500/80 transition-all font-semibold"
-              >
-                <option value="">-- All Active & Historical Sprints --</option>
-                {availableSprints.map((sprint) => (
-                  <option key={sprint} value={sprint}>
-                    {sprint}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {subFilters?.showSprints !== false ? (
+              <div className="space-y-1.5">
+                <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                  <Compass className="w-3.5 h-3.5 text-slate-500" /> Target Sprint
+                </label>
+                <select
+                  value={selectedSprint}
+                  onChange={(e) => onChangeSprint(e.target.value)}
+                  className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg p-2.5 focus:outline-none focus:border-blue-500/80 transition-all font-semibold"
+                >
+                  <option value="">-- All Active & Historical Sprints --</option>
+                  {availableSprints.map((sprint) => (
+                    <option key={sprint} value={sprint}>
+                      {sprint}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
-            <div className="space-y-1.5">
+            <div className={subFilters?.showSprints !== false ? "space-y-1.5" : "space-y-1.5 col-span-2"}>
               <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                 <User className="w-3.5 h-3.5 text-slate-500" /> Target Assignee
               </label>

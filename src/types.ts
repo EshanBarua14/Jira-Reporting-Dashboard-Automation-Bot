@@ -17,6 +17,7 @@ export interface JiraIssue {
   resolution: string | null;
   timeSpent: number | null; // in seconds or hours
   remainingEstimate: number | null; // in seconds or hours
+  originalEstimate?: number | null; // in seconds or hours
   labels: string[];
   components: string[];
   description?: string;
@@ -135,6 +136,25 @@ export interface GeneratedReport {
     avgMessageLength: number;
     activeHour: number;
     messagesByChannel: { [channel: string]: number };
+  };
+  comparisonMetrics?: {
+    totalIssues: number;
+    doneCount: number;
+    inProgressCount: number;
+    todoCount: number;
+    blockedCount: number;
+    completionPercentage: number;
+    overdueIssues: number;
+    unassignedIssues: number;
+    bugsToStoriesRatio: string;
+    averageCycleTime: number;
+    sprintVelocity: number;
+    issuesPerAssignee: { [assignee: string]: number };
+  };
+  comparisonConfig?: {
+    enabled: boolean;
+    startDate: string;
+    endDate: string;
   };
 }
 

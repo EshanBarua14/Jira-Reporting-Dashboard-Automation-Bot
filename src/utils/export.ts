@@ -11,7 +11,15 @@ export function getFormattedFilename(template: string, projects: string[]): stri
 }
 
 export function exportToCSV(issues: JiraIssue[], columns: ColumnDefinition[], filename: string) {
-  const activeColumns = columns.filter(c => c.enabled);
+  let activeColumns = columns.filter(c => c.enabled);
+  
+  // Ensure "mappedStatus" (Mapping Name) is always included
+  if (!activeColumns.some(c => c.id === "mappedStatus")) {
+    activeColumns = [
+      ...activeColumns,
+      { id: "mappedStatus", label: "Mapping Name", enabled: true }
+    ];
+  }
   
   // Header Row
   const headers = activeColumns.map(col => `"${col.label.replace(/"/g, '""')}"`).join(",");

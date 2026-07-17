@@ -4,6 +4,7 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
 import os from "os";
+import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import {
   initDatabase,
@@ -1040,6 +1041,105 @@ app.post("/api/pmo/suggest-bulk-updates", async (req, res) => {
 
   } catch (error: any) {
     return res.status(500).json({ error: "Failed to process smart automation suggestions.", details: error.message });
+  }
+});
+
+
+// Lazy initialization of Gemini client to prevent startup failures if key is missing
+let aiClient: GoogleGenAI | null = null;
+function getGeminiClient() {
+  if (!aiClient) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error("GEMINI_API_KEY environment variable is required but missing. Please set it in your Settings > Secrets panel.");
+    }
+    aiClient = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+  return aiClient;
+}
+
+// AI Auto-Map Suggestions endpoint using Gemini 3.5 Flash and Structured JSON Output
+app.post("/api/gemini/auto-map", async (req, res) => {
+  try {
+    const { statuses } = req.body;
+    if (!statuses || !Array.isArray(statuses) || statuses.length === 0) {
+      return res.status(400).json({ error: "No statuses provided for suggestions." });
+    }
+
+    const ai = getGeminiClient();
+
+    const formattedList = statuses.map((s: any) => {
+      if (typeof s === "string") {
+        return `- Status Name: "${s}"`;
+      }
+      return `- Status Name: "${s.name || ""}"${s.description ? `, Description: "${s.description}"` : ""}`;
+    }).join("\n");
+
+    const prompt = `You are a product management and Jira workflows expert.
+Analyze the following custom Jira statuses and suggest the best category mapping for each of them.
+Each status MUST be mapped to one of these exact four categories: "To Do", "In Progress", "Done", or "Blocked".
+
+Here is the list of Jira statuses to categorize:
+${formattedList}
+
+Provide your mappings in the requested structured JSON format, including a brief, clear reasoning of why that status fits the category.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an elite agile project manager. Analyze Jira statuses and categorize them strictly into 'To Do', 'In Progress', 'Done', or 'Blocked'. For each status, provide a highly professional, short explanation.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            suggestions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  statusName: { 
+                    type: Type.STRING,
+                    description: "The original status name passed in the request."
+                  },
+                  category: { 
+                    type: Type.STRING,
+                    description: "Must be exactly 'To Do', 'In Progress', 'Done', or 'Blocked'."
+                  },
+                  reasoning: { 
+                    type: Type.STRING,
+                    description: "A short professional reasoning (under 15 words) for this categorization."
+                  }
+                },
+                required: ["statusName", "category", "reasoning"]
+              }
+            }
+          },
+          required: ["suggestions"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("No response from Gemini API.");
+    }
+
+    const parsed = JSON.parse(text);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.error("AI Auto-Map error:", error);
+    return res.status(500).json({ 
+      error: "AI Auto-Map execution failed.", 
+      details: error.message 
+    });
   }
 });
 

@@ -26,6 +26,7 @@ const DEFAULT_COLUMNS: ColumnDefinition[] = [
   { id: "summary", label: "Summary", enabled: true },
   { id: "type", label: "Issue Type", enabled: true },
   { id: "status", label: "Status", enabled: true },
+  { id: "mappedStatus", label: "Mapping Name", enabled: true },
   { id: "priority", label: "Priority", enabled: true },
   { id: "assignee", label: "Assignee", enabled: true },
   { id: "reporter", label: "Reporter", enabled: false },
@@ -3195,6 +3196,8 @@ export default function App() {
                     onUpdateMapping={setStatusMapping}
                     categoryColors={categoryColors}
                     onUpdateCategoryColors={handleUpdateCategoryColors}
+                    issues={isSandbox ? getSandboxIssues() : (report?.issues || [])}
+                    addToast={addToast}
                   />
                 );
                 break;

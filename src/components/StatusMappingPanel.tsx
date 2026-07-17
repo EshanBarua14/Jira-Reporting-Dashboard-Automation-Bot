@@ -244,6 +244,8 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   const [filterProgressBlocked, setFilterProgressBlocked] = useState(false);
   const [showInfoPopover, setShowInfoPopover] = useState(false);
   const [isAutoMapping, setIsAutoMapping] = useState(false);
+  const [swapSourceCat, setSwapSourceCat] = useState<"To Do" | "In Progress" | "Done" | "Blocked">("To Do");
+  const [swapTargetCat, setSwapTargetCat] = useState<"To Do" | "In Progress" | "Done" | "Blocked">("In Progress");
   const [hoveredPoint, setHoveredPoint] = useState<{
     bucket: string;
     idx: number;
@@ -544,6 +546,63 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     addAuditLog(
       "Bulk Assignment",
       `Assigned ${selectedStatuses.length} statuses (${selectedStatuses.join(", ")}) to "${category}".`
+    );
+    setSelectedStatuses([]);
+    setSelectedTemplateKey("");
+  };
+
+  const detectedSwapCategories = React.useMemo(() => {
+    if (selectedStatuses.length === 0) return [];
+    const cats = new Set<"To Do" | "In Progress" | "Done" | "Blocked">();
+    selectedStatuses.forEach((status) => {
+      cats.add((mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked");
+    });
+    return Array.from(cats);
+  }, [selectedStatuses, mapping]);
+
+  const handleQuickSwap = (
+    catA: "To Do" | "In Progress" | "Done" | "Blocked",
+    catB: "To Do" | "In Progress" | "Done" | "Blocked"
+  ) => {
+    if (selectedStatuses.length === 0) return;
+    if (catA === catB) {
+      addToast?.("Invalid Swap", "Please select two different categories to swap.", "warning", 2500);
+      return;
+    }
+    pushToHistory(mapping);
+    const newMapping = { ...mapping };
+    let swapCountA = 0;
+    let swapCountB = 0;
+    const swappedStatuses: string[] = [];
+
+    selectedStatuses.forEach((status) => {
+      const currentCat = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+      if (currentCat === catA) {
+        newMapping[status] = catB;
+        swapCountA++;
+        swappedStatuses.push(`${status} (${catA} → ${catB})`);
+      } else if (currentCat === catB) {
+        newMapping[status] = catA;
+        swapCountB++;
+        swappedStatuses.push(`${status} (${catB} → ${catA})`);
+      }
+    });
+
+    if (swapCountA === 0 && swapCountB === 0) {
+      addToast?.("No Statuses Swapped", `None of the selected statuses belong to '${catA}' or '${catB}'.`, "info", 3000);
+      return;
+    }
+
+    onUpdateMapping(newMapping);
+    addToast?.(
+      "Quick Swap Successful",
+      `Swapped categories for ${swapCountA + swapCountB} statuses between '${catA}' and '${catB}'.`,
+      "success",
+      3000
+    );
+    addAuditLog(
+      "Quick Swap",
+      `Swapped category assignments between "${catA}" and "${catB}" for selected statuses: ${swappedStatuses.join(", ")}.`
     );
     setSelectedStatuses([]);
     setSelectedTemplateKey("");
@@ -1383,26 +1442,77 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
           </div>
 
           {selectedStatuses.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1">
-                <CheckSquare className="w-3.5 h-3.5" /> Assign To:
-              </span>
-              <div className="flex gap-1">
-                {(["To Do", "In Progress", "Done", "Blocked"] as const).map((category) => {
-                  return (
-                    <button
-                      type="button"
-                      key={category}
-                      onClick={() => handleBulkApply(category)}
-                      className="bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-white/20 text-slate-200 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide"
-                    >
-                      {category === "To Do" && "📂 To Do"}
-                      {category === "In Progress" && "⚡ Progress"}
-                      {category === "Done" && "✓ Done"}
-                      {category === "Blocked" && "⚠️ Blocked"}
-                    </button>
-                  );
-                })}
+            <div className="flex flex-col gap-3 w-full sm:w-auto">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1">
+                  <CheckSquare className="w-3.5 h-3.5" /> Assign To:
+                </span>
+                <div className="flex gap-1 flex-wrap">
+                  {(["To Do", "In Progress", "Done", "Blocked"] as const).map((category) => {
+                    return (
+                      <button
+                        type="button"
+                        key={category}
+                        onClick={() => handleBulkApply(category)}
+                        className="bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-white/20 text-slate-200 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide"
+                      >
+                        {category === "To Do" && "📂 To Do"}
+                        {category === "In Progress" && "⚡ Progress"}
+                        {category === "Done" && "✓ Done"}
+                        {category === "Blocked" && "⚠️ Blocked"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quick Swap Features */}
+              <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-2.5">
+                <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1 shrink-0">
+                  ⇅ Quick Swap:
+                </span>
+                
+                {detectedSwapCategories.length === 2 && (
+                  <button
+                    type="button"
+                    onClick={() => handleQuickSwap(detectedSwapCategories[0], detectedSwapCategories[1])}
+                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 hover:border-amber-500/35 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide flex items-center gap-1 shrink-0"
+                    title={`Swap selected statuses between '${detectedSwapCategories[0]}' and '${detectedSwapCategories[1]}'`}
+                  >
+                    Swap {detectedSwapCategories[0]} ↔ {detectedSwapCategories[1]}
+                  </button>
+                )}
+
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <select
+                    value={swapSourceCat}
+                    onChange={(e) => setSwapSourceCat(e.target.value as any)}
+                    className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
+                  >
+                    <option value="To Do">📂 To Do</option>
+                    <option value="In Progress">⚡ Progress</option>
+                    <option value="Done">✓ Done</option>
+                    <option value="Blocked">⚠️ Blocked</option>
+                  </select>
+                  <span className="text-slate-500">↔</span>
+                  <select
+                    value={swapTargetCat}
+                    onChange={(e) => setSwapTargetCat(e.target.value as any)}
+                    className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
+                  >
+                    <option value="To Do">📂 To Do</option>
+                    <option value="In Progress">⚡ Progress</option>
+                    <option value="Done">✓ Done</option>
+                    <option value="Blocked">⚠️ Blocked</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickSwap(swapSourceCat, swapTargetCat)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-black text-[9px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wider"
+                  >
+                    Swap
+                  </button>
+                </div>
               </div>
             </div>
           ) : (

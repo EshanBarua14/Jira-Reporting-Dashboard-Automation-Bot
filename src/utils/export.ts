@@ -1,4 +1,4 @@
-import { JiraIssue, ColumnDefinition } from "../types";
+import { JiraIssue, ColumnDefinition, MetricDefinition } from "../types";
 
 export function getFormattedFilename(template: string, projects: string[]): string {
   const dateStr = new Date().toISOString().split("T")[0];
@@ -63,7 +63,10 @@ export function exportToPDF(
   logoBase64?: string,
   headerTitle?: string,
   headerSubtitle?: string,
-  companyName?: string
+  companyName?: string,
+  metrics?: MetricDefinition[],
+  metricsHistory?: any[],
+  reportMetrics?: any
 ) {
   const activeColumns = columns.filter(c => c.enabled);
   const printWindow = window.open("", "_blank");
@@ -83,6 +86,114 @@ export function exportToPDF(
   }).join("");
 
   const showWatermark = watermark && watermark !== "None";
+
+  // Dynamic deep-dive metrics HTML if provided
+  let metricsDeepDiveHtml = "";
+  if (metrics && reportMetrics) {
+    const enabledMetrics = metrics.filter(m => m.enabled);
+    
+    // Helper to get metric formatted value
+    const getMetricDisplayValue = (id: string, source: any) => {
+      if (!source) return "--";
+      let val = source[id];
+      if (val === undefined || val === null) {
+        if (id === "pendingCount") {
+          const todo = source["todoCount"] || 0;
+          const ip = source["inProgressCount"] || 0;
+          return String(todo + ip);
+        }
+        return "--";
+      }
+      if (id === "completionPercentage") {
+        return `${Number(val).toFixed(1)}%`;
+      }
+      if (id === "averageCycleTime") {
+        return `${Number(val).toFixed(1)} days`;
+      }
+      return String(val);
+    };
+
+    const kpiCardsHtml = enabledMetrics.map(m => {
+      const valStr = getMetricDisplayValue(m.id, reportMetrics);
+      return `
+        <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; background-color: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+          <div style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; margin-bottom: 2px;">${m.label}</div>
+          <div style="font-size: 16px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">${valStr}</div>
+          <div style="font-size: 9px; color: #94a3b8; font-weight: 500; line-height: 1.2;">${m.description}</div>
+        </div>
+      `;
+    }).join("");
+
+    // Build History Trend Log Table (last 12 entries)
+    let historyTableHtml = "";
+    if (metricsHistory && metricsHistory.length > 0) {
+      // Sort and take the last 12 entries
+      const sortedHistory = [...metricsHistory]
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        .slice(-12);
+
+      const historyRows = sortedHistory.map((h, i) => {
+        const dateStr = new Date(h.timestamp).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const mObj = h.metrics || {};
+        const compl = mObj.completionPercentage !== undefined ? `${Number(mObj.completionPercentage).toFixed(1)}%` : "--";
+        const velocity = mObj.sprintVelocity !== undefined ? String(mObj.sprintVelocity) : "--";
+        const cycle = mObj.averageCycleTime !== undefined ? `${Number(mObj.averageCycleTime).toFixed(1)}d` : "--";
+        
+        return `
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 6px 8px; font-weight: 600; color: #475569;">Run ${i + 1} (${dateStr})</td>
+            <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: #0f172a;">${mObj.totalIssues ?? "--"}</td>
+            <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: #0f172a;">${compl}</td>
+            <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: #0f172a;">${velocity}</td>
+            <td style="padding: 6px 8px; text-align: center; font-weight: 700; color: #0f172a;">${cycle}</td>
+          </tr>
+        `;
+      }).join("");
+
+      historyTableHtml = `
+        <table style="width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 0;">
+          <thead>
+            <tr style="border-bottom: 2px solid #cbd5e1; background-color: #f1f5f9; font-weight: 800; color: #475569; text-transform: uppercase;">
+              <th style="padding: 6px 8px; text-align: left;">Run Info</th>
+              <th style="padding: 6px 8px; text-align: center;">Issues</th>
+              <th style="padding: 6px 8px; text-align: center;">Completion</th>
+              <th style="padding: 6px 8px; text-align: center;">Velocity</th>
+              <th style="padding: 6px 8px; text-align: center;">Cycle Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${historyRows}
+          </tbody>
+        </table>
+      `;
+    } else {
+      historyTableHtml = `<div style="font-size: 11px; color: #94a3b8; font-style: italic; padding: 20px; text-align: center; font-weight: 500;">No history log entries available.</div>`;
+    }
+
+    metricsDeepDiveHtml = `
+      <div style="margin-top: 20px; margin-bottom: 25px; page-break-inside: avoid;">
+        <h2 style="font-size: 13px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+          📊 Executive Metric Deep-Dive & Target KPIs
+        </h2>
+        <div style="display: flex; gap: 20px;">
+          <div style="flex: 1.2; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background-color: #f8fafc;">
+            <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">
+              Active KPI Dashboard
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+              ${kpiCardsHtml}
+            </div>
+          </div>
+          <div style="flex: 1; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background-color: #f8fafc;">
+            <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">
+              Historical Trend Log (Last 12 Runs)
+            </h3>
+            ${historyTableHtml}
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   printWindow.document.write(`
     <html>
@@ -137,6 +248,11 @@ export function exportToPDF(
         </div>
         ` : ""}
 
+        ${metricsDeepDiveHtml}
+
+        <h3 style="font-size: 13px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-top: 25px; margin-bottom: 12px;">
+          📋 Active Scope Issue Breakdown
+        </h3>
         <table>
           <thead>
             <tr>${tableHeaders}</tr>

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { 
   Download, FileOutput, HelpCircle, FileSpreadsheet, FileText, Cloud, Clock, 
   Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check,
-  Database, Code, FileJson
+  Database, Code, FileJson, RotateCcw
 } from "lucide-react";
 import { RecentExport } from "../types";
 
@@ -46,6 +46,7 @@ interface ExportPanelProps {
   onChangeOverdueThreshold: (val: number) => void;
   blockedThreshold: number;
   onChangeBlockedThreshold: (val: number) => void;
+  onResetLayout?: () => void;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
@@ -86,6 +87,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onChangeOverdueThreshold,
   blockedThreshold,
   onChangeBlockedThreshold,
+  onResetLayout,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
@@ -567,6 +569,23 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         <div className="text-[10px] text-slate-500 font-medium border-b border-white/5 pb-3.5">
           Example: <span className="text-slate-400">jira-report-ALPHA_MOBI-2026-07-04.csv</span>
         </div>
+      </div>
+
+      {/* Workspace & Layout Settings */}
+      <div className="space-y-2 p-3 bg-slate-950/20 border border-white/5 rounded-xl">
+        <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+          <RotateCcw className="w-3.5 h-3.5 text-red-400" /> Workspace Layout Settings
+        </label>
+        <p className="text-[10px] text-slate-500 font-medium leading-normal">
+          Reset all saved panel order sequences, collapse states, and workspace layout configurations back to their factory defaults.
+        </p>
+        <button
+          type="button"
+          onClick={onResetLayout}
+          className="w-full text-[10.5px] py-2.5 px-3 rounded-lg border font-bold bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-300 transition-all duration-300 flex items-center justify-center gap-1.5 uppercase cursor-pointer hover:shadow-[0_0_12px_rgba(239,68,68,0.15)]"
+        >
+          <RotateCcw className="w-3.5 h-3.5" /> Reset Workspace Layout
+        </button>
       </div>
 
       {/* Recent Exports Log */}

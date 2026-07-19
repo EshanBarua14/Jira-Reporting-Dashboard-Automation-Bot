@@ -1857,7 +1857,20 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     const name = safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".pdf";
-    exportToPDF(`Jira Executive Report - ${safeConfig.selectedProjects.join(", ")}`, issues, safeConfig.columns);
+    exportToPDF(
+      `Jira Executive Report - ${safeConfig.selectedProjects.join(", ")}`,
+      issues,
+      safeConfig.columns,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      report?.config?.metrics,
+      metricsHistory,
+      report?.metrics
+    );
     if (onRecordExport) {
       onRecordExport("PDF", name);
     }
@@ -1882,7 +1895,20 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     const name = "Selected_Issues_" + safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".pdf";
-    exportToPDF(`Jira Executive Report - Selected Issues (${selectedIssues.length})`, selectedIssues, safeConfig.columns);
+    exportToPDF(
+      `Jira Executive Report - Selected Issues (${selectedIssues.length})`,
+      selectedIssues,
+      safeConfig.columns,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      report?.config?.metrics,
+      metricsHistory,
+      report?.metrics
+    );
     if (onRecordExport) {
       onRecordExport("PDF", name);
     }
@@ -6335,7 +6361,15 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             `One-Click Status Report (${filteredIssues.length} Current Scope Tickets)`,
             filteredIssues,
             safeConfig.columns,
-            filename
+            filename,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            report?.config?.metrics,
+            metricsHistory,
+            report?.metrics
           );
           if (onRecordExport) {
             onRecordExport("PDF", filename);

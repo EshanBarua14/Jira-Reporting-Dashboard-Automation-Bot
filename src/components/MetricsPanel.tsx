@@ -47,6 +47,29 @@ interface MetricsPanelProps {
   addToast?: (title: string, message: string, type?: "info" | "success" | "warning" | "error", duration?: number) => void;
 }
 
+const metricContainerVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    },
+  },
+};
+
+const metricCardVariants = {
+  hidden: { opacity: 0, y: 15 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      type: "spring",
+      stiffness: 110,
+      damping: 14,
+    },
+  },
+};
+
 interface HistoryItem {
   name: string;
   date: string;
@@ -108,6 +131,115 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   const [zoomRange, setZoomRange] = React.useState<[number, number] | null>(null);
   const [showForecast, setShowForecast] = React.useState<boolean>(false);
   const [showAnomalies, setShowAnomalies] = React.useState<boolean>(true);
+
+  // Velocity Alert Threshold State (persisted in localStorage, defaults to 20)
+  const [velocityThreshold, setVelocityThreshold] = React.useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("omnisync_velocity_threshold");
+      return saved ? parseInt(saved) : 20;
+    } catch {
+      return 20;
+    }
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem("omnisync_velocity_threshold", velocityThreshold.toString());
+  }, [velocityThreshold]);
+
+  // Contributing Issues Modal States
+  const [selectedMetricForModal, setSelectedMetricForModal] = React.useState<MetricDefinition | null>(null);
+  const [modalSearchQuery, setModalSearchQuery] = React.useState("");
+
+  // AI Auto-Triage States
+  const [triageLoading, setTriageLoading] = React.useState(false);
+  const [triageResult, setTriageResult] = React.useState<{
+    summary: string;
+    imbalances: { assignee: string; issueCount: number; storyPoints: number; severity: string }[];
+    proposals: {
+      issueKey: string;
+      issueSummary: string;
+      priority: string;
+      currentAssignee: string;
+      suggestedAssignee: string;
+      reasoning: string;
+    }[];
+  } | null>(null);
+  const [showTriageModal, setShowTriageModal] = React.useState(false);
+
+  // Issues per assignee calculated from current active report
+  const issuesPerAssignee = React.useMemo(() => {
+    if (!report || !report.issues) return {};
+    const map: Record<string, number> = {};
+    report.issues.forEach((i) => {
+      const assigneeName = i.assignee || "Unassigned";
+      map[assigneeName] = (map[assigneeName] || 0) + 1;
+    });
+    return map;
+  }, [report]);
+
+  // Retrieve contributing issues for a specific metric
+  const getContributingIssues = (metricId: string) => {
+    if (!report || !report.issues) return [];
+    const todayStr = new Date().toISOString().split("T")[0];
+    
+    switch (metricId) {
+      case "totalIssues":
+        return report.issues;
+      case "doneCount":
+        return report.issues.filter(i => i.mappedStatus === "Done");
+      case "pendingCount":
+        return report.issues.filter(i => i.mappedStatus !== "Done");
+      case "completionPercentage":
+        return report.issues.filter(i => i.mappedStatus === "Done");
+      case "overdueIssues":
+        return report.issues.filter(i => {
+          if (i.mappedStatus === "Done" || !i.dueDate) return false;
+          return i.dueDate < todayStr;
+        });
+      case "unassignedIssues":
+        return report.issues.filter(i => !i.assignee || i.assignee === "Unassigned" || i.assigneeId === "");
+      case "bugsToStoriesRatio":
+        return report.issues.filter(i => i.type === "Bug" || i.type === "Story");
+      case "averageCycleTime":
+        return report.issues.filter(i => i.mappedStatus === "Done" && i.created && i.updated);
+      case "sprintVelocity":
+        return report.issues.filter(i => i.mappedStatus === "Done" && (i.storyPoints !== null && i.storyPoints !== undefined));
+      default:
+        return report.issues;
+    }
+  };
+
+  // Auto-Triage function using secure Gemini proxy
+  const handleAutoTriage = async () => {
+    if (!report || !report.issues || report.issues.length === 0) {
+      addToast?.("Triage Unavailable", "Please compile a report with issues first.", "warning", 3000);
+      return;
+    }
+    setTriageLoading(true);
+    try {
+      const response = await fetch("/api/pmo/auto-triage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issues: report.issues,
+          issuesPerAssignee
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to analyze team workload.");
+      }
+      const data = await response.json();
+      setTriageResult(data);
+      setShowTriageModal(true);
+      addToast?.("Auto-Triage Complete", "Gemini has successfully completed team workload analysis.", "success", 4000);
+    } catch (err: any) {
+      console.error(err);
+      addToast?.("Triage Failed", err.message || "An unexpected error occurred during workload analysis.", "error", 4000);
+    } finally {
+      setTriageLoading(false);
+    }
+  };
 
   // Floating sticky note state for clicked data point
   const [clickedPoint, setClickedPoint] = React.useState<{
@@ -1597,6 +1729,25 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
           <span className="text-slate-800 hidden sm:inline">|</span>
 
+          {/* Velocity Alert Threshold Control */}
+          <div className="flex items-center gap-2 bg-slate-950/60 border border-white/5 rounded-xl px-2.5 py-1 text-[9.5px] text-slate-300">
+            <span className="font-black uppercase text-slate-400">Velocity Alert:</span>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={velocityThreshold}
+              onChange={(e) => {
+                const val = Math.max(1, Math.min(100, parseInt(e.target.value) || 20));
+                setVelocityThreshold(val);
+              }}
+              className="w-10 bg-slate-900 border border-white/10 rounded px-1 text-center text-white focus:outline-none focus:border-blue-500 font-bold text-xs"
+            />
+            <span className="font-black text-slate-500">%</span>
+          </div>
+
+          <span className="text-slate-800 hidden sm:inline">|</span>
+
           {/* Moving Average Noise Reduction Smoothing Toggle */}
           <button
             type="button"
@@ -1623,7 +1774,24 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             <p className="text-[11px] text-slate-400 font-medium">
               Select and toggle active PMO metrics to track on your main executive dashboard bar. Individual cards are monitored in real-time, compute live deviations, and support custom annotations on specific data points.
             </p>
-            <div className="flex gap-3 items-center text-[10px] font-black uppercase tracking-wider shrink-0 ml-auto sm:ml-4">
+            <div className="flex flex-wrap gap-3 items-center text-[10px] font-black uppercase tracking-wider shrink-0 ml-auto sm:ml-4">
+              {/* Auto-Triage Action Button */}
+              <button
+                type="button"
+                disabled={triageLoading}
+                onClick={handleAutoTriage}
+                className={`text-[9.5px] font-black uppercase px-3 py-1.5 rounded-xl border cursor-pointer transition-all flex items-center gap-1.5 ${
+                  triageLoading
+                    ? "bg-indigo-950/40 border-indigo-500/20 text-indigo-400 animate-pulse"
+                    : "bg-indigo-500/10 border-indigo-500/30 text-indigo-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-500 shadow-md shadow-indigo-500/5"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{triageLoading ? "Analyzing..." : "Auto-Triage Workloads"}</span>
+              </button>
+
+              <span className="text-slate-800">|</span>
+
               <button type="button" onClick={selectAll} className="text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">
                 All
               </button>
@@ -1635,7 +1803,12 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           </div>
 
           {/* KPI Selection Card Grid with Automated Deviation Alert System */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <motion.div 
+            variants={metricContainerVariants}
+            initial="hidden"
+            animate="show"
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          >
             {metrics.map((m) => {
               const formulas = METRIC_FORMULAS[m.id] || { formula: "Default count metrics", source: "Normalized issues" };
               
@@ -1668,12 +1841,14 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               }
 
               const deviationPct = historicalAvg !== 0 ? ((currentVal - historicalAvg) / historicalAvg) * 100 : 0;
-              const isDeviationAlert = Math.abs(deviationPct) > 20;
+              const threshold = m.id === "sprintVelocity" ? velocityThreshold : 20;
+              const isDeviationAlert = Math.abs(deviationPct) > threshold;
               const mode = cardCompareModes[m.id] || "previous";
 
               return (
-                <div 
+                <motion.div 
                   key={m.id} 
+                  variants={metricCardVariants}
                   className={`relative group rounded-xl border transition-all duration-300 p-3 flex flex-col justify-between ${
                     isDeviationAlert 
                       ? "animate-red-flash-card border-rose-500/40 text-white"
@@ -1682,6 +1857,19 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                         : "border-white/5 bg-slate-950/20 text-slate-300 hover:border-white/10 hover:bg-slate-950/30"
                   }`}
                 >
+                  {/* Expandable Deep-Dive Trigger Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedMetricForModal(m);
+                    }}
+                    className="absolute top-2.5 right-2.5 p-1 text-slate-500 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer z-10"
+                    title="View contributing issues"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => toggleMetric(m.id)}
@@ -1697,11 +1885,11 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 pr-6">
                         <span className="text-xs font-bold text-slate-200 truncate">{m.label}</span>
                         {getMetricDelta(m.id, mode)}
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium truncate">{m.description}</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium truncate pr-6">{m.description}</div>
                     </div>
                   </button>
 
@@ -1875,10 +2063,10 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               );
             })}
-          </div>
+          </motion.div>
         </div>
       ) : (
         /* RENDER VIEW 2: Advanced Trend & Correlation Analyzer (Correlate Metrics View) */
@@ -2099,6 +2287,292 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* MODAL 1: Contributing Issues Deep-Dive */}
+      {selectedMetricForModal && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between bg-slate-950/30">
+              <div>
+                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-blue-400 animate-pulse" />
+                  <span>Contributing Issues: {selectedMetricForModal.label}</span>
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                  {METRIC_FORMULAS[selectedMetricForModal.id]?.formula || "Calculation formula details"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMetricForModal(null);
+                  setModalSearchQuery("");
+                }}
+                className="text-slate-400 hover:text-white text-xl p-1 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Toolbar & Search */}
+            <div className="p-4 border-b border-white/5 bg-slate-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Search contributing issues by key or summary..."
+                  value={modalSearchQuery}
+                  onChange={(e) => setModalSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Total Contributing: <span className="text-white font-black">{getContributingIssues(selectedMetricForModal.id).length}</span> issues
+              </div>
+            </div>
+
+            {/* Issues Table List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {(() => {
+                const allContrib = getContributingIssues(selectedMetricForModal.id);
+                const filtered = allContrib.filter(i => 
+                  i.key.toLowerCase().includes(modalSearchQuery.toLowerCase()) ||
+                  i.summary.toLowerCase().includes(modalSearchQuery.toLowerCase())
+                );
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="py-12 text-center text-slate-500 font-bold text-xs">
+                      No matching contributing issues found.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-white/5 text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                          <th className="py-2.5 px-3">Key</th>
+                          <th className="py-2.5 px-3">Summary</th>
+                          <th className="py-2.5 px-3">Type</th>
+                          <th className="py-2.5 px-3">Priority</th>
+                          <th className="py-2.5 px-3">Assignee</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          {selectedMetricForModal.id === "sprintVelocity" && <th className="py-2.5 px-3">Points</th>}
+                          {selectedMetricForModal.id === "overdueIssues" && <th className="py-2.5 px-3">Due Date</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 font-medium text-slate-300">
+                        {filtered.map((issue) => (
+                          <tr key={issue.key} className="hover:bg-white/5 transition-colors">
+                            <td className="py-2 px-3 font-mono text-blue-400 font-black whitespace-nowrap">{issue.key}</td>
+                            <td className="py-2 px-3 truncate max-w-xs" title={issue.summary}>{issue.summary}</td>
+                            <td className="py-2 px-3">
+                              <span className="bg-slate-950 px-2 py-0.5 rounded border border-white/10 text-[9px] font-bold text-slate-400 uppercase">
+                                {issue.type}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3">
+                              <span className={`text-[9px] font-extrabold ${
+                                issue.priority === "Highest" || issue.priority === "High" ? "text-rose-400" : "text-slate-400"
+                              }`}>
+                                {issue.priority}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 truncate max-w-[120px]">{issue.assignee || "Unassigned"}</td>
+                            <td className="py-2 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                issue.mappedStatus === "Done"
+                                  ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                                  : "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+                              }`}>
+                                {issue.status}
+                              </span>
+                            </td>
+                            {selectedMetricForModal.id === "sprintVelocity" && (
+                              <td className="py-2 px-3 font-mono font-black text-indigo-400">{issue.storyPoints ?? "-"}</td>
+                            )}
+                            {selectedMetricForModal.id === "overdueIssues" && (
+                              <td className="py-2 px-3 font-mono text-rose-400 whitespace-nowrap">{issue.dueDate || "-"}</td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 border-t border-white/5 bg-slate-950/30 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMetricForModal(null);
+                  setModalSearchQuery("");
+                }}
+                className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-4 py-2 rounded-xl border border-white/5 cursor-pointer transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: AI Workload Auto-Triage */}
+      {showTriageModal && triageResult && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between bg-slate-950/30">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    AI Team Workload Auto-Triage Analysis
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                    Powered by Gemini AI • Real-time resource balancing optimization
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTriageModal(false)}
+                className="text-slate-400 hover:text-white text-xl p-1 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+              {/* Executive Summary */}
+              <div className="bg-indigo-950/20 border border-indigo-500/10 rounded-xl p-4 space-y-2">
+                <h4 className="text-[11px] font-black text-indigo-400 uppercase tracking-wider">Executive Workload Assessment</h4>
+                <p className="text-xs text-slate-300 leading-relaxed font-medium">{triageResult.summary}</p>
+              </div>
+
+              {/* Load Distribution Analysis Grid */}
+              <div className="space-y-3">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Workload Allocation Severity</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {triageResult.imbalances.map((im) => (
+                    <div
+                      key={im.assignee}
+                      className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                        im.severity === "Overloaded"
+                          ? "bg-rose-500/5 border-rose-500/25 text-white animate-pulse"
+                          : im.severity === "Underutilized" || im.severity === "Underloaded"
+                            ? "bg-amber-500/5 border-amber-500/25 text-white"
+                            : "bg-slate-950/40 border-white/5 text-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-bold truncate">{im.assignee}</span>
+                        <span className={`text-[8.5px] font-black uppercase px-2 py-0.5 rounded-lg border ${
+                          im.severity === "Overloaded"
+                            ? "bg-rose-950/85 border-rose-500/30 text-rose-400"
+                            : im.severity === "Underutilized" || im.severity === "Underloaded"
+                              ? "bg-amber-950/85 border-amber-500/30 text-amber-400"
+                              : "bg-emerald-950/85 border-emerald-500/30 text-emerald-400"
+                        }`}>
+                          {im.severity}
+                        </span>
+                      </div>
+                      <div className="mt-4 flex items-center gap-4 text-xs font-mono font-bold text-slate-400">
+                        <div>
+                          Tickets: <span className="text-white font-black">{im.issueCount}</span>
+                        </div>
+                        <div>
+                          Points: <span className="text-white font-black">{im.storyPoints || "-"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reassignment Recommendations Checklist */}
+              <div className="space-y-3">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Proposed Reassignments & Balancing Logic</h4>
+                <div className="border border-white/5 rounded-xl overflow-hidden divide-y divide-white/5 bg-slate-950/20">
+                  {triageResult.proposals.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500 font-bold text-xs">
+                      Perfect resource distribution. No task reassignments required!
+                    </div>
+                  ) : (
+                    triageResult.proposals.map((prop, idx) => (
+                      <div key={idx} className="p-4 hover:bg-white/5 transition-colors flex flex-col sm:flex-row sm:items-start justify-between gap-4 text-xs animate-fade-in">
+                        <div className="space-y-1.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-blue-400 font-black">{prop.issueKey}</span>
+                            <span className="text-slate-500">•</span>
+                            <span className={`text-[9px] font-black uppercase ${
+                              prop.priority === "Highest" || prop.priority === "High" ? "text-rose-400" : "text-slate-400"
+                            }`}>{prop.priority} Priority</span>
+                          </div>
+                          <p className="font-semibold text-white truncate max-w-xl">{prop.issueSummary}</p>
+                          <p className="text-[10px] text-slate-400 leading-relaxed italic">{prop.reasoning}</p>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1.5 shrink-0 self-center">
+                          <div className="flex items-center gap-2 bg-slate-950 border border-white/10 rounded-lg p-1.5">
+                            <span className="text-[9.5px] text-slate-500 font-bold px-1.5 truncate max-w-[100px]" title={prop.currentAssignee}>
+                              {prop.currentAssignee}
+                            </span>
+                            <span className="text-slate-500 text-[10px] font-black">&rarr;</span>
+                            <span className="text-[9.5px] text-emerald-400 font-black px-1.5 truncate max-w-[100px]" title={prop.suggestedAssignee}>
+                              {prop.suggestedAssignee}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-4 border-t border-white/5 bg-slate-950/30 flex items-center justify-between gap-3">
+              <p className="text-[10px] text-slate-500 font-medium">
+                Note: Applying locally will instantly optimize your active session's PMO charts.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (report && report.issues) {
+                      triageResult.proposals.forEach((p) => {
+                        const t = report.issues.find(i => i.key === p.issueKey);
+                        if (t) {
+                          t.assignee = p.suggestedAssignee;
+                        }
+                      });
+                      addToast?.("Triage Reassignments Applied", "Workload reassignments have been applied to this active dashboard session.", "success", 4000);
+                      setShowTriageModal(false);
+                    }
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs px-4 py-2 rounded-xl border border-indigo-500 shadow-lg cursor-pointer transition-all"
+                >
+                  Apply Reassignments Locally
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTriageModal(false)}
+                  className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-4 py-2 rounded-xl border border-white/5 cursor-pointer transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

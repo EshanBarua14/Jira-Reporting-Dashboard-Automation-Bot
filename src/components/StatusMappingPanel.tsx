@@ -1,6 +1,48 @@
 import React, { useState, useEffect, useRef } from "react";
-import { GitCompare, Plus, Palette, CheckSquare, Layers, Download, AlertTriangle, ArrowUpDown, Sliders, History, Sparkles, Upload, Info, Search, Filter } from "lucide-react";
+import { GitCompare, Plus, Palette, CheckSquare, Layers, Download, AlertTriangle, ArrowUpDown, Sliders, History, Sparkles, Upload, Info, Search, Filter, Copy, Share2 } from "lucide-react";
 import { StatusMapping, JiraIssue } from "../types";
+
+export const getStatusConflict = (statusName: string, category: "To Do" | "In Progress" | "Done" | "Blocked") => {
+  const lower = statusName.toLowerCase();
+  
+  if (lower.includes("done") || lower.includes("resolved") || lower.includes("closed") || lower.includes("complete") || lower.includes("released") || lower.includes("shipped")) {
+    if (category !== "Done") {
+      return {
+        recommended: "Done" as const,
+        reason: `'${statusName}' is naturally a completed state. Mapping to '${category}' will distort final delivery metrics.`,
+      };
+    }
+  }
+  
+  if (lower.includes("block") || lower.includes("hold") || lower.includes("impediment") || lower.includes("stuck")) {
+    if (category !== "Blocked") {
+      return {
+        recommended: "Blocked" as const,
+        reason: `'${statusName}' represents an impediment. Mapping to '${category}' hides active bottlenecks.`,
+      };
+    }
+  }
+  
+  if (lower.includes("progress") || lower.includes("dev") || lower.includes("review") || lower.includes("testing") || lower.includes("qa") || lower.includes("verify") || lower.includes("design") || lower.includes("building") || lower.includes("sprint")) {
+    if (category === "To Do" || category === "Done") {
+      return {
+        recommended: "In Progress" as const,
+        reason: `'${statusName}' is an active development state. Mapping to '${category}' breaks sprint board tracking.`,
+      };
+    }
+  }
+  
+  if (lower.includes("todo") || lower.includes("to do") || lower.includes("backlog") || lower.includes("ready") || lower.includes("open") || lower.includes("planned") || lower.includes("new")) {
+    if (category === "Done" || category === "Blocked") {
+      return {
+        recommended: "To Do" as const,
+        reason: `'${statusName}' is an unstarted backlog state. Mapping to '${category}' inflates final delivery metrics.`,
+      };
+    }
+  }
+  
+  return null;
+};
 
 interface StatusMappingPanelProps {
   detectedStatuses: string[];
@@ -234,6 +276,36 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>("");
   const [history, setHistory] = useState<StatusMapping[]>([]);
+
+  // Detailed status mapping changes tracking for Undo functionality
+  interface MappingChangeEntry {
+    id: string;
+    statusName: string;
+    previousCategory: "To Do" | "In Progress" | "Done" | "Blocked";
+    newCategory: "To Do" | "In Progress" | "Done" | "Blocked";
+    timestamp: string;
+  }
+
+  const [activeTab, setActiveTab] = useState<"mapping" | "history">("mapping");
+  const [changeHistoryList, setChangeHistoryList] = useState<MappingChangeEntry[]>(() => {
+    const saved = localStorage.getItem("jira_status_mapping_change_history");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to parse saved change history:", e);
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem("jira_status_mapping_change_history", JSON.stringify(changeHistoryList));
+  }, [changeHistoryList]);
+
+  // AI suggestions state
+  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
+  const [isRetrievingSuggestions, setIsRetrievingSuggestions] = useState(false);
   
   const [sortBy, setSortBy] = useState<"statusName" | "categoryName" | "issueCount">("statusName");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
@@ -256,6 +328,47 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   } | null>(null);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [showOrphanFilter, setShowOrphanFilter] = useState(false);
+
+  const orphanStatuses = React.useMemo(() => {
+    const allDetected = new Set<string>(detectedStatuses);
+    if (issues && issues.length > 0) {
+      issues.forEach(issue => {
+        if (issue.status) {
+          allDetected.add(issue.status);
+        }
+      });
+    }
+    return Array.from(allDetected).filter((status: string) => !Object.prototype.hasOwnProperty.call(mapping, status) || !mapping[status]);
+  }, [detectedStatuses, mapping, issues]);
+
+  const handleShareMappingConfig = () => {
+    try {
+      const serialized = btoa(JSON.stringify(mapping));
+      const url = new URL(window.location.href);
+      url.searchParams.set("share_mapping", serialized);
+      const deepLink = url.toString();
+      
+      navigator.clipboard.writeText(deepLink)
+        .then(() => {
+          addToast?.(
+            "Deep-Link Generated",
+            "Custom status mapping deep-link copied to clipboard! Share it with your team to distribute standardization rules.",
+            "success",
+            4000
+          );
+          addAuditLog("Share Mapping Configuration", `Generated deep-link URL: ${deepLink.substring(0, 60)}...`);
+        })
+        .catch((err) => {
+          console.error("Clipboard write error:", err);
+          addToast?.("Share Link Failed", "Could not copy deep-link to clipboard. Try opening the application in a new tab.", "error", 3000);
+        });
+    } catch (err) {
+      console.error("Error generating share link:", err);
+      addToast?.("Share Link Failed", "An error occurred while serializing configuration.", "error", 3000);
+    }
+  };
 
   interface AuditLogEntry {
     id: string;
@@ -310,7 +423,13 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   };
 
   const pushToHistory = (currentMapping: StatusMapping) => {
-    setHistory((prev) => [...prev, { ...currentMapping }]);
+    setHistory((prev) => {
+      const nextHistory = [...prev, { ...currentMapping }];
+      if (nextHistory.length > 10) {
+        return nextHistory.slice(nextHistory.length - 10);
+      }
+      return nextHistory;
+    });
   };
 
   const handleRevert = () => {
@@ -424,10 +543,29 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
         }
 
         pushToHistory(mapping);
-        onUpdateMapping({
+        const newMapping = {
           ...mapping,
           ...importedMapping,
+        };
+
+        const newChanges: MappingChangeEntry[] = [];
+        Object.entries(importedMapping).forEach(([status, category]) => {
+          const prevCategory = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+          if (prevCategory !== category) {
+            newChanges.push({
+              id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              statusName: status,
+              previousCategory: prevCategory,
+              newCategory: category as any,
+              timestamp: new Date().toLocaleString(),
+            });
+          }
         });
+
+        onUpdateMapping(newMapping);
+        if (newChanges.length > 0) {
+          setChangeHistoryList((prev) => [...newChanges, ...prev]);
+        }
 
         addToast?.(
           "Mapping Configuration Imported",
@@ -450,12 +588,24 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
   };
 
   const handleMapChange = (statusName: string, bucket: "To Do" | "In Progress" | "Done" | "Blocked") => {
-    const prevCategory = mapping[statusName] || "To Do";
+    const prevCategory = (mapping[statusName] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+    if (prevCategory === bucket) return;
+
     pushToHistory(mapping);
     onUpdateMapping({
       ...mapping,
       [statusName]: bucket,
     });
+
+    const newChange: MappingChangeEntry = {
+      id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      statusName,
+      previousCategory: prevCategory,
+      newCategory: bucket,
+      timestamp: new Date().toLocaleString(),
+    };
+    setChangeHistoryList((prev) => [newChange, ...prev]);
+
     setSelectedTemplateKey(""); // Reset template key since they customized
     addAuditLog(
       "Single Mapping Update",
@@ -490,6 +640,65 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
 
   const activeStatuses = Array.from(new Set([...detectedStatuses, ...Object.keys(mapping)]));
 
+  const DEFAULT_RECOMMENDED_MAPPING: Record<string, "To Do" | "In Progress" | "Done" | "Blocked"> = {
+    "Backlog": "To Do",
+    "To Do": "To Do",
+    "In Progress": "In Progress",
+    "In Review": "In Progress",
+    "QA Testing": "In Progress",
+    "Blocked": "Blocked",
+    "Done": "Done",
+    "Resolved": "Done",
+  };
+
+  const handleResetToDefaults = () => {
+    pushToHistory(mapping);
+    const newMapping: StatusMapping = {};
+    const newChanges: MappingChangeEntry[] = [];
+
+    activeStatuses.forEach((status) => {
+      let targetBucket: "To Do" | "In Progress" | "Done" | "Blocked" = "To Do";
+      if (DEFAULT_RECOMMENDED_MAPPING[status]) {
+        targetBucket = DEFAULT_RECOMMENDED_MAPPING[status];
+      } else {
+        const lower = status.toLowerCase();
+        if (lower.includes("done") || lower.includes("resolved") || lower.includes("closed") || lower.includes("complete") || lower.includes("released")) {
+          targetBucket = "Done";
+        } else if (lower.includes("block") || lower.includes("hold") || lower.includes("impediment")) {
+          targetBucket = "Blocked";
+        } else if (lower.includes("progress") || lower.includes("dev") || lower.includes("review") || lower.includes("testing") || lower.includes("qa") || lower.includes("verify")) {
+          targetBucket = "In Progress";
+        } else {
+          targetBucket = "To Do";
+        }
+      }
+
+      newMapping[status] = targetBucket;
+      const prevCategory = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+      if (prevCategory !== targetBucket) {
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: status,
+          previousCategory: prevCategory,
+          newCategory: targetBucket,
+          timestamp: new Date().toLocaleString(),
+        });
+      }
+    });
+
+    onUpdateMapping(newMapping);
+    if (newChanges.length > 0) {
+      setChangeHistoryList((prev) => [...newChanges, ...prev]);
+    }
+    setSelectedStatuses([]);
+    setSelectedTemplateKey("");
+    addToast?.("Reset to Defaults", "Reverted all status mappings to the recommended standard configuration.", "success", 2500);
+    addAuditLog(
+      "Reset Defaults",
+      "Reverted status mapping to the recommended standard configuration."
+    );
+  };
+
   const handleLoadTemplate = (templateKey: keyof typeof TEMPLATE_DEFINITIONS) => {
     setSelectedTemplateKey(templateKey);
     const template = TEMPLATE_DEFINITIONS[templateKey];
@@ -498,29 +707,46 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     pushToHistory(mapping);
 
     const newMapping: StatusMapping = {};
+    const newChanges: MappingChangeEntry[] = [];
+
     activeStatuses.forEach((status) => {
+      let targetBucket: "To Do" | "In Progress" | "Done" | "Blocked" = "To Do";
       if (template.mapping[status]) {
-        newMapping[status] = template.mapping[status];
-        return;
+        targetBucket = template.mapping[status];
+      } else {
+        const lower = status.toLowerCase();
+        if (lower.includes("done") || lower.includes("resolved") || lower.includes("closed") || lower.includes("complete") || lower.includes("released")) {
+          targetBucket = "Done";
+        } else if (lower.includes("block") || lower.includes("hold") || lower.includes("impediment")) {
+          targetBucket = "Blocked";
+        } else if (lower.includes("progress") || lower.includes("dev") || lower.includes("review") || lower.includes("testing") || lower.includes("qa") || lower.includes("verify")) {
+          if (templateKey === "scrum" && (lower.includes("qa") || lower.includes("testing"))) {
+            targetBucket = "Blocked";
+          } else {
+            targetBucket = "In Progress";
+          }
+        } else {
+          targetBucket = "To Do";
+        }
       }
 
-      const lower = status.toLowerCase();
-      if (lower.includes("done") || lower.includes("resolved") || lower.includes("closed") || lower.includes("complete") || lower.includes("released")) {
-        newMapping[status] = "Done";
-      } else if (lower.includes("block") || lower.includes("hold") || lower.includes("impediment")) {
-        newMapping[status] = "Blocked";
-      } else if (lower.includes("progress") || lower.includes("dev") || lower.includes("review") || lower.includes("testing") || lower.includes("qa") || lower.includes("verify")) {
-        if (templateKey === "scrum" && (lower.includes("qa") || lower.includes("testing"))) {
-          newMapping[status] = "Blocked";
-        } else {
-          newMapping[status] = "In Progress";
-        }
-      } else {
-        newMapping[status] = "To Do";
+      newMapping[status] = targetBucket;
+      const prevCategory = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+      if (prevCategory !== targetBucket) {
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: status,
+          previousCategory: prevCategory,
+          newCategory: targetBucket,
+          timestamp: new Date().toLocaleString(),
+        });
       }
     });
 
     onUpdateMapping(newMapping);
+    if (newChanges.length > 0) {
+      setChangeHistoryList((prev) => [...newChanges, ...prev]);
+    }
     setSelectedStatuses([]); // clear bulk selection
     addToast?.("Template Loaded", `Loaded '${template.name}' status mapping template.`, "success", 2500);
     addAuditLog(
@@ -533,10 +759,26 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     if (selectedStatuses.length === 0) return;
     pushToHistory(mapping);
     const newMapping = { ...mapping };
+    const newChanges: MappingChangeEntry[] = [];
+
     selectedStatuses.forEach((status) => {
-      newMapping[status] = category;
+      const prevCategory = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+      if (prevCategory !== category) {
+        newMapping[status] = category;
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: status,
+          previousCategory: prevCategory,
+          newCategory: category,
+          timestamp: new Date().toLocaleString(),
+        });
+      }
     });
+
     onUpdateMapping(newMapping);
+    if (newChanges.length > 0) {
+      setChangeHistoryList((prev) => [...newChanges, ...prev]);
+    }
     addToast?.(
       "Bulk Applied Successfully",
       `Assigned ${selectedStatuses.length} workflow statuses to '${category}'.`,
@@ -574,6 +816,7 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     let swapCountA = 0;
     let swapCountB = 0;
     const swappedStatuses: string[] = [];
+    const newChanges: MappingChangeEntry[] = [];
 
     selectedStatuses.forEach((status) => {
       const currentCat = (mapping[status] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
@@ -581,10 +824,24 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
         newMapping[status] = catB;
         swapCountA++;
         swappedStatuses.push(`${status} (${catA} → ${catB})`);
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: status,
+          previousCategory: catA,
+          newCategory: catB,
+          timestamp: new Date().toLocaleString(),
+        });
       } else if (currentCat === catB) {
         newMapping[status] = catA;
         swapCountB++;
         swappedStatuses.push(`${status} (${catB} → ${catA})`);
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: status,
+          previousCategory: catB,
+          newCategory: catA,
+          timestamp: new Date().toLocaleString(),
+        });
       }
     });
 
@@ -594,6 +851,9 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     }
 
     onUpdateMapping(newMapping);
+    if (newChanges.length > 0) {
+      setChangeHistoryList((prev) => [...newChanges, ...prev]);
+    }
     addToast?.(
       "Quick Swap Successful",
       `Swapped categories for ${swapCountA + swapCountB} statuses between '${catA}' and '${catB}'.`,
@@ -641,14 +901,29 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       if (data.suggestions && Array.isArray(data.suggestions)) {
         pushToHistory(mapping);
         const newMapping = { ...mapping };
+        const newChanges: MappingChangeEntry[] = [];
         
         data.suggestions.forEach((item: any) => {
           if (item.statusName && ["To Do", "In Progress", "Done", "Blocked"].includes(item.category)) {
-            newMapping[item.statusName] = item.category;
+            const prevCategory = (mapping[item.statusName] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+            if (prevCategory !== item.category) {
+              newMapping[item.statusName] = item.category;
+              newChanges.push({
+                id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                statusName: item.statusName,
+                previousCategory: prevCategory,
+                newCategory: item.category,
+                timestamp: new Date().toLocaleString(),
+              });
+            }
           }
         });
 
         onUpdateMapping(newMapping);
+        if (newChanges.length > 0) {
+          setChangeHistoryList((prev) => [...newChanges, ...prev]);
+        }
+
         addToast?.(
           "AI Auto-Map Complete",
           `Gemini successfully mapped ${data.suggestions.length} statuses with agile reasoning.`,
@@ -674,6 +949,169 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
     } finally {
       setIsAutoMapping(false);
     }
+  };
+
+  const handleGetGeminiSuggestions = async () => {
+    if (activeStatuses.length === 0) {
+      addToast?.("No Statuses", "There are no active statuses to analyze.", "warning", 2000);
+      return;
+    }
+
+    setIsRetrievingSuggestions(true);
+    addToast?.("Consulting Gemini...", "Intelligently proposing category mappings based on naming patterns...", "info", 3000);
+
+    try {
+      const response = await fetch("/api/gemini/auto-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          statuses: activeStatuses.map(s => ({
+            name: s,
+            description: s === "Backlog" ? "Initial backlog grooming stage" : 
+                         s === "In Progress" ? "Developer actively coding" :
+                         s === "Done" ? "Code merged and released" :
+                         s === "Blocked" ? "Awaiting external team sign-off" : ""
+          }))
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || errData.details || "Failed to contact Gemini Auto-Map service.");
+      }
+
+      const data = await response.json();
+      if (data.suggestions && Array.isArray(data.suggestions)) {
+        const formattedSuggestions = data.suggestions.map((item: any) => ({
+          statusName: item.statusName,
+          category: item.category,
+          reason: item.reasoning || item.reason || "Linguistic alignment based on PMO workflow patterns."
+        }));
+        
+        setAiSuggestions(formattedSuggestions);
+        addToast?.(
+          "Suggested Mappings Generated",
+          `Gemini proposed category mappings for ${formattedSuggestions.length} statuses.`,
+          "success",
+          4000
+        );
+
+        addAuditLog(
+          "AI Suggested Mappings",
+          `Gemini analyzed status naming patterns and generated mappings with explanations for ${formattedSuggestions.length} statuses.`
+        );
+      } else {
+        throw new Error("Invalid suggestions structure received from AI Auto-Map service.");
+      }
+    } catch (err: any) {
+      console.error("Suggested Mappings client error:", err);
+      addToast?.(
+        "Suggestions Failed",
+        err.message || "An error occurred while generating suggestions.",
+        "error",
+        4000
+      );
+    } finally {
+      setIsRetrievingSuggestions(false);
+    }
+  };
+
+  const handleAcceptSingleSuggestion = (suggestion: any) => {
+    const prevCategory = (mapping[suggestion.statusName] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+    if (prevCategory === suggestion.category) return;
+
+    pushToHistory(mapping);
+    onUpdateMapping({
+      ...mapping,
+      [suggestion.statusName]: suggestion.category,
+    });
+
+    const newChange: MappingChangeEntry = {
+      id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      statusName: suggestion.statusName,
+      previousCategory: prevCategory,
+      newCategory: suggestion.category,
+      timestamp: new Date().toLocaleString(),
+    };
+    setChangeHistoryList((prev) => [newChange, ...prev]);
+
+    addToast?.(
+      "Suggestion Applied",
+      `Assigned "${suggestion.statusName}" to "${suggestion.category}".`,
+      "success",
+      2000
+    );
+    addAuditLog(
+      "Apply AI Suggestion",
+      `Applied AI suggestion for "${suggestion.statusName}" category map: changed from "${prevCategory}" to "${suggestion.category}".`
+    );
+  };
+
+  const handleAcceptAllSuggestions = () => {
+    if (aiSuggestions.length === 0) return;
+    pushToHistory(mapping);
+    const newMapping = { ...mapping };
+    const newChanges: MappingChangeEntry[] = [];
+
+    aiSuggestions.forEach((suggestion) => {
+      const prevCategory = (mapping[suggestion.statusName] || "To Do") as "To Do" | "In Progress" | "Done" | "Blocked";
+      if (prevCategory !== suggestion.category) {
+        newMapping[suggestion.statusName] = suggestion.category;
+        newChanges.push({
+          id: `change_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          statusName: suggestion.statusName,
+          previousCategory: prevCategory,
+          newCategory: suggestion.category,
+          timestamp: new Date().toLocaleString(),
+        });
+      }
+    });
+
+    onUpdateMapping(newMapping);
+    if (newChanges.length > 0) {
+      setChangeHistoryList((prev) => [...newChanges, ...prev]);
+    }
+    setAiSuggestions([]); // clear suggestions list
+    addToast?.(
+      "All Suggestions Applied",
+      "Successfully updated status-to-category assignments for all proposed items.",
+      "success",
+      3000
+    );
+    addAuditLog(
+      "Apply All AI Suggestions",
+      "Bulk applied all AI-suggested status workflow category maps in one operation."
+    );
+  };
+
+  const handleUndoSpecificChange = (entry: MappingChangeEntry) => {
+    pushToHistory(mapping);
+    onUpdateMapping({
+      ...mapping,
+      [entry.statusName]: entry.previousCategory
+    });
+    setChangeHistoryList(prev => prev.filter(item => item.id !== entry.id));
+    addToast?.("Change Undone", `Restored "${entry.statusName}" back to "${entry.previousCategory}".`, "success", 2500);
+    addAuditLog("Undo Specific Change", `Undid change for status "${entry.statusName}" (reverted "${entry.newCategory}" → "${entry.previousCategory}").`);
+  };
+
+  const handleQuickCopyToCSV = () => {
+    let csvContent = "Status,Category\n";
+    Object.entries(mapping).forEach(([status, category]) => {
+      const safeStatus = status.replace(/"/g, '""');
+      const safeCategory = String(category).replace(/"/g, '""');
+      csvContent += `"${safeStatus}","${safeCategory}"\n`;
+    });
+
+    navigator.clipboard.writeText(csvContent)
+      .then(() => {
+        addToast?.("Copied to Clipboard", "CSV mapping table copied to clipboard for direct spreadsheet pasting.", "success", 2500);
+        addAuditLog("Copy to CSV", "Copied status mapping dictionary as CSV text to clipboard.");
+      })
+      .catch((err) => {
+        console.error("Clipboard error:", err);
+        addToast?.("Copy Failed", "Failed to copy CSV to clipboard.", "error", 2500);
+      });
   };
 
   const issuesDistribution = React.useMemo(() => {
@@ -848,6 +1286,11 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       });
     }
 
+    // Filter by Orphan status if checked
+    if (showOrphanFilter) {
+      statuses = statuses.filter(s => orphanStatuses.includes(s));
+    }
+
     statuses.sort((a, b) => {
       let valA: any = "";
       let valB: any = "";
@@ -868,7 +1311,7 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
       return 0;
     });
     return statuses;
-  }, [activeStatuses, sortBy, sortOrder, mapping, statusCounts, searchQuery, filterProgressBlocked]);
+  }, [activeStatuses, sortBy, sortOrder, mapping, statusCounts, searchQuery, filterProgressBlocked, showOrphanFilter, orphanStatuses]);
 
   const mappingStats = React.useMemo(() => {
     const counts = { "To Do": 0, "In Progress": 0, "Done": 0, "Blocked": 0 };
@@ -1212,37 +1655,37 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Search Input field */}
-          <div className="relative min-w-[120px]">
-            <input
-              type="text"
-              placeholder="Search status..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-slate-950 border border-white/10 text-slate-200 text-[10px] rounded-lg pl-7 pr-5 py-1 w-full focus:outline-none focus:border-blue-500/80 transition-all font-bold placeholder-slate-500"
-            />
-            <Search className="w-3 h-3 text-slate-500 absolute left-2.5 top-2" />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="text-slate-500 hover:text-white text-[10px] absolute right-2 top-1.5 font-mono font-bold"
-              >
-                ×
-              </button>
-            )}
-          </div>
+          {/* Share Mapping Config Button */}
+          <button
+            type="button"
+            onClick={handleShareMappingConfig}
+            className="text-[10px] font-black bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 hover:border-blue-500/40 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95 uppercase tracking-wider shadow-md shrink-0"
+            title="Generate custom status mapping deep-link URL and copy to clipboard"
+          >
+            <Share2 className="w-3.5 h-3.5 text-blue-400" />
+            <span>Share Config</span>
+          </button>
 
           {history.length > 0 && (
             <button
               type="button"
               onClick={handleRevert}
-              className="text-[10px] font-black bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/25 hover:border-rose-500/35 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95 uppercase tracking-wider shadow-md shadow-rose-500/5 shrink-0"
-              title="Revert last status mapping change"
+              className="text-[10px] font-black bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/25 hover:border-rose-500/35 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95 uppercase tracking-wider shadow-md shadow-rose-500/5 shrink-0 animate-pulse"
+              title="Undo last status mapping change"
             >
-              ↩ Revert Changes
+              ↩ Undo
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={handleResetToDefaults}
+            className="text-[10px] font-black bg-rose-950/20 hover:bg-rose-950/40 text-rose-300 border border-rose-900/30 hover:border-rose-900/50 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95 uppercase tracking-wider shadow-md shrink-0"
+            title="Reset all status-to-category mappings to the application's recommended standard configuration"
+          >
+            ⚙ Reset to Default
+          </button>
+
           <span className="text-[9px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-1 rounded-full uppercase tracking-wider shrink-0">
             Custom Workflows
           </span>
@@ -1253,480 +1696,882 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
         Jira workflows vary dynamically across organizations. To ensure agile metrics and summaries align perfectly, map each workflow state into our four standard executive categories:
       </p>
 
-      {/* Dynamic Workflow Configuration Actions Toolbar */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-950/30 border border-white/5 rounded-xl p-2.5">
+      {/* Visual Navigation Tabs */}
+      <div className="flex border-b border-white/5 pb-1">
         <button
           type="button"
-          onClick={handleAIAutoMap}
-          disabled={isAutoMapping}
-          className="text-[9.5px] font-black bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-indigo-500/10 px-2.5 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
-          title="Autonomously map statuses using Gemini AI intelligence"
+          onClick={() => setActiveTab("mapping")}
+          className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+            activeTab === "mapping"
+              ? "border-blue-500 text-blue-400 font-extrabold"
+              : "border-transparent text-slate-400 hover:text-white"
+          }`}
         >
-          {isAutoMapping ? (
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Mapping...
+          Status Mapping
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("history")}
+          className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 relative ${
+            activeTab === "history"
+              ? "border-blue-500 text-blue-400 font-extrabold"
+              : "border-transparent text-slate-400 hover:text-white"
+          }`}
+        >
+          <History className="w-3.5 h-3.5" />
+          Mapping History
+          {changeHistoryList.length > 0 && (
+            <span className="absolute -top-1.5 -right-1 bg-blue-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full shadow-md scale-90 animate-pulse">
+              {changeHistoryList.length}
             </span>
-          ) : (
-            <>
-              <Sparkles className="w-3.5 h-3.5 text-blue-200" />
-              AI Auto-Map
-            </>
           )}
         </button>
-
-        <button
-          type="button"
-          onClick={handleImportClick}
-          className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
-          title="Import workflow configurations from JSON or CSV template backup files"
-        >
-          <Upload className="w-3.5 h-3.5 text-slate-400" />
-          Import File
-        </button>
-
-        <button
-          type="button"
-          onClick={handleExportMappingCSV}
-          className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
-          title="Download current workflow mapping configuration as standard CSV template sharing format"
-        >
-          <Download className="w-3.5 h-3.5 text-slate-400" />
-          Export CSV
-        </button>
-
-        <button
-          type="button"
-          onClick={handleExportMappingJSON}
-          className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
-          title="Download current workflow mapping configuration as JSON backup config"
-        >
-          <Download className="w-3.5 h-3.5 text-slate-400" />
-          Export JSON
-        </button>
-
-        {/* Quick-toggle Button */}
-        <button
-          type="button"
-          onClick={() => setFilterProgressBlocked(!filterProgressBlocked)}
-          className={`text-[9.5px] font-black px-2.5 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider border ${
-            filterProgressBlocked
-              ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg shadow-amber-500/5"
-              : "bg-slate-950 hover:bg-slate-900 text-slate-300 border-white/10 hover:border-white/20"
-          }`}
-          title="Filter mapping table to show only Blocked or In Progress categories"
-        >
-          <Filter className="w-3.5 h-3.5 shrink-0" />
-          {filterProgressBlocked ? "All Categories" : "Blocked/Progress"}
-        </button>
-
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleImportFile}
-          accept=".json,.csv"
-          className="hidden"
-        />
       </div>
 
-      {/* PROACTIVE ALERTS BLOCK */}
-      <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3.5 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-2.5">
-          <div className="flex items-center gap-1.5 text-amber-400">
-            <AlertTriangle className="w-4 h-4" />
-            <span className="text-[10px] font-black uppercase tracking-wider">Proactive Mapping Alerts</span>
-          </div>
-          
-          {/* Configurable Threshold */}
-          <div className="flex items-center gap-2 bg-slate-900 border border-white/5 px-2 py-1 rounded-lg">
-            <Sliders className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-[9px] font-bold text-slate-400 uppercase">Alert Threshold:</span>
-            <input
-              type="range"
-              min="1.1"
-              max="3.0"
-              step="0.1"
-              value={alertThreshold}
-              onChange={(e) => setAlertThreshold(parseFloat(e.target.value))}
-              className="w-16 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-            <span className="text-[10px] font-black text-slate-200 font-mono">{alertThreshold}x</span>
-          </div>
-        </div>
-
-        {statusAlerts.length === 0 ? (
-          <div className="text-[9.5px] text-slate-500 italic flex items-center gap-1.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-            No unusual status accumulations detected. All workflows are balanced.
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-[140px] overflow-y-auto custom-scrollbar">
-            {statusAlerts.map((alert) => (
-              <div
-                key={alert.statusName}
-                className={`p-2.5 rounded-xl border flex flex-col gap-1 text-[11px] leading-relaxed transition-all ${
-                  alert.severity === "critical"
-                    ? "bg-rose-500/10 border-rose-500/20 text-rose-200"
-                    : "bg-amber-500/10 border-amber-500/20 text-amber-200"
-                }`}
-              >
-                <div className="flex items-center justify-between font-black uppercase tracking-wider text-[9px]">
-                  <span className="flex items-center gap-1 font-mono">
-                    ⚠️ {alert.severity === "critical" ? "Critical Bottleneck" : "Warning: Accumulation"}
-                  </span>
-                  <span className="font-mono bg-white/5 px-1.5 py-0.5 rounded text-white font-black">
-                    {alert.currentCount} Issues
-                  </span>
+      {activeTab === "mapping" ? (
+        <>
+          {/* ORPHANS SCAN SUMMARY BANNER */}
+          {orphanStatuses.length > 0 && (
+            <div className="bg-rose-950/15 border border-rose-900/40 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-[11px] text-rose-300 animate-fade-in">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>Unmapped Orphans Detected ({orphanStatuses.length})</span>
                 </div>
-                <p className="font-medium text-[10.5px]">
-                  Status <strong className="font-bold underline">{alert.statusName}</strong> has accumulated {alert.currentCount} tickets, which is <span className="font-bold">{alert.percentageAbove}%</span> above its 30-day rolling average of {alert.rollingAverage}.
+                <p className="text-slate-400 text-[10px] leading-relaxed">
+                  The following Jira statuses were found in your issues but have no entry in your status mapping configuration: <strong className="text-rose-200 font-semibold">{orphanStatuses.join(", ")}</strong>.
                 </p>
-                <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight mt-0.5">
-                  💡 Suggest review: Consider re-allocating staff to {alert.statusName} or clear downstream blocker queues.
-                </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <button
+                type="button"
+                onClick={() => {
+                  pushToHistory(mapping);
+                  const newMapping = { ...mapping };
+                  orphanStatuses.forEach(status => {
+                    const lower = status.toLowerCase();
+                    let targetBucket: "To Do" | "In Progress" | "Done" | "Blocked" = "To Do";
+                    if (lower.includes("done") || lower.includes("resolved") || lower.includes("closed") || lower.includes("complete") || lower.includes("released")) {
+                      targetBucket = "Done";
+                    } else if (lower.includes("block") || lower.includes("hold") || lower.includes("impediment")) {
+                      targetBucket = "Blocked";
+                    } else if (lower.includes("progress") || lower.includes("dev") || lower.includes("review") || lower.includes("testing") || lower.includes("qa") || lower.includes("verify")) {
+                      targetBucket = "In Progress";
+                    }
+                    newMapping[status] = targetBucket;
+                  });
+                  onUpdateMapping(newMapping);
+                  addToast?.("Orphans Auto-Mapped", `Instantly assigned ${orphanStatuses.length} orphan statuses.`, "success", 3000);
+                  addAuditLog("Auto-Map Orphans", `Auto-mapped orphan statuses: ${orphanStatuses.join(", ")}.`);
+                }}
+                className="bg-rose-600 hover:bg-rose-500 text-white font-black text-[9.5px] px-3 py-1.5 rounded-lg uppercase tracking-wider shrink-0 transition-all active:scale-95 border border-rose-500/30 cursor-pointer"
+              >
+                Auto-Map Orphans
+              </button>
+            </div>
+          )}
 
-      {/* PREDEFINED TEMPLATES SECTION */}
-      <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3 space-y-2">
-        <div className="flex items-center gap-1.5 text-slate-300">
-          <Layers className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="text-[9.5px] font-black uppercase tracking-wider">Workflow Mapping Templates</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <div className="sm:col-span-1">
-            <select
-              value={selectedTemplateKey}
-              onChange={(e) => handleLoadTemplate(e.target.value as any)}
-              className="w-full text-[10.5px] bg-slate-950 border border-white/10 text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500/80 cursor-pointer font-bold transition-all"
-            >
-              <option value="" disabled>-- Select Template --</option>
-              <option value="kanban">📋 Kanban Standard</option>
-              <option value="scrum">⚡ Scrum Classic</option>
-              <option value="minimalist">🌱 Minimalist</option>
-            </select>
-          </div>
-          <div className="sm:col-span-2 flex items-center">
-            <p className="text-[9px] text-slate-400 leading-normal italic">
-              {selectedTemplateKey 
-                ? TEMPLATE_DEFINITIONS[selectedTemplateKey as keyof typeof TEMPLATE_DEFINITIONS].description
-                : "Select a standard preset to instantly auto-map all active Jira workflow status keys."}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* BULK APPLY CONTROLS */}
-      {activeStatuses.length > 0 && (
-        <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={selectedStatuses.length === activeStatuses.length && activeStatuses.length > 0}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  setSelectedStatuses([...activeStatuses]);
-                } else {
-                  setSelectedStatuses([]);
-                }
-              }}
-              className="rounded border-white/10 bg-slate-950 text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer shrink-0"
-              id="select-all-statuses"
-            />
-            <label htmlFor="select-all-statuses" className="text-slate-300 font-bold cursor-pointer select-none text-[10.5px]">
-              {selectedStatuses.length > 0 ? `${selectedStatuses.length} Selected` : "Select All Statuses"}
-            </label>
-          </div>
-
-          {selectedStatuses.length > 0 ? (
-            <div className="flex flex-col gap-3 w-full sm:w-auto">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1">
-                  <CheckSquare className="w-3.5 h-3.5" /> Assign To:
+          {/* REAL-TIME FILTER SEARCH BAR */}
+          <div className="space-y-2 bg-slate-950/20 border border-white/5 rounded-xl p-3">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="🔍 Filter Jira statuses in real-time (e.g., Backlog, In QA, Resolved)..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-950/60 border border-white/10 text-slate-200 text-xs rounded-xl pl-9 pr-8 py-2.5 focus:outline-none focus:border-blue-500/80 transition-all font-semibold placeholder-slate-500"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="text-slate-400 hover:text-white absolute right-3 top-2 flex items-center justify-center w-5 h-5 bg-slate-900 hover:bg-slate-800 rounded-full font-bold text-xs"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            {searchQuery && (
+              <div className="text-[10px] text-slate-400 font-medium px-1 flex justify-between items-center animate-fade-in">
+                <span>
+                  Showing <strong className="text-blue-400 font-bold">{sortedActiveStatuses.length}</strong> of <strong className="text-slate-300 font-bold">{activeStatuses.length}</strong> statuses
                 </span>
-                <div className="flex gap-1 flex-wrap">
-                  {(["To Do", "In Progress", "Done", "Blocked"] as const).map((category) => {
-                    return (
-                      <button
-                        type="button"
-                        key={category}
-                        onClick={() => handleBulkApply(category)}
-                        className="bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-white/20 text-slate-200 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide"
-                      >
-                        {category === "To Do" && "📂 To Do"}
-                        {category === "In Progress" && "⚡ Progress"}
-                        {category === "Done" && "✓ Done"}
-                        {category === "Blocked" && "⚠️ Blocked"}
-                      </button>
-                    );
-                  })}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="text-blue-400 hover:text-blue-300 font-bold"
+                >
+                  Clear filter
+                </button>
               </div>
+            )}
+          </div>
 
-              {/* Quick Swap Features */}
-              <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-2.5">
-                <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1 shrink-0">
-                  ⇅ Quick Swap:
-                </span>
-                
-                {detectedSwapCategories.length === 2 && (
+          {/* Suggested Mapping section */}
+          {aiSuggestions.length > 0 && (
+            <div className="bg-gradient-to-br from-indigo-950/40 to-blue-950/40 border border-indigo-500/20 rounded-xl p-4 space-y-3.5 shadow-lg shadow-indigo-500/5 animate-fade-in">
+              <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                <div className="flex items-center gap-1.5 text-indigo-400">
+                  <Sparkles className="w-4 h-4 text-indigo-300 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-wider">Gemini Optimal Projections</span>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handleQuickSwap(detectedSwapCategories[0], detectedSwapCategories[1])}
-                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 hover:border-amber-500/35 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide flex items-center gap-1 shrink-0"
-                    title={`Swap selected statuses between '${detectedSwapCategories[0]}' and '${detectedSwapCategories[1]}'`}
+                    onClick={handleAcceptAllSuggestions}
+                    className="text-[9px] font-black bg-indigo-500 hover:bg-indigo-400 text-white px-2.5 py-1 rounded-lg transition-all active:scale-95 uppercase tracking-wider shadow-md"
                   >
-                    Swap {detectedSwapCategories[0]} ↔ {detectedSwapCategories[1]}
+                    Apply All
                   </button>
-                )}
-
-                <div className="flex items-center gap-1.5 text-[10px]">
-                  <select
-                    value={swapSourceCat}
-                    onChange={(e) => setSwapSourceCat(e.target.value as any)}
-                    className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
-                  >
-                    <option value="To Do">📂 To Do</option>
-                    <option value="In Progress">⚡ Progress</option>
-                    <option value="Done">✓ Done</option>
-                    <option value="Blocked">⚠️ Blocked</option>
-                  </select>
-                  <span className="text-slate-500">↔</span>
-                  <select
-                    value={swapTargetCat}
-                    onChange={(e) => setSwapTargetCat(e.target.value as any)}
-                    className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
-                  >
-                    <option value="To Do">📂 To Do</option>
-                    <option value="In Progress">⚡ Progress</option>
-                    <option value="Done">✓ Done</option>
-                    <option value="Blocked">⚠️ Blocked</option>
-                  </select>
                   <button
                     type="button"
-                    onClick={() => handleQuickSwap(swapSourceCat, swapTargetCat)}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-black text-[9px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wider"
+                    onClick={() => setAiSuggestions([])}
+                    className="text-[9px] font-bold text-slate-400 hover:text-white px-1 py-1"
                   >
-                    Swap
+                    Dismiss
                   </button>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                {aiSuggestions.map((suggestion, idx) => {
+                  const currentVal = mapping[suggestion.statusName] || "To Do";
+                  const isDifferent = currentVal !== suggestion.category;
+                  return (
+                    <div key={idx} className="bg-slate-950/50 border border-white/5 rounded-lg p-2.5 flex flex-col justify-between gap-2 text-[10px]">
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-slate-200">{suggestion.statusName}</span>
+                          <span className="text-slate-500 font-mono text-[9px]">{currentVal} → {suggestion.category}</span>
+                        </div>
+                        <p className="text-slate-400 text-[9.5px] leading-relaxed">
+                          {suggestion.reason}
+                        </p>
+                      </div>
+                      <div className="flex justify-end pt-1">
+                        {isDifferent ? (
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptSingleSuggestion(suggestion)}
+                            className="text-[9px] font-bold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/25 px-2 py-0.5 rounded transition-all"
+                          >
+                            Accept Suggestion
+                          </button>
+                        ) : (
+                          <span className="text-slate-500 text-[9px] font-semibold italic">
+                            Aligned
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
+          )}
+
+          {/* Dynamic Workflow Configuration Actions Toolbar */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 bg-slate-950/30 border border-white/5 rounded-xl p-2">
+            <button
+              type="button"
+              onClick={handleAIAutoMap}
+              disabled={isAutoMapping}
+              className="text-[9.5px] font-black bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-indigo-500/10 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
+              title="Autonomously map statuses using Gemini AI intelligence"
+            >
+              {isAutoMapping ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Mapping...
+                </span>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-blue-200" />
+                  AI Auto-Map
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGetGeminiSuggestions}
+              disabled={isRetrievingSuggestions}
+              className="text-[9.5px] font-black bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/10 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
+              title="Generate optimal category suggestions with explanations using Gemini service"
+            >
+              {isRetrievingSuggestions ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Proposing...
+                </span>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-fuchsia-200" />
+                  Propose Mappings
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleImportClick}
+              className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
+              title="Import workflow configurations from JSON or CSV template backup files"
+            >
+              <Upload className="w-3.5 h-3.5 text-slate-400" />
+              Import File
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportMappingCSV}
+              className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
+              title="Download current workflow mapping configuration as standard CSV template sharing format"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-400" />
+              Export CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportMappingJSON}
+              className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
+              title="Download current workflow mapping configuration as JSON backup config"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-400" />
+              Export JSON
+            </button>
+
+            <button
+              type="button"
+              onClick={handleQuickCopyToCSV}
+              className="text-[9.5px] font-black bg-slate-950 hover:bg-slate-900 text-slate-300 border border-white/10 hover:border-white/20 px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider"
+              title="Instantly copy current workflow mapping configuration as CSV table to clipboard for external auditing"
+            >
+              <Copy className="w-3.5 h-3.5 text-slate-400 animate-pulse" />
+              Quick Copy
+            </button>
+
+            {/* Quick-toggle Button */}
+            <button
+              type="button"
+              onClick={() => setFilterProgressBlocked(!filterProgressBlocked)}
+              className={`text-[9.5px] font-black px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider border ${
+                filterProgressBlocked
+                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg shadow-amber-500/5"
+                  : "bg-slate-950 hover:bg-slate-900 text-slate-300 border-white/10 hover:border-white/20"
+              }`}
+              title="Filter mapping table to show only Blocked or In Progress categories"
+            >
+              <Filter className="w-3.5 h-3.5 shrink-0" />
+              {filterProgressBlocked ? "All" : "Blocked/Progress"}
+            </button>
+
+            {/* Check for Orphans Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (orphanStatuses.length === 0) {
+                  addToast?.(
+                    "Orphan Scan Complete",
+                    "Zero orphan statuses found! All detected Jira statuses are successfully mapped.",
+                    "success",
+                    3500
+                  );
+                } else {
+                  addToast?.(
+                    "Orphan Statuses Found",
+                    `Detected ${orphanStatuses.length} Jira statuses missing from your mapping. They have been highlighted.`,
+                    "warning",
+                    4000
+                  );
+                }
+                setShowOrphanFilter(!showOrphanFilter);
+              }}
+              className={`text-[9.5px] font-black px-2 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 uppercase tracking-wider border ${
+                showOrphanFilter
+                  ? "bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-lg shadow-rose-500/5"
+                  : "bg-slate-950 hover:bg-slate-900 text-slate-300 border-white/10 hover:border-white/20"
+              }`}
+              title="Filter mapping grid to show only Jira statuses missing from the active mapping config"
+            >
+              <Search className="w-3.5 h-3.5 text-rose-400" />
+              <span>Orphans {orphanStatuses.length > 0 ? `(${orphanStatuses.length})` : ""}</span>
+            </button>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImportFile}
+              accept=".json,.csv"
+              className="hidden"
+            />
+          </div>
+
+          {/* PROACTIVE ALERTS BLOCK */}
+          <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3.5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-2.5">
+              <div className="flex items-center gap-1.5 text-amber-400">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Proactive Mapping Alerts</span>
+              </div>
+              
+              {/* Configurable Threshold */}
+              <div className="flex items-center gap-2 bg-slate-900 border border-white/5 px-2 py-1 rounded-lg">
+                <Sliders className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-[9px] font-bold text-slate-400 uppercase">Alert Threshold:</span>
+                <input
+                  type="range"
+                  min="1.1"
+                  max="3.0"
+                  step="0.1"
+                  value={alertThreshold}
+                  onChange={(e) => setAlertThreshold(parseFloat(e.target.value))}
+                  className="w-16 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+                <span className="text-[10px] font-black text-slate-200 font-mono">{alertThreshold}x</span>
+              </div>
+            </div>
+
+            {statusAlerts.length === 0 ? (
+              <div className="text-[9.5px] text-slate-500 italic flex items-center gap-1.5 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                No unusual status accumulations detected. All workflows are balanced.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[140px] overflow-y-auto custom-scrollbar">
+                {statusAlerts.map((alert) => (
+                  <div
+                    key={alert.statusName}
+                    className={`p-2.5 rounded-xl border flex flex-col gap-1 text-[11px] leading-relaxed transition-all ${
+                      alert.severity === "critical"
+                        ? "bg-rose-500/10 border-rose-500/20 text-rose-200"
+                        : "bg-amber-500/10 border-amber-500/20 text-amber-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-black uppercase tracking-wider text-[9px]">
+                      <span className="flex items-center gap-1 font-mono">
+                        ⚠️ {alert.severity === "critical" ? "Critical Bottleneck" : "Warning: Accumulation"}
+                      </span>
+                      <span className="font-mono bg-white/5 px-1.5 py-0.5 rounded text-white font-black">
+                        {alert.currentCount} Issues
+                      </span>
+                    </div>
+                    <p className="font-medium text-[10.5px]">
+                      Status <strong className="font-bold underline">{alert.statusName}</strong> has accumulated {alert.currentCount} tickets, which is <span className="font-bold">{alert.percentageAbove}%</span> above its 30-day rolling average of {alert.rollingAverage}.
+                    </p>
+                    <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight mt-0.5">
+                      💡 Suggest review: Consider re-allocating staff to {alert.statusName} or clear downstream blocker queues.
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* PREDEFINED TEMPLATES SECTION */}
+          <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-[9.5px] font-black uppercase tracking-wider">Workflow Mapping Templates</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="sm:col-span-1">
+                <select
+                  value={selectedTemplateKey}
+                  onChange={(e) => handleLoadTemplate(e.target.value as any)}
+                  className="w-full text-[10.5px] bg-slate-950 border border-white/10 text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500/80 cursor-pointer font-bold transition-all"
+                >
+                  <option value="" disabled>-- Select Template --</option>
+                  <option value="kanban">📋 Kanban Standard</option>
+                  <option value="scrum">⚡ Scrum Classic</option>
+                  <option value="minimalist">🌱 Minimalist</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2 flex items-center">
+                <p className="text-[9px] text-slate-400 leading-normal italic">
+                  {selectedTemplateKey 
+                    ? TEMPLATE_DEFINITIONS[selectedTemplateKey as keyof typeof TEMPLATE_DEFINITIONS].description
+                    : "Select a standard preset to instantly auto-map all active Jira workflow status keys."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* BULK APPLY CONTROLS */}
+          {activeStatuses.length > 0 && (
+            <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedStatuses.length === activeStatuses.length && activeStatuses.length > 0}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedStatuses([...activeStatuses]);
+                    } else {
+                      setSelectedStatuses([]);
+                    }
+                  }}
+                  className="rounded border-white/10 bg-slate-950 text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer shrink-0"
+                  id="select-all-statuses"
+                />
+                <label htmlFor="select-all-statuses" className="text-slate-300 font-bold cursor-pointer select-none text-[10.5px]">
+                  {selectedStatuses.length > 0 ? `${selectedStatuses.length} Selected` : "Select All Statuses"}
+                </label>
+              </div>
+
+              {selectedStatuses.length > 0 ? (
+                <div className="flex flex-col gap-3 w-full sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[9.5px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1" title="Select multiple statuses below and assign them to a single category in one click">
+                      <CheckSquare className="w-3.5 h-3.5" /> Bulk Categorize:
+                    </span>
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <select
+                        onChange={(e) => {
+                          const category = e.target.value as "To Do" | "In Progress" | "Done" | "Blocked";
+                          if (category) {
+                            handleBulkApply(category);
+                            e.target.value = ""; // reset selection
+                          }
+                        }}
+                        defaultValue=""
+                        className="bg-slate-950 border border-white/10 text-slate-300 text-[10.5px] font-black rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500/80 transition-all cursor-pointer"
+                      >
+                        <option value="" disabled>-- Batch Category Dropdown --</option>
+                        <option value="To Do">📂 Map Selected to To Do</option>
+                        <option value="In Progress">⚡ Map Selected to In Progress</option>
+                        <option value="Done">✓ Map Selected to Done</option>
+                        <option value="Blocked">⚠️ Map Selected to Blocked</option>
+                      </select>
+
+                      <div className="flex gap-1 flex-wrap">
+                        {(["To Do", "In Progress", "Done", "Blocked"] as const).map((category) => {
+                          return (
+                            <button
+                              type="button"
+                              key={category}
+                              onClick={() => handleBulkApply(category)}
+                              className="bg-indigo-600/15 hover:bg-indigo-600/25 border border-indigo-500/30 hover:border-indigo-500/50 text-indigo-300 font-black text-[9.5px] px-2.5 py-1.5 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide flex items-center gap-1"
+                              title={`Assign all ${selectedStatuses.length} selected statuses to '${category}' in one click`}
+                            >
+                              {category === "To Do" && "📂 To Do"}
+                              {category === "In Progress" && "⚡ Progress"}
+                              {category === "Done" && "✓ Done"}
+                              {category === "Blocked" && "⚠️ Blocked"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Swap Features */}
+                  <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-2.5">
+                    <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1 shrink-0">
+                      ⇅ Quick Swap:
+                    </span>
+                    
+                    {detectedSwapCategories.length === 2 && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuickSwap(detectedSwapCategories[0], detectedSwapCategories[1])}
+                        className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 hover:border-amber-500/35 font-black text-[9.5px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wide flex items-center gap-1 shrink-0"
+                        title={`Swap selected statuses between '${detectedSwapCategories[0]}' and '${detectedSwapCategories[1]}'`}
+                      >
+                        Swap {detectedSwapCategories[0]} ↔ {detectedSwapCategories[1]}
+                      </button>
+                    )}
+
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <select
+                        value={swapSourceCat}
+                        onChange={(e) => setSwapSourceCat(e.target.value as any)}
+                        className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
+                      >
+                        <option value="To Do">📂 To Do</option>
+                        <option value="In Progress">⚡ Progress</option>
+                        <option value="Done">✓ Done</option>
+                        <option value="Blocked">⚠️ Blocked</option>
+                      </select>
+                      <span className="text-slate-500">↔</span>
+                      <select
+                        value={swapTargetCat}
+                        onChange={(e) => setSwapTargetCat(e.target.value as any)}
+                        className="bg-slate-950 border border-white/10 text-slate-300 text-[9px] rounded px-2 py-1 focus:outline-none font-bold cursor-pointer"
+                      >
+                        <option value="To Do">📂 To Do</option>
+                        <option value="In Progress">⚡ Progress</option>
+                        <option value="Done">✓ Done</option>
+                        <option value="Blocked">⚠️ Blocked</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickSwap(swapSourceCat, swapTargetCat)}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-black text-[9px] px-2.5 py-1 rounded-lg cursor-pointer transition-all active:scale-95 uppercase tracking-wider"
+                      >
+                        Swap
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <span className="text-[9.5px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckSquare className="w-3.5 h-3.5 text-slate-600" />
+                  Select multiple statuses from the list below to activate Bulk Categorize action
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Table Headers for Sorting */}
+          {activeStatuses.length > 0 && (
+            <div className="grid grid-cols-12 gap-2 px-3 py-1 text-[9.5px] font-black text-slate-400 uppercase tracking-wider select-none border-b border-white/5 pb-1">
+              <button
+                type="button"
+                onClick={() => toggleSort("statusName")}
+                className="col-span-6 flex items-center gap-1 hover:text-white transition-all text-left cursor-pointer outline-none bg-transparent border-none"
+              >
+                <span>Status Name</span>
+                <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                {sortBy === "statusName" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleSort("issueCount")}
+                className="col-span-2 flex items-center justify-center gap-1 hover:text-white transition-all text-center cursor-pointer outline-none bg-transparent border-none"
+              >
+                <span>Issues</span>
+                <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                {sortBy === "issueCount" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleSort("categoryName")}
+                className="col-span-4 flex items-center justify-end gap-1 hover:text-white transition-all text-right cursor-pointer outline-none bg-transparent border-none"
+              >
+                <span>Category</span>
+                <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                {sortBy === "categoryName" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
+              </button>
+            </div>
+          )}
+
+          {/* Grid of status mapping items */}
+          <div className="border border-white/5 rounded-xl overflow-hidden max-h-[350px] overflow-y-auto bg-slate-950/20 p-2 space-y-1.5 custom-scrollbar">
+            {sortedActiveStatuses.length === 0 ? (
+              <div className="text-[11px] text-slate-400 py-6 text-center font-medium">
+                No statuses detected. Run a sandbox report or load a project to populate workflow states.
+              </div>
+            ) : (
+              sortedActiveStatuses.map((statusName) => {
+                const currentBucket = mapping[statusName] || "To Do";
+                const catColor = categoryColors[currentBucket];
+                const selectStyle = {
+                  borderColor: `${catColor}30`,
+                  backgroundColor: `${catColor}12`,
+                  color: catColor,
+                };
+                const issueCount = statusCounts[statusName] || 0;
+                const isOrphan = orphanStatuses.includes(statusName);
+                const conflictInfo = getStatusConflict(statusName, currentBucket);
+
+                const lowerStatus = statusName.toLowerCase();
+                const isDoneStatus = lowerStatus.includes("done") || 
+                                     lowerStatus.includes("resolved") || 
+                                     lowerStatus.includes("closed") || 
+                                     lowerStatus.includes("complete") || 
+                                     lowerStatus.includes("released") || 
+                                     lowerStatus.includes("shipped");
+                const isDoneToToDoConflict = isDoneStatus && currentBucket === "To Do";
+
+                return (
+                  <div
+                    key={statusName}
+                    className={`flex flex-col p-2.5 rounded-xl bg-slate-950/40 border shadow-sm transition-all duration-300 hover:border-white/10 gap-2 ${
+                      isDoneToToDoConflict 
+                        ? "border-amber-500/30 bg-amber-950/5 hover:border-amber-500/50" 
+                        : "border-white/5"
+                    }`}
+                  >
+                    <div className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-6 flex items-center gap-2 min-w-0 flex-wrap">
+                        <input
+                          type="checkbox"
+                          checked={selectedStatuses.includes(statusName)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedStatuses([...selectedStatuses, statusName]);
+                            } else {
+                              setSelectedStatuses(selectedStatuses.filter(s => s !== statusName));
+                            }
+                          }}
+                          className="rounded border-white/10 bg-slate-950 text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer shrink-0"
+                        />
+                        <span className="text-xs font-bold text-slate-200 font-mono truncate" title={statusName}>
+                          {statusName}
+                        </span>
+                        {isOrphan && (
+                          <span className="text-[8px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 animate-pulse">
+                            ⚠️ Orphan
+                          </span>
+                        )}
+                        {isDoneToToDoConflict && (
+                          <span 
+                            className="text-[8px] font-black bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 inline-flex items-center gap-1 group relative cursor-help"
+                            title="⚠️ Done ➔ To Do Conflict: Mapping a completed status to a backlog bucket degrades sprint metrics. Suggestion: Map to 'Done' category instead."
+                          >
+                            ⚠️ Done ➔ To Do Conflict
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-2 text-center">
+                        <span className="text-[11px] font-black text-slate-400 font-mono bg-white/5 px-2 py-0.5 rounded-md">
+                          {issueCount}
+                        </span>
+                      </div>
+                      
+                      <div className="col-span-4 flex justify-end">
+                        <select
+                          value={currentBucket}
+                          onChange={(e) => handleMapChange(statusName, e.target.value as any)}
+                          style={selectStyle}
+                          className="text-xs rounded-lg px-2 py-1 border font-extrabold focus:outline-none cursor-pointer transition-all w-full text-center"
+                        >
+                          <option value="To Do" className="bg-slate-950 text-slate-200">📂 To Do</option>
+                          <option value="In Progress" className="bg-slate-950 text-slate-200">⚡ In Progress</option>
+                          <option value="Done" className="bg-slate-950 text-slate-200">✓ Done</option>
+                          <option value="Blocked" className="bg-slate-950 text-slate-200">⚠️ Blocked</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Natural Jira Flow Conflict inline alert */}
+                    {conflictInfo && (
+                      <div className="text-[10px] text-amber-300 bg-amber-500/5 border border-amber-500/10 rounded-lg p-2 flex items-start gap-1.5 animate-fade-in font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 leading-relaxed">
+                          <span className="font-extrabold">Workflow Conflict:</span> {conflictInfo.reason}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              pushToHistory(mapping);
+                              const newMapping = { ...mapping, [statusName]: conflictInfo.recommended };
+                              onUpdateMapping(newMapping);
+                              addToast?.("Conflict Resolved", `Assigned '${statusName}' to recommended category '${conflictInfo.recommended}'.`, "success", 3000);
+                              addAuditLog("Resolve Workflow Conflict", `Mapped '${statusName}' to recommended '${conflictInfo.recommended}'.`);
+                            }}
+                            className="text-blue-400 hover:text-blue-300 ml-1.5 underline font-bold cursor-pointer transition-colors"
+                          >
+                            Apply Recommended ({conflictInfo.recommended})
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Add Custom Workflow Status */}
+          <form onSubmit={handleAddCustomStatus} className="flex gap-2 pt-2 border-b border-white/5 pb-3">
+            <input
+              type="text"
+              value={customStatusName}
+              onChange={(e) => setCustomStatusName(e.target.value)}
+              placeholder="Add unlisted custom status (e.g., In Review)..."
+              className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500/80 placeholder-slate-500 font-medium"
+            />
+            <button
+              type="submit"
+              className="bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-3.5 py-2 rounded-lg transition-all flex items-center gap-1 shrink-0 shadow-lg shadow-blue-500/10 active:scale-95 uppercase tracking-wider"
+            >
+              <Plus className="w-4 h-4" /> Add
+            </button>
+          </form>
+
+          {/* --- MAPPED ISSUES DISTRIBUTION DOUGHNUT CHART --- */}
+          <div className="space-y-3 pt-1 border-b border-white/5 pb-4">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Layers className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Mapped Category Distribution</h3>
+            </div>
+            <p className="text-[10px] text-slate-500 font-medium">Real-time breakdown of current ticket allocation across standard PMO executive buckets.</p>
+            <DoughnutChart data={issuesDistribution} colors={categoryColors} />
+          </div>
+
+          {/* --- WORKFLOW CATEGORY COLORS & HISTORICAL SPARKLINE TRENDS --- */}
+          <div className="space-y-3 pt-1">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Palette className="w-4 h-4 text-indigo-400" />
+              <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Style Themes & 30-Day Volume Sparklines</h3>
+            </div>
+            <p className="text-[10px] text-slate-500 font-medium">Assign colors to map categories and monitor historical issue velocity trends (last 30 days) across each bucket.</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {(["To Do", "In Progress", "Done", "Blocked"] as const).map((bucket) => {
+                const currentColor = categoryColors[bucket];
+                const totalIssuesCount = issuesDistribution["To Do"] + issuesDistribution["In Progress"] + issuesDistribution["Done"] + issuesDistribution["Blocked"];
+                const issuePercentage = totalIssuesCount > 0 ? Math.round((issuesDistribution[bucket] / totalIssuesCount) * 100) : 0;
+                
+                return (
+                  <div 
+                    key={bucket} 
+                    className="p-3 rounded-xl bg-slate-950/40 border border-white/5 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm"
+                  >
+                    {/* Left side: color and presets picker */}
+                    <div className="space-y-2.5 w-full sm:w-auto flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10.5px] font-black text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
+                          <span 
+                            className="w-2.5 h-2.5 rounded-full inline-block shadow-[0_0_6px_currentColor]" 
+                            style={{ backgroundColor: currentColor, color: currentColor }}
+                          />
+                          {bucket}
+                        </span>
+                        
+                        <input
+                          type="color"
+                          value={currentColor}
+                          onChange={(e) => handleColorChange(bucket, e.target.value)}
+                          className="w-5 h-5 rounded cursor-pointer border border-white/10 p-0 bg-transparent shrink-0 outline-none"
+                          title={`Custom color for ${bucket}`}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-1">
+                        {PALETTE_PRESETS.map((col) => {
+                          const isCurrent = currentColor === col;
+                          return (
+                            <button
+                              type="button"
+                              key={col}
+                              onClick={() => handleColorChange(bucket, col)}
+                              className={`w-3.5 h-3.5 rounded-full border transition-all ${
+                                isCurrent 
+                                  ? "border-white ring-1 ring-indigo-500/50 scale-110" 
+                                  : "border-transparent hover:scale-105"
+                              }`}
+                              style={{ backgroundColor: col }}
+                              title={`Select ${col}`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {/* Visual Bar Progress Indicator of Total Issues Mapped to this Category */}
+                      <div className="space-y-1 pt-2 border-t border-white/5">
+                        <div className="flex justify-between items-center text-[9px] font-bold text-slate-400">
+                          <span className="uppercase tracking-wider">Issues Allocation</span>
+                          <span className="font-mono text-slate-300 font-extrabold">
+                            {issuesDistribution[bucket]} ({issuePercentage}%)
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-950/60 rounded-full h-1.5 overflow-hidden border border-white/5">
+                          <div 
+                            className="h-full rounded-full transition-all duration-500" 
+                            style={{ 
+                              width: `${issuePercentage}%`, 
+                              backgroundColor: currentColor,
+                              boxShadow: `0 0 6px ${currentColor}40` 
+                            }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right side: 30-day historical sparkline trend graph */}
+                    <div className="bg-slate-950/60 border border-white/5 rounded-xl p-2.5 flex flex-col items-center justify-center shrink-0 w-full sm:w-auto">
+                      <div className="flex items-center justify-between w-full text-[8.5px] text-slate-400 font-bold uppercase tracking-wider mb-1.5 gap-2">
+                        <span>30d Volume</span>
+                        <span className="font-mono text-[9px] text-slate-200 bg-white/5 px-1.5 py-0.5 rounded font-black">
+                          {historicalTrends[bucket][29]} Issues
+                        </span>
+                      </div>
+                      {renderSparkline(historicalTrends[bucket], currentColor, bucket)}
+                      <div className="text-[7.5px] text-slate-500 font-bold mt-1.5 uppercase tracking-tight flex items-center justify-between w-full">
+                        <span>Range: {Math.min(...historicalTrends[bucket])} - {Math.max(...historicalTrends[bucket])}</span>
+                        <span className={`font-mono flex items-center gap-0.5 ${historicalTrends[bucket][29] >= historicalTrends[bucket][0] ? "text-emerald-400" : "text-rose-400"}`}>
+                          {historicalTrends[bucket][29] >= historicalTrends[bucket][0] ? "↗" : "↘"} {Math.abs(historicalTrends[bucket][29] - historicalTrends[bucket][0])}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : (
+        /* History tab content */
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex justify-between items-center bg-slate-950/40 border border-white/5 rounded-xl p-3">
+            <div className="space-y-0.5">
+              <h3 className="text-[11px] font-black text-white uppercase tracking-wider">Mapping Change Log</h3>
+              <p className="text-[9px] text-slate-400">Chronological history of status-to-category modifications</p>
+            </div>
+            {changeHistoryList.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setChangeHistoryList([]);
+                  addToast?.("History Cleared", "Successfully cleared status mapping change log.", "info", 2000);
+                }}
+                className="text-[9px] font-black bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 hover:border-rose-500/30 px-2.5 py-1 rounded-lg transition-all active:scale-95 uppercase tracking-wider"
+              >
+                Clear Log
+              </button>
+            )}
+          </div>
+
+          {changeHistoryList.length === 0 ? (
+            <div className="bg-slate-950/20 border border-dashed border-white/5 rounded-xl p-8 text-center space-y-2">
+              <History className="w-8 h-8 text-slate-600 mx-auto animate-pulse" />
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">No Mapping Changes Tracked</p>
+              <p className="text-[9.5px] text-slate-500 max-w-xs mx-auto leading-relaxed">
+                Modify status mappings in the "Status Mapping" tab or apply bulk actions to populate history.
+              </p>
+            </div>
           ) : (
-            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">
-              Check multiple statuses below for Bulk Mapping
-            </span>
+            <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+              {changeHistoryList.map((entry) => {
+                return (
+                  <div
+                    key={entry.id}
+                    className="bg-slate-950/40 border border-white/5 hover:border-white/10 rounded-xl p-3 flex justify-between items-center gap-3 transition-all duration-200"
+                  >
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10.5px] font-extrabold text-slate-100 truncate">{entry.statusName}</span>
+                        <span className="text-[8px] text-slate-500 font-mono shrink-0">{entry.timestamp}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[9px] font-semibold text-slate-400">
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-bold shrink-0" style={{ backgroundColor: `${categoryColors[entry.previousCategory]}15`, color: categoryColors[entry.previousCategory] }}>
+                          {entry.previousCategory}
+                        </span>
+                        <span>→</span>
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-bold shrink-0" style={{ backgroundColor: `${categoryColors[entry.newCategory]}15`, color: categoryColors[entry.newCategory] }}>
+                          {entry.newCategory}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleUndoSpecificChange(entry)}
+                      className="text-[9px] font-black bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 hover:border-blue-500/30 px-2.5 py-1.5 rounded-lg transition-all active:scale-95 uppercase tracking-wider shrink-0"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
-
-      {/* Table Headers for Sorting */}
-      {activeStatuses.length > 0 && (
-        <div className="grid grid-cols-12 gap-2 px-3 py-1 text-[9.5px] font-black text-slate-400 uppercase tracking-wider select-none border-b border-white/5 pb-1">
-          <button
-            type="button"
-            onClick={() => toggleSort("statusName")}
-            className="col-span-6 flex items-center gap-1 hover:text-white transition-all text-left cursor-pointer outline-none bg-transparent border-none"
-          >
-            <span>Status Name</span>
-            <ArrowUpDown className="w-3 h-3 text-slate-500" />
-            {sortBy === "statusName" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleSort("issueCount")}
-            className="col-span-2 flex items-center justify-center gap-1 hover:text-white transition-all text-center cursor-pointer outline-none bg-transparent border-none"
-          >
-            <span>Issues</span>
-            <ArrowUpDown className="w-3 h-3 text-slate-500" />
-            {sortBy === "issueCount" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleSort("categoryName")}
-            className="col-span-4 flex items-center justify-end gap-1 hover:text-white transition-all text-right cursor-pointer outline-none bg-transparent border-none"
-          >
-            <span>Category</span>
-            <ArrowUpDown className="w-3 h-3 text-slate-500" />
-            {sortBy === "categoryName" && <span className="text-blue-400 font-mono text-[9px]">{sortOrder === "asc" ? "▲" : "▼"}</span>}
-          </button>
-        </div>
-      )}
-
-      {/* Grid of status mapping items */}
-      <div className="border border-white/5 rounded-xl overflow-hidden max-h-[200px] overflow-y-auto bg-slate-950/20 p-2 space-y-1.5 custom-scrollbar">
-        {sortedActiveStatuses.length === 0 ? (
-          <div className="text-[11px] text-slate-400 py-6 text-center font-medium">
-            No statuses detected. Run a sandbox report or load a project to populate workflow states.
-          </div>
-        ) : (
-          sortedActiveStatuses.map((statusName) => {
-            const currentBucket = mapping[statusName] || "To Do";
-            const catColor = categoryColors[currentBucket];
-            const selectStyle = {
-              borderColor: `${catColor}30`,
-              backgroundColor: `${catColor}12`,
-              color: catColor,
-            };
-            const issueCount = statusCounts[statusName] || 0;
-
-            return (
-              <div
-                key={statusName}
-                className="grid grid-cols-12 gap-2 items-center p-2 rounded-xl bg-slate-950/40 border border-white/5 shadow-sm transition-all duration-300 hover:border-white/10"
-              >
-                <div className="col-span-6 flex items-center gap-2 min-w-0">
-                  <input
-                    type="checkbox"
-                    checked={selectedStatuses.includes(statusName)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedStatuses([...selectedStatuses, statusName]);
-                      } else {
-                        setSelectedStatuses(selectedStatuses.filter(s => s !== statusName));
-                      }
-                    }}
-                    className="rounded border-white/10 bg-slate-950 text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer shrink-0"
-                  />
-                  <span className="text-xs font-bold text-slate-200 font-mono truncate" title={statusName}>
-                    {statusName}
-                  </span>
-                </div>
-
-                <div className="col-span-2 text-center">
-                  <span className="text-[11px] font-black text-slate-400 font-mono bg-white/5 px-2 py-0.5 rounded-md">
-                    {issueCount}
-                  </span>
-                </div>
-                
-                <div className="col-span-4 flex justify-end">
-                  <select
-                    value={currentBucket}
-                    onChange={(e) => handleMapChange(statusName, e.target.value as any)}
-                    style={selectStyle}
-                    className="text-xs rounded-lg px-2 py-1 border font-extrabold focus:outline-none cursor-pointer transition-all w-full text-center"
-                  >
-                    <option value="To Do" className="bg-slate-950 text-slate-200">📂 To Do</option>
-                    <option value="In Progress" className="bg-slate-950 text-slate-200">⚡ In Progress</option>
-                    <option value="Done" className="bg-slate-950 text-slate-200">✓ Done</option>
-                    <option value="Blocked" className="bg-slate-950 text-slate-200">⚠️ Blocked</option>
-                  </select>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Add Custom Workflow Status */}
-      <form onSubmit={handleAddCustomStatus} className="flex gap-2 pt-2 border-b border-white/5 pb-3">
-        <input
-          type="text"
-          value={customStatusName}
-          onChange={(e) => setCustomStatusName(e.target.value)}
-          placeholder="Add unlisted custom status (e.g., In Review)..."
-          className="w-full text-xs bg-slate-950/60 border border-white/5 text-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500/80 placeholder-slate-500 font-medium"
-        />
-        <button
-          type="submit"
-          className="bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-3.5 py-2 rounded-lg transition-all flex items-center gap-1 shrink-0 shadow-lg shadow-blue-500/10 active:scale-95 uppercase tracking-wider"
-        >
-          <Plus className="w-4 h-4" /> Add
-        </button>
-      </form>
-
-      {/* --- MAPPED ISSUES DISTRIBUTION DOUGHNUT CHART --- */}
-      <div className="space-y-3 pt-1 border-b border-white/5 pb-4">
-        <div className="flex items-center gap-1.5 text-slate-300">
-          <Layers className="w-4 h-4 text-emerald-400" />
-          <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Mapped Category Distribution</h3>
-        </div>
-        <p className="text-[10px] text-slate-500 font-medium">Real-time breakdown of current ticket allocation across standard PMO executive buckets.</p>
-        <DoughnutChart data={issuesDistribution} colors={categoryColors} />
-      </div>
-
-      {/* --- WORKFLOW CATEGORY COLORS & HISTORICAL SPARKLINE TRENDS --- */}
-      <div className="space-y-3 pt-1">
-        <div className="flex items-center gap-1.5 text-slate-300">
-          <Palette className="w-4 h-4 text-indigo-400" />
-          <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Style Themes & 30-Day Volume Sparklines</h3>
-        </div>
-        <p className="text-[10px] text-slate-500 font-medium">Assign colors to map categories and monitor historical issue velocity trends (last 30 days) across each bucket.</p>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-          {(["To Do", "In Progress", "Done", "Blocked"] as const).map((bucket) => {
-            const currentColor = categoryColors[bucket];
-            
-            return (
-              <div 
-                key={bucket} 
-                className="p-3 rounded-xl bg-slate-950/40 border border-white/5 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm"
-              >
-                {/* Left side: color and presets picker */}
-                <div className="space-y-2.5 w-full sm:w-auto flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10.5px] font-black text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-                      <span 
-                        className="w-2.5 h-2.5 rounded-full inline-block shadow-[0_0_6px_currentColor]" 
-                        style={{ backgroundColor: currentColor, color: currentColor }}
-                      />
-                      {bucket}
-                    </span>
-                    
-                    <input
-                      type="color"
-                      value={currentColor}
-                      onChange={(e) => handleColorChange(bucket, e.target.value)}
-                      className="w-5 h-5 rounded cursor-pointer border border-white/10 p-0 bg-transparent shrink-0 outline-none"
-                      title={`Custom color for ${bucket}`}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-1">
-                    {PALETTE_PRESETS.map((col) => {
-                      const isCurrent = currentColor === col;
-                      return (
-                        <button
-                          type="button"
-                          key={col}
-                          onClick={() => handleColorChange(bucket, col)}
-                          className={`w-3.5 h-3.5 rounded-full border transition-all ${
-                            isCurrent 
-                              ? "border-white ring-1 ring-indigo-500/50 scale-110" 
-                              : "border-transparent hover:scale-105"
-                          }`}
-                          style={{ backgroundColor: col }}
-                          title={`Select ${col}`}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Right side: 30-day historical sparkline trend graph */}
-                <div className="bg-slate-950/60 border border-white/5 rounded-xl p-2.5 flex flex-col items-center justify-center shrink-0 w-full sm:w-auto">
-                  <div className="flex items-center justify-between w-full text-[8.5px] text-slate-400 font-bold uppercase tracking-wider mb-1.5 gap-2">
-                    <span>30d Volume</span>
-                    <span className="font-mono text-[9px] text-slate-200 bg-white/5 px-1.5 py-0.5 rounded font-black">
-                      {historicalTrends[bucket][29]} Issues
-                    </span>
-                  </div>
-                  {renderSparkline(historicalTrends[bucket], currentColor, bucket)}
-                  <div className="text-[7.5px] text-slate-500 font-bold mt-1.5 uppercase tracking-tight flex items-center justify-between w-full">
-                    <span>Range: {Math.min(...historicalTrends[bucket])} - {Math.max(...historicalTrends[bucket])}</span>
-                    <span className={`font-mono flex items-center gap-0.5 ${historicalTrends[bucket][29] >= historicalTrends[bucket][0] ? "text-emerald-400" : "text-rose-400"}`}>
-                      {historicalTrends[bucket][29] >= historicalTrends[bucket][0] ? "↗" : "↘"} {Math.abs(historicalTrends[bucket][29] - historicalTrends[bucket][0])}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
       {/* Collapsible PMO Audit History Log Section */}
       <div className="border border-white/5 bg-slate-950/20 rounded-xl overflow-hidden mt-4">

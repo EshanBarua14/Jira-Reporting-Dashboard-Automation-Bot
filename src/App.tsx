@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
@@ -278,6 +278,7 @@ function DraggableCard({
 }
 
 export default function App() {
+  const [isPrintFriendlyMode, setIsPrintFriendlyMode] = useState(false);
   const [isSandbox, setIsSandbox] = useState(() => {
     return localStorage.getItem("jira_is_sandbox") !== "false";
   });
@@ -575,6 +576,43 @@ export default function App() {
     }
   };
 
+  const handleResetWorkspaceLayout = () => {
+    localStorage.removeItem("omnisync_panel_order");
+    localStorage.removeItem("omnisync_collapsed_panels");
+    localStorage.removeItem("omnisync_card_sub_filters");
+
+    setPanelOrder([
+      "auth",
+      "presets",
+      "recent",
+      "scope",
+      "mapping",
+      "columns",
+      "metrics",
+      "visuals",
+      "export"
+    ]);
+    setCollapsedPanels({});
+    setCardSubFilters({
+      auth: { showDiscord: true, showJira: true },
+      presets: { showSystem: true, showUser: true },
+      recent: { showLive: true, showSandbox: true },
+      scope: { showSprints: true, showDates: true, showConfluence: true, showDiscord: true },
+      mapping: { showMapped: true, showUnmapped: true },
+      columns: { showSelectedOnly: false },
+      metrics: { hideZeroMetrics: false, highPriorityOnly: false },
+      visuals: { showTrends: true, showDistribution: true },
+      export: { showCSV: true, showPDF: true, showSheets: true }
+    });
+
+    addToast(
+      "Layout Reset Completed",
+      "The dashboard panels layout and states have been reverted to their initial default configurations.",
+      "success",
+      3000
+    );
+  };
+
   const handleCopyCardData = (panelId: string) => {
     const data = getCardData(panelId);
     try {
@@ -680,6 +718,46 @@ export default function App() {
     }
     return id;
   };
+
+  // Load Shared Status Mapping Config from Deep-Link URL parameters if present
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sharedMappingB64 = params.get("share_mapping") || params.get("mapping");
+      if (sharedMappingB64) {
+        const decoded = JSON.parse(atob(sharedMappingB64));
+        if (decoded && typeof decoded === "object") {
+          const validCategories = ["To Do", "In Progress", "Done", "Blocked"];
+          const cleanMapping: Record<string, "To Do" | "In Progress" | "Done" | "Blocked"> = {};
+          let isValid = false;
+          
+          Object.entries(decoded).forEach(([status, category]) => {
+            if (typeof status === "string" && validCategories.includes(category as string)) {
+              cleanMapping[status] = category as any;
+              isValid = true;
+            }
+          });
+          
+          if (isValid) {
+            setStatusMapping(cleanMapping);
+            const newUrl = window.location.pathname + window.location.hash;
+            window.history.replaceState({}, document.title, newUrl);
+            
+            setTimeout(() => {
+              addToast(
+                "Shared Mapping Config Loaded",
+                "Successfully imported custom Jira status mapping standardizations via shared deep-link!",
+                "success",
+                5000
+              );
+            }, 1000);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to parse shared status mapping:", err);
+    }
+  }, []);
 
   // Active configurations
   const [selectedProjects, setSelectedProjects] = useState<string[]>(["ALPHA", "MOBI"]);
@@ -1093,7 +1171,10 @@ export default function App() {
         pdfLogoBase64,
         pdfHeaderTitle,
         pdfHeaderSubtitle,
-        pdfCompanyName
+        pdfCompanyName,
+        metrics,
+        metricsHistory,
+        report?.metrics
       );
       addToast("Re-download Initiated", `Rendering PDF report: ${item.filename}`, "success", 3000);
     } else {
@@ -2105,7 +2186,20 @@ export default function App() {
           recordExport("CSV", filename + ".csv", finalIssues);
           addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
         } else if (exportFormat === "PDF") {
-          exportToPDF(`Jira Report - ${selectedProjects.join(", ")}`, finalIssues, columns, pdfCustomNote, pdfWatermark);
+          exportToPDF(
+            `Jira Report - ${selectedProjects.join(", ")}`,
+            finalIssues,
+            columns,
+            pdfCustomNote,
+            pdfWatermark,
+            pdfLogoBase64,
+            pdfHeaderTitle,
+            pdfHeaderSubtitle,
+            pdfCompanyName,
+            metrics,
+            [...metricsHistory, newHistoryEntry],
+            calculatedMetrics
+          );
           recordExport("PDF", filename + ".pdf", finalIssues);
           addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
         } else {
@@ -2587,7 +2681,10 @@ export default function App() {
         pdfLogoBase64,
         pdfHeaderTitle,
         pdfHeaderSubtitle,
-        pdfCompanyName
+        pdfCompanyName,
+        metrics,
+        metricsHistory,
+        report.metrics
       );
       recordExport("PDF", filename + ".pdf");
       addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
@@ -2737,151 +2834,181 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {updateStatus?.updateAvailable && (
-              <button
-                onClick={() => setShowUpdateModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-xs uppercase tracking-wide transition-all shadow-md animate-pulse shrink-0 cursor-pointer"
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                <span>Update Available</span>
-              </button>
+            {!isPrintFriendlyMode && (
+              <>
+                {updateStatus?.updateAvailable && (
+                  <button
+                    onClick={() => setShowUpdateModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-xs uppercase tracking-wide transition-all shadow-md animate-pulse shrink-0 cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                    <span>Update Available</span>
+                  </button>
+                )}
+                {/* Color Theme Selector */}
+                <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTheme("dark");
+                      localStorage.setItem("jira_theme_manual", "true");
+                    }}
+                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
+                      theme === "dark"
+                        ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Midnight Glass Theme"
+                  >
+                    Midnight
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTheme("light");
+                      localStorage.setItem("jira_theme_manual", "true");
+                    }}
+                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
+                      theme === "light"
+                        ? "bg-slate-200 text-slate-950 shadow-md font-black shadow-slate-500/15"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="High Contrast Light Theme"
+                  >
+                    Light
+                  </button>
+                </div>
+
+                {/* View Mode Switcher */}
+                <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("dashboard")}
+                    className={`text-[10px] font-extrabold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider ${
+                      viewMode === "dashboard"
+                        ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Full Dashboard Layout"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    Full Dashboard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("report")}
+                    className={`text-[10px] font-extrabold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider ${
+                      viewMode === "report"
+                        ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Report Focus (Maximized Screen)"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Report Focus
+                  </button>
+                </div>
+
+                {/* Auto-Refresh Toggle */}
+                <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1.5 shrink-0 select-none px-2.5">
+                  <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1.5">
+                    <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${autoRefreshInterval > 0 ? "animate-spin-slow" : ""}`} />
+                    Auto-Refresh
+                  </span>
+                  <select
+                    id="header-auto-refresh-select"
+                    value={autoRefreshInterval}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setAutoRefreshInterval(val);
+                      if (val > 0) {
+                        addToast("Auto-Refresh Enabled", `Dashboard will auto-refresh every ${val} minutes.`, "info", 3500);
+                      } else {
+                        addToast("Auto-Refresh Disabled", "Automatic dashboard updates paused.", "info", 3000);
+                      }
+                    }}
+                    className="bg-slate-900 border border-white/10 text-slate-200 text-[10px] font-extrabold rounded-lg px-2 py-1 focus:outline-none cursor-pointer hover:text-white"
+                  >
+                    <option value={0}>OFF</option>
+                    <option value={5}>5 mins</option>
+                    <option value={15}>15 mins</option>
+                    <option value={30}>30 mins</option>
+                  </select>
+                </div>
+
+                {/* Share button */}
+                {report && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = handleShareReport();
+                      if (url) {
+                        navigator.clipboard.writeText(url).then(() => {
+                          addToast(
+                            "Link Copied",
+                            "Shareable URL link copied to clipboard. Share with others to display this report snapshot.",
+                            "success",
+                            3000
+                          );
+                        }).catch(() => {
+                          addToast("Share Failed", "Unable to copy share link to clipboard.", "error", 2500);
+                        });
+                      }
+                    }}
+                    disabled={generating}
+                    className="bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-white/5 hover:border-slate-700 font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98] cursor-pointer"
+                    title="Generate a direct link to this report snapshot and copy to clipboard"
+                  >
+                    <Share2 className="w-4 h-4 text-blue-400" />
+                    <span>Share Snapshot</span>
+                  </button>
+                )}
+
+                {/* Run button */}
+                <button
+                  onClick={handleGenerateReport}
+                  disabled={generating}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-800 disabled:to-indigo-800 text-white font-black text-xs px-5 py-2.5 rounded-xl hover:shadow-lg hover:shadow-blue-500/10 transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98]"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 fill-white text-white" />
+                      Generate Report
+                    </>
+                  )}
+                </button>
+              </>
             )}
-            {/* Color Theme Selector */}
-            <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
-              <button
-                type="button"
-                onClick={() => {
-                  setTheme("dark");
-                  localStorage.setItem("jira_theme_manual", "true");
-                }}
-                className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
-                  theme === "dark"
-                    ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Midnight Glass Theme"
-              >
-                Midnight
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTheme("light");
-                  localStorage.setItem("jira_theme_manual", "true");
-                }}
-                className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
-                  theme === "light"
-                    ? "bg-slate-200 text-slate-950 shadow-md font-black shadow-slate-500/15"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="High Contrast Light Theme"
-              >
-                Light
-              </button>
-            </div>
 
-            {/* View Mode Switcher */}
-            <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
-              <button
-                type="button"
-                onClick={() => setViewMode("dashboard")}
-                className={`text-[10px] font-extrabold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider ${
-                  viewMode === "dashboard"
-                    ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Full Dashboard Layout"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                Full Dashboard
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("report")}
-                className={`text-[10px] font-extrabold px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider ${
-                  viewMode === "report"
-                    ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                title="Report Focus (Maximized Screen)"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                Report Focus
-              </button>
-            </div>
-
-            {/* Auto-Refresh Toggle */}
-            <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1.5 shrink-0 select-none px-2.5">
-              <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 flex items-center gap-1.5">
-                <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${autoRefreshInterval > 0 ? "animate-spin-slow" : ""}`} />
-                Auto-Refresh
-              </span>
-              <select
-                id="header-auto-refresh-select"
-                value={autoRefreshInterval}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setAutoRefreshInterval(val);
-                  if (val > 0) {
-                    addToast("Auto-Refresh Enabled", `Dashboard will auto-refresh every ${val} minutes.`, "info", 3500);
-                  } else {
-                    addToast("Auto-Refresh Disabled", "Automatic dashboard updates paused.", "info", 3000);
-                  }
-                }}
-                className="bg-slate-900 border border-white/10 text-slate-200 text-[10px] font-extrabold rounded-lg px-2 py-1 focus:outline-none cursor-pointer hover:text-white"
-              >
-                <option value={0}>OFF</option>
-                <option value={5}>5 mins</option>
-                <option value={15}>15 mins</option>
-                <option value={30}>30 mins</option>
-              </select>
-            </div>
-
-            {/* Share button */}
-            {report && (
-              <button
-                type="button"
-                onClick={() => {
-                  const url = handleShareReport();
-                  if (url) {
-                    navigator.clipboard.writeText(url).then(() => {
-                      addToast(
-                        "Link Copied",
-                        "Shareable URL link copied to clipboard. Share with others to display this report snapshot.",
-                        "success",
-                        3000
-                      );
-                    }).catch(() => {
-                      addToast("Share Failed", "Unable to copy share link to clipboard.", "error", 2500);
-                    });
-                  }
-                }}
-                disabled={generating}
-                className="bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-white/5 hover:border-slate-700 font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98] cursor-pointer"
-                title="Generate a direct link to this report snapshot and copy to clipboard"
-              >
-                <Share2 className="w-4 h-4 text-blue-400" />
-                <span>Share Snapshot</span>
-              </button>
-            )}
-
-            {/* Run button */}
+            {/* Print Friendly Mode Toggle */}
             <button
-              onClick={handleGenerateReport}
-              disabled={generating}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-800 disabled:to-indigo-800 text-white font-black text-xs px-5 py-2.5 rounded-xl hover:shadow-lg hover:shadow-blue-500/10 transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98]"
+              type="button"
+              onClick={() => {
+                const nextVal = !isPrintFriendlyMode;
+                setIsPrintFriendlyMode(nextVal);
+                addToast(
+                  nextVal ? "Print Friendly Active" : "Standard Mode Restored",
+                  nextVal 
+                    ? "Non-essential elements are hidden. Press Ctrl+P to print cleanly."
+                    : "All workspace panels and configs are now fully restored.",
+                  "info",
+                  3500
+                );
+              }}
+              className={`text-[10px] font-extrabold px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer ${
+                isPrintFriendlyMode
+                  ? "bg-emerald-600 text-white shadow-lg font-black shadow-emerald-500/20 border border-emerald-500 animate-pulse"
+                  : "bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-white border border-white/5"
+              }`}
+              title="Toggle layout optimized for browser printing (Ctrl+P)"
             >
-              {generating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 fill-white text-white" />
-                  Generate Report
-                </>
-              )}
+              <Printer className="w-3.5 h-3.5 text-blue-400" />
+              <span>{isPrintFriendlyMode ? "Exit Print Mode" : "Print Friendly Mode"}</span>
             </button>
           </div>
         </div>
@@ -2945,7 +3072,7 @@ export default function App() {
       {/* Main layout grids */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
              {/* Left Side: Input config panels (cols 1-5) */}
-        <section className={viewMode === "dashboard" ? "lg:col-span-5 space-y-6" : "hidden"}>
+        <section className={viewMode === "dashboard" && !isPrintFriendlyMode ? "lg:col-span-5 space-y-6" : "hidden"}>
           {showDiagnostics && (
             <DiagnosticConsole
               logs={networkLogs}
@@ -3268,6 +3395,7 @@ export default function App() {
                     onChangeOverdueThreshold={handleUpdateOverdueThreshold}
                     blockedThreshold={blockedThreshold}
                     onChangeBlockedThreshold={handleUpdateBlockedThreshold}
+                    onResetLayout={handleResetWorkspaceLayout}
                     onClearHistory={() => {
                       setRecentExports([]);
                       localStorage.removeItem("jira_recent_exports");
@@ -3351,7 +3479,7 @@ export default function App() {
         </section>
 
         {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
-        <section className={viewMode === "dashboard" ? "lg:col-span-7 space-y-6" : "lg:col-span-12 space-y-6"}>
+        <section className={(viewMode === "dashboard" && !isPrintFriendlyMode) ? "lg:col-span-7 space-y-6" : "lg:col-span-12 space-y-6"}>
           {errorMsg && (
             <div className="p-5 rounded-xl bg-red-950/15 border border-red-900/40 flex gap-4 text-red-300 shadow-xl relative overflow-hidden backdrop-blur-sm">
               <div className="absolute top-0 left-0 w-1.5 h-full bg-red-600"></div>
@@ -3424,38 +3552,40 @@ export default function App() {
         </section>
       </main>
 
-      <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
-        <div className="max-w-7xl mx-auto px-4 text-center space-y-2 relative">
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex flex-wrap items-center justify-center gap-1.5">
-            <span>Eshan Barua's OmniSync Suite</span>
-            <span className="text-slate-600">•</span>
-            <span>Crafted by Eshan Barua</span>
-            <a 
-              href="https://www.linkedin.com/in/eshanbarua" 
-              target="_blank" 
-              referrerPolicy="no-referrer" 
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors lowercase tracking-normal font-semibold bg-blue-950/40 hover:bg-blue-900/40 px-2 py-0.5 rounded-lg border border-blue-900/30 ml-1.5"
-            >
-              <Linkedin className="w-3.5 h-3.5" />
-              <span>linkedin/eshanbarua</span>
-            </a>
-          </p>
-          <p className="text-[9px] text-slate-500 leading-normal max-w-xl mx-auto font-medium">
-            Designed and engineered by Eshan Barua. Secure portfolio sandbox mode is fully operational with automated memory optimizations.
-          </p>
-          <div className="pt-2 flex justify-center">
-            <button
-              onClick={() => setShowShortcutsModal(true)}
-              className="text-[10px] text-slate-400 hover:text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-blue-500/20 transition-all cursor-pointer"
-              title="View Keyboard Shortcuts"
-            >
-              <Keyboard className="w-3.5 h-3.5" />
-              <span>Keyboard Shortcuts</span>
-            </button>
+      {!isPrintFriendlyMode && (
+        <footer className="bg-[#0F172A] border-t border-slate-800 py-6 mt-12">
+          <div className="max-w-7xl mx-auto px-4 text-center space-y-2 relative">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex flex-wrap items-center justify-center gap-1.5">
+              <span>Eshan Barua's OmniSync Suite</span>
+              <span className="text-slate-600">•</span>
+              <span>Crafted by Eshan Barua</span>
+              <a 
+                href="https://www.linkedin.com/in/eshanbarua" 
+                target="_blank" 
+                referrerPolicy="no-referrer" 
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors lowercase tracking-normal font-semibold bg-blue-950/40 hover:bg-blue-900/40 px-2 py-0.5 rounded-lg border border-blue-900/30 ml-1.5"
+              >
+                <Linkedin className="w-3.5 h-3.5" />
+                <span>linkedin/eshanbarua</span>
+              </a>
+            </p>
+            <p className="text-[9px] text-slate-500 leading-normal max-w-xl mx-auto font-medium">
+              Designed and engineered by Eshan Barua. Secure portfolio sandbox mode is fully operational with automated memory optimizations.
+            </p>
+            <div className="pt-2 flex justify-center">
+              <button
+                onClick={() => setShowShortcutsModal(true)}
+                className="text-[10px] text-slate-400 hover:text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-blue-500/20 transition-all cursor-pointer"
+                title="View Keyboard Shortcuts"
+              >
+                <Keyboard className="w-3.5 h-3.5" />
+                <span>Keyboard Shortcuts</span>
+              </button>
+            </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      )}
 
       {/* Keyboard Shortcuts Modal */}
       {showShortcutsModal && (

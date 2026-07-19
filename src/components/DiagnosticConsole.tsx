@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Terminal, X, Trash2, ShieldAlert, Key, Globe, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { Terminal, X, Trash2, ShieldAlert, Key, Globe, RefreshCw, AlertCircle, CheckCircle, Download } from "lucide-react";
 import { NetworkLog } from "../types";
 
 interface DiagnosticConsoleProps {
@@ -25,6 +25,43 @@ export const DiagnosticConsole: React.FC<DiagnosticConsoleProps> = ({
 }) => {
   const [expandedLogIdx, setExpandedLogIdx] = useState<number | null>(null);
 
+  const exportLogsText = () => {
+    const header = `=========================================
+JIRA CONNECTION DIAGNOSTICS REPORT
+Exported on: ${new Date().toLocaleString()}
+=========================================
+
+--- ENVIRONMENT DETAILS ---
+Environment Mode: ${isSandbox ? "Sandbox Playground" : "Production Jira Cloud"}
+Connection State: ${isConnected ? "Connected" : "Disconnected"}
+Session ID Token: ${sessionId || "None"}
+Jira Instance Host: ${jiraUrl || "Not configured"}
+Active User: ${activeUser ? `${activeUser.displayName} (${activeUser.emailAddress})` : "None"}
+
+--- NETWORK & SYSTEM LOGS (${logs.length} captured) ---
+`;
+
+    const logsContent = logs.map((log, idx) => {
+      return `[Log #${idx + 1}]
+Timestamp: ${log.timestamp}
+Method: ${log.method}
+URL: ${log.url}
+Status: ${log.status}
+StatusText: ${log.statusText || "N/A"}
+Details: ${log.details || "No details reported."}
+--------------------------------------------------`;
+    }).join("\n\n");
+
+    const fullText = header + "\n" + logsContent;
+    const blob = new Blob([fullText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `jira-connection-diagnostics-${new Date().toISOString().split("T")[0]}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div
       id="diagnostic-console"
@@ -43,15 +80,26 @@ export const DiagnosticConsole: React.FC<DiagnosticConsoleProps> = ({
         </div>
         <div className="flex items-center gap-2">
           {logs.length > 0 && (
-            <button
-              type="button"
-              onClick={onClear}
-              className="text-[10px] text-slate-400 hover:text-red-400 font-bold px-2.5 py-1 rounded-lg hover:bg-white/5 border border-white/5 transition-all flex items-center gap-1 uppercase tracking-wider"
-              title="Clear log history"
-            >
-              <Trash2 className="w-3 h-3" />
-              Clear Logs
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={exportLogsText}
+                className="text-[10px] text-slate-400 hover:text-blue-400 font-bold px-2.5 py-1 rounded-lg hover:bg-white/5 border border-white/5 transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer"
+                title="Export log history to text file"
+              >
+                <Download className="w-3 h-3" />
+                Export Logs
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                className="text-[10px] text-slate-400 hover:text-red-400 font-bold px-2.5 py-1 rounded-lg hover:bg-white/5 border border-white/5 transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer"
+                title="Clear log history"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear Logs
+              </button>
+            </>
           )}
           <button
             type="button"

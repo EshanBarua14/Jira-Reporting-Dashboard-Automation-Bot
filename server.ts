@@ -1044,6 +1044,110 @@ app.post("/api/pmo/suggest-bulk-updates", async (req, res) => {
   }
 });
 
+// AI Auto-Triage endpoint using Gemini to analyze resource imbalance
+app.post("/api/pmo/auto-triage", async (req, res) => {
+  try {
+    const { issues, issuesPerAssignee } = req.body;
+    if (!issues || !Array.isArray(issues) || issues.length === 0) {
+      return res.status(400).json({ error: "No issues provided for auto-triage analysis." });
+    }
+
+    const ai = getGeminiClient();
+
+    // Prepare high-density summaries of assignees and issues for Gemini to analyze
+    const assigneeList = Object.entries(issuesPerAssignee || {})
+      .map(([name, count]) => {
+        const devIssues = issues.filter(i => i.assignee === name);
+        const totalPoints = devIssues.reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+        const highPriorityCount = devIssues.filter(i => i.priority === "Highest" || i.priority === "High").length;
+        return `- Developer: "${name}", Mapped Issues: ${count}, Total Story Points: ${totalPoints}, High/Highest Priority Issues: ${highPriorityCount}`;
+      })
+      .join("\n");
+
+    const issuesBriefList = issues
+      .filter(i => i.mappedStatus !== "Done") // focus on outstanding work
+      .map(i => `- Key: "${i.key}", Summary: "${i.summary}", Priority: "${i.priority}", Assignee: "${i.assignee || "Unassigned"}", StoryPoints: ${i.storyPoints || 0}`)
+      .join("\n");
+
+    const prompt = `You are an elite Agile project manager and delivery lead.
+Analyze the following team workload allocation and outstanding task lists to identify resource imbalances.
+An imbalance occurs when some developers are overloaded with high-priority tasks or high story points while others are underloaded or have unassigned tasks.
+
+Workload Allocation Statistics:
+${assigneeList}
+
+Outstanding Issues List:
+${issuesBriefList}
+
+Identify overloaded developers and suggest re-assigning specific issues to underloaded developers (or those with lower story points and fewer high-priority tasks) to balance the sprint capacity.
+Provide your analysis and concrete, granular re-assignment proposals in the requested structured JSON format. Make sure proposed suggestAssignees are actual team members found in the workload list or "Unassigned".`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an elite scrum master and agile team coach. Analyze workload data, identify resource imbalances, and propose optimal task re-assignments to balance sprint velocity. Always return a structured JSON response.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            summary: { 
+              type: Type.STRING,
+              description: "A high-level executive summary of the workload imbalance analysis and triage strategy."
+            },
+            imbalances: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  assignee: { type: Type.STRING },
+                  issueCount: { type: Type.INTEGER },
+                  storyPoints: { type: Type.INTEGER },
+                  severity: { 
+                    type: Type.STRING,
+                    description: "Severity of imbalance, e.g. Overloaded, Balanced, Underutilized" 
+                  }
+                },
+                required: ["assignee", "issueCount", "storyPoints", "severity"]
+              }
+            },
+            proposals: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  issueKey: { type: Type.STRING },
+                  issueSummary: { type: Type.STRING },
+                  priority: { type: Type.STRING },
+                  currentAssignee: { type: Type.STRING },
+                  suggestedAssignee: { type: Type.STRING },
+                  reasoning: { type: Type.STRING }
+                },
+                required: ["issueKey", "issueSummary", "priority", "currentAssignee", "suggestedAssignee", "reasoning"]
+              }
+            }
+          },
+          required: ["summary", "imbalances", "proposals"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("No response from Gemini API.");
+    }
+
+    const parsed = JSON.parse(text);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.error("AI Auto-Triage error:", error);
+    return res.status(500).json({ 
+      error: "AI Auto-Triage analysis failed.", 
+      details: error.message 
+    });
+  }
+});
+
 
 // Lazy initialization of Gemini client to prevent startup failures if key is missing
 let aiClient: GoogleGenAI | null = null;

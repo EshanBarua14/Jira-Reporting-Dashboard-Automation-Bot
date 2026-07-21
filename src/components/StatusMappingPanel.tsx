@@ -2432,13 +2432,29 @@ export const StatusMappingPanel: React.FC<StatusMappingPanelProps> = ({
                           {bucket}
                         </span>
                         
-                        <input
-                          type="color"
-                          value={currentColor}
-                          onChange={(e) => handleColorChange(bucket, e.target.value)}
-                          className="w-5 h-5 rounded cursor-pointer border border-white/10 p-0 bg-transparent shrink-0 outline-none"
-                          title={`Custom color for ${bucket}`}
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={currentColor}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              // Allow typing, but only update state if it is a valid hex color
+                              if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                                handleColorChange(bucket, val);
+                              }
+                            }}
+                            className="w-16 text-[9px] font-mono text-center font-black bg-slate-950/80 border border-white/10 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none focus:border-indigo-500/80"
+                            placeholder="#HEX"
+                            title="Enter HEX color code"
+                          />
+                          <input
+                            type="color"
+                            value={currentColor}
+                            onChange={(e) => handleColorChange(bucket, e.target.value)}
+                            className="w-5 h-5 rounded cursor-pointer border border-white/10 p-0 bg-transparent shrink-0 outline-none"
+                            title={`Custom color for ${bucket}`}
+                          />
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap gap-1">

@@ -867,6 +867,8 @@ export default function App() {
     "Resolved": "Done",
   });
 
+  const [summarySearchQuery, setSummarySearchQuery] = useState("");
+
   const [columns, setColumns] = useState<ColumnDefinition[]>(DEFAULT_COLUMNS);
   const [metrics, setMetrics] = useState<MetricDefinition[]>(DEFAULT_METRICS);
   const [visualizations, setVisualizations] = useState({
@@ -3217,6 +3219,8 @@ export default function App() {
                     onConnectDiscord={handleConnectDiscord}
                     onDisconnectDiscord={handleDisconnectDiscord}
                     subFilters={cardSubFilters.auth}
+                    onImportStatusMapping={setStatusMapping}
+                    addToast={addToast}
                   />
                 );
                 break;
@@ -3311,6 +3315,8 @@ export default function App() {
                       setComparisonStartDate(start);
                       setComparisonEndDate(end);
                     }}
+                    summarySearchQuery={summarySearchQuery}
+                    onChangeSummarySearchQuery={setSummarySearchQuery}
                   />
                 );
                 break;
@@ -3548,6 +3554,7 @@ export default function App() {
             onToggleFlag={handleToggleFlag}
             overdueThreshold={overdueThreshold}
             blockedThreshold={blockedThreshold}
+            summarySearchQuery={summarySearchQuery}
           />
         </section>
       </main>

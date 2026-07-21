@@ -146,6 +146,9 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     localStorage.setItem("omnisync_velocity_threshold", velocityThreshold.toString());
   }, [velocityThreshold]);
 
+  // Week-over-week growth percentage option for Sprint Velocity
+  const [showWoWGrowth, setShowWoWGrowth] = React.useState<boolean>(false);
+
   // Contributing Issues Modal States
   const [selectedMetricForModal, setSelectedMetricForModal] = React.useState<MetricDefinition | null>(null);
   const [modalSearchQuery, setModalSearchQuery] = React.useState("");
@@ -1764,6 +1767,30 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             <Sparkles className="w-3.5 h-3.5" />
             <span>Smoothing: {isSmoothingActive ? "On" : "Off"}</span>
           </button>
+
+          {/* WoW Velocity Growth Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowWoWGrowth(!showWoWGrowth);
+              addToast?.(
+                "Velocity WoW Growth Toggle",
+                !showWoWGrowth
+                  ? "Sprint Velocity displays week-over-week growth percentage based on history."
+                  : "Sprint Velocity displays standard absolute metrics.",
+                "info",
+                2000
+              );
+            }}
+            className={`text-[9.5px] font-black uppercase px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
+              showWoWGrowth
+                ? "bg-indigo-500/15 text-indigo-400 border-indigo-500/35 shadow-lg shadow-indigo-500/5"
+                : "bg-slate-950/30 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-200"
+            }`}
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            <span>WoW Growth: {showWoWGrowth ? "On" : "Off"}</span>
+          </button>
         </div>
       </div>
 
@@ -1890,6 +1917,23 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
                         {getMetricDelta(m.id, mode)}
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5 leading-snug font-medium truncate pr-6">{m.description}</div>
+                      {m.id === "sprintVelocity" && showWoWGrowth && (() => {
+                        const sVals = historyData.map((h) => h.metrics[m.id] || 0);
+                        const cVal = sVals[sVals.length - 1] || 0;
+                        const pVal = sVals[sVals.length - 2] || 1;
+                        const growth = pVal !== 0 ? ((cVal - pVal) / pVal) * 100 : 0;
+                        return (
+                          <div className="mt-1.5 px-2 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-between gap-1.5 text-[9px] font-black text-indigo-300">
+                            <span className="uppercase tracking-wider flex items-center gap-1">
+                              <TrendingUp className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                              WoW Velocity Growth:
+                            </span>
+                            <span className={`font-mono font-extrabold ${growth >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {growth >= 0 ? "+" : ""}{growth.toFixed(1)}%
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </button>
 

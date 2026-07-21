@@ -1,5 +1,5 @@
 import React from "react";
-import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders } from "lucide-react";
+import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders, Search } from "lucide-react";
 
 interface ScopePanelProps {
   activePlatform: "Jira" | "Confluence" | "Discord";
@@ -60,6 +60,10 @@ interface ScopePanelProps {
   comparisonStartDate?: string;
   comparisonEndDate?: string;
   onChangeComparisonDates?: (start: string, end: string) => void;
+
+  // Real-time Summary Search Filter
+  summarySearchQuery?: string;
+  onChangeSummarySearchQuery?: (val: string) => void;
 }
 
 export const ScopePanel: React.FC<ScopePanelProps> = ({
@@ -115,6 +119,10 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
   comparisonStartDate = "",
   comparisonEndDate = "",
   onChangeComparisonDates,
+
+  // Summary Search
+  summarySearchQuery = "",
+  onChangeSummarySearchQuery,
 }) => {
   const [loadingSuggestion, setLoadingSuggestion] = React.useState(false);
   const [aiSuggestion, setAiSuggestion] = React.useState<any | null>(null);
@@ -312,6 +320,36 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
               )}
             </div>
           )}
+
+          {/* Real-time Summary Search Filter */}
+          <div className="space-y-1.5 p-3.5 rounded-xl bg-slate-950/40 border border-white/5 shadow-inner">
+            <label className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+              <Search className="w-3 h-3 text-blue-400 animate-pulse" />
+              Filter by Summary
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search issue summary contents in real-time..."
+                value={summarySearchQuery}
+                onChange={(e) => onChangeSummarySearchQuery?.(e.target.value)}
+                className="w-full text-[11px] pl-8 pr-8 py-2.5 bg-slate-950/80 border border-white/10 hover:border-white/20 text-slate-200 placeholder-slate-500 rounded-lg focus:outline-none focus:border-blue-500/80 transition-all font-medium"
+              />
+              <Search className="absolute left-2.5 top-3 w-3.5 h-3.5 text-slate-500" />
+              {summarySearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => onChangeSummarySearchQuery?.("")}
+                  className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300 text-xs font-bold font-mono px-1 hover:bg-white/10 rounded"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <p className="text-[9px] text-slate-500 leading-normal font-medium">
+              Narrow down active tickets instantly by matching text in the issue summary header.
+            </p>
+          </div>
 
           {/* Projects Multi-Select */}
           <div className="space-y-2">

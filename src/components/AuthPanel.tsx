@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle, CheckCircle2, RefreshCw, Compass, BookOpen, MessageSquare, ShieldAlert } from "lucide-react";
+import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle, CheckCircle2, RefreshCw, Compass, BookOpen, MessageSquare, ShieldAlert, UploadCloud, FileText } from "lucide-react";
 
 interface AuthPanelProps {
   isSandbox: boolean;
@@ -23,6 +23,10 @@ interface AuthPanelProps {
   onConnectDiscord: () => void;
   onDisconnectDiscord: () => void;
   subFilters?: { showDiscord?: boolean; showJira?: boolean };
+
+  // Status mapping import CSV props
+  onImportStatusMapping?: (mapping: Record<string, "To Do" | "In Progress" | "Done" | "Blocked">) => void;
+  addToast?: (title: string, description: string, type: "success" | "info" | "warning" | "error", duration?: number) => void;
 }
 
 export const AuthPanel: React.FC<AuthPanelProps> = ({
@@ -46,6 +50,8 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   onConnectDiscord,
   onDisconnectDiscord,
   subFilters,
+  onImportStatusMapping,
+  addToast,
 }) => {
   const [jiraUrl, setJiraUrl] = useState(() => {
     return localStorage.getItem("jira_url") || "https://your-domain.atlassian.net";
@@ -62,6 +68,61 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      const lines = text.split(/\r?\n/);
+      const newMapping: Record<string, "To Do" | "In Progress" | "Done" | "Blocked"> = {};
+      let parsedCount = 0;
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        // Split by comma, and sanitize quotes
+        const parts = line.split(",").map(p => p.replace(/^"|"$/g, '').trim());
+        if (parts.length >= 2) {
+          const statusName = parts[0];
+          const categoryInput = parts[1];
+          
+          let matchedCategory: "To Do" | "In Progress" | "Done" | "Blocked" | null = null;
+          const normalized = categoryInput.toLowerCase().replace(/[-_ ]/g, '');
+          if (normalized === "todo" || normalized === "todolist") matchedCategory = "To Do";
+          else if (normalized === "inprogress") matchedCategory = "In Progress";
+          else if (normalized === "done" || normalized === "completed" || normalized === "resolved") matchedCategory = "Done";
+          else if (normalized === "blocked" || normalized === "hold") matchedCategory = "Blocked";
+
+          if (statusName && matchedCategory) {
+            newMapping[statusName] = matchedCategory;
+            parsedCount++;
+          }
+        }
+      }
+
+      if (parsedCount > 0) {
+        onImportStatusMapping?.(newMapping);
+        addToast?.(
+          "CSV Import Success", 
+          `Successfully loaded ${parsedCount} Jira statuses mapping dictionary from offline file.`, 
+          "success", 
+          4000
+        );
+      } else {
+        addToast?.(
+          "CSV Import Failed", 
+          "Could not detect valid mappings. Ensure headers or columns are: Status, Category", 
+          "error", 
+          4000
+        );
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const handleTestHeartbeat = async () => {
     if (isSandbox) return;
@@ -421,6 +482,51 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
           )}
         </>
       )}
+
+      {/* Status Mapping CSV Upload Gateway */}
+      <div className="p-3.5 rounded-xl bg-slate-950/45 border border-white/5 space-y-2.5">
+        <div className="flex items-center gap-1.5 text-slate-300">
+          <UploadCloud className="w-4 h-4 text-blue-400" />
+          <h3 className="text-[10px] font-extrabold uppercase tracking-wider">Jira Status Map Gateway (CSV Upload)</h3>
+        </div>
+        <p className="text-[9.5px] text-slate-500 font-medium leading-relaxed">
+          Map custom Jira statuses offline if auto-sync is down. Upload a CSV with format: <code className="font-mono text-slate-400 bg-white/5 px-1 py-0.5 rounded">Jira Status,Category</code>. Valid Categories: <span className="font-bold text-slate-300">To Do, In Progress, Done, Blocked</span>.
+        </p>
+
+        <label 
+          className="flex flex-col items-center justify-center border border-dashed border-white/10 hover:border-blue-500/40 hover:bg-blue-500/5 rounded-xl p-3.5 cursor-pointer transition-all gap-1 text-center group"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const file = e.dataTransfer.files?.[0];
+            if (file) {
+              const fileInput = document.getElementById("csv-file-input") as HTMLInputElement;
+              if (fileInput) {
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                const event = new Event('change', { bubbles: true });
+                fileInput.dispatchEvent(event);
+              }
+            }
+          }}
+        >
+          <FileText className="w-6 h-6 text-slate-400 group-hover:text-blue-400 transition-colors" />
+          <span className="text-xs font-bold text-slate-300">Select or Drop CSV Mapping File</span>
+          <span className="text-[9px] text-slate-500">Supports .csv standard UTF-8 text lists</span>
+          <input
+            id="csv-file-input"
+            type="file"
+            accept=".csv"
+            onChange={handleCSVUpload}
+            className="hidden"
+          />
+        </label>
+      </div>
 
       {/* Clear Cache Area */}
       <div className="pt-3 border-t border-white/5 flex items-center justify-between gap-2">

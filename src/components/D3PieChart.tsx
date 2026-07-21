@@ -15,21 +15,22 @@ interface D3PieChartProps {
     blocked: number;
   };
   totalCount: number;
+  categoryColors?: Record<string, string>;
 }
 
-export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount }) => {
+export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount, categoryColors }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
 
   const chartData = useMemo<DataPoint[]>(() => {
     return [
-      { label: "Done", value: data.done, color: "#10b981" },
-      { label: "In Progress", value: data.progress, color: "#0ea5e9" },
-      { label: "Blocked", value: data.blocked, color: "#ef4444" },
-      { label: "To Do", value: data.todo, color: "#64748b" },
+      { label: "Done", value: data.done, color: categoryColors?.["Done"] || "#10b981" },
+      { label: "In Progress", value: data.progress, color: categoryColors?.["In Progress"] || "#0ea5e9" },
+      { label: "Blocked", value: data.blocked, color: categoryColors?.["Blocked"] || "#ef4444" },
+      { label: "To Do", value: data.todo, color: categoryColors?.["To Do"] || "#64748b" },
     ].filter((d) => d.value > 0);
-  }, [data]);
+  }, [data, categoryColors]);
 
   useEffect(() => {
     if (!svgRef.current) return;

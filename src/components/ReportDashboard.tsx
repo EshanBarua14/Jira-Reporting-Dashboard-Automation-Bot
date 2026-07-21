@@ -78,6 +78,7 @@ interface ReportDashboardProps {
   onUpdateIssueStatusOrSprint?: (key: string, newStatus?: "To Do" | "In Progress" | "Done" | "Blocked", newSprint?: string) => void;
   overdueThreshold?: number;
   blockedThreshold?: number;
+  summarySearchQuery?: string;
 }
 
 const containerVariants = {
@@ -160,6 +161,7 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   onUpdateIssueStatusOrSprint,
   overdueThreshold = 5,
   blockedThreshold = 3,
+  summarySearchQuery,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
@@ -1732,6 +1734,12 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
       );
     }
 
+    // Filter by summary specifically (from Scope Panel)
+    if (summarySearchQuery && summarySearchQuery.trim()) {
+      const q = summarySearchQuery.toLowerCase().trim();
+      result = result.filter((issue) => issue.summary.toLowerCase().includes(q));
+    }
+
     // Sorting
     result.sort((a: any, b: any) => {
       let valA = a[sortField];
@@ -1760,7 +1768,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     });
 
     return result;
-  }, [report?.issues, activeMetricFilter, searchQuery, sortField, sortDirection, tableQuickFilter]);
+  }, [report?.issues, activeMetricFilter, searchQuery, summarySearchQuery, sortField, sortDirection, tableQuickFilter]);
 
   // Paginated Issues
   const paginatedIssues = useMemo(() => {
@@ -3378,7 +3386,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
 
               <div className="flex-1 flex items-center justify-center my-2">
-                <D3PieChart data={statusChartData} totalCount={issues.length} />
+                <D3PieChart data={statusChartData} totalCount={issues.length} categoryColors={categoryColors} />
               </div>
             </div>
           )}

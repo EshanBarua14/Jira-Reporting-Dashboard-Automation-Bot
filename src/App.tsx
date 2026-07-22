@@ -1178,7 +1178,17 @@ export default function App() {
         pdfCompanyName,
         metrics,
         metricsHistory,
-        report?.metrics
+        report?.metrics,
+        {
+          projects: item.projects,
+          dateRange: createdDateStart ? `${createdDateStart} to ${createdDateEnd || "Present"}` : "Snapshot Scope",
+          jqlFilter: (item as any).jql || "Snapshot Export Scope",
+          issueTypes: selectedIssueTypes,
+          statuses: selectedStatuses,
+          summarySearchQuery: summarySearchQuery,
+          sprint: selectedSprint,
+          assignee: selectedAssignee,
+        }
       );
       addToast("Re-download Initiated", `Rendering PDF report: ${item.filename}`, "success", 3000);
     } else {
@@ -2207,7 +2217,17 @@ export default function App() {
             pdfCompanyName,
             metrics,
             [...metricsHistory, newHistoryEntry],
-            calculatedMetrics
+            calculatedMetrics,
+            {
+              projects: selectedProjects,
+              dateRange: createdDateStart ? `${createdDateStart} to ${createdDateEnd || "Present"}` : "All Time Scope",
+              jqlFilter: queryJql,
+              issueTypes: selectedIssueTypes,
+              statuses: selectedStatuses,
+              summarySearchQuery: summarySearchQuery,
+              sprint: selectedSprint,
+              assignee: selectedAssignee,
+            }
           );
           recordExport("PDF", filename + ".pdf", finalIssues);
           addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
@@ -2739,7 +2759,17 @@ export default function App() {
             pdfCompanyName,
             metrics,
             metricsHistory,
-            report.metrics
+            report.metrics,
+            {
+              projects: selectedProjects,
+              dateRange: createdDateStart ? `${createdDateStart} to ${createdDateEnd || "Present"}` : "All Time Scope",
+              jqlFilter: selectedProjects.length ? `project IN (${selectedProjects.map(p => `"${p}"`).join(",")})` : "Active Backlog Scope",
+              issueTypes: selectedIssueTypes,
+              statuses: selectedStatuses,
+              summarySearchQuery: summarySearchQuery,
+              sprint: selectedSprint,
+              assignee: selectedAssignee,
+            }
           );
           recordExport("PDF", filename + ".pdf");
           setToasts((prev) => prev.filter((t) => t.id !== progressToastId));

@@ -3,7 +3,7 @@ import {
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
   Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X, FileText,
-  BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw
+  BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw, GripVertical
 } from "lucide-react";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
 import { exportToCSV, exportToPDF } from "../utils/export";
@@ -1895,7 +1895,17 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         undefined,
         report?.config?.metrics,
         metricsHistory,
-        report?.metrics
+        report?.metrics,
+        {
+          projects: safeConfig.selectedProjects,
+          dateRange: safeConfig.dateRangeStart ? `${safeConfig.dateRangeStart} to ${safeConfig.dateRangeEnd || "Present"}` : "All Time Scope",
+          jqlFilter: safeConfig.jqlFilter,
+          issueTypes: safeConfig.issueTypes,
+          statuses: safeConfig.selectedStatuses,
+          summarySearchQuery: summarySearchQuery || searchQuery,
+          sprint: safeConfig.sprint,
+          assignee: safeConfig.assignee,
+        }
       );
       if (onRecordExport) {
         onRecordExport("PDF", name);
@@ -2937,6 +2947,12 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             <div className="absolute right-4 top-4 text-blue-950/40 font-bold text-7xl select-none pointer-events-none">PMO</div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3.5 border-b border-blue-900/20 pb-3">
               <div className="flex items-center gap-2">
+                <div 
+                  className="p-1 rounded bg-blue-900/40 hover:bg-blue-800/60 border border-blue-500/30 text-blue-300 hover:text-white cursor-grab active:cursor-grabbing transition-colors flex items-center justify-center shrink-0"
+                  title="Drag handle: Drag to reorder executive summary card"
+                >
+                  <GripVertical className="w-4 h-4" />
+                </div>
                 <div className="bg-blue-600 text-white p-1 rounded">
                   <Sparkles className="w-4 h-4" />
                 </div>
@@ -3618,14 +3634,22 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         {/* 4. Issue Timeline Progress Tracker Widget */}
         <div id="issue-timeline-tracker-section" className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm space-y-4">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/5 pb-3">
-            <div>
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-sky-400" />
-                Issue Timeline Progress Tracker
-              </h3>
-              <p className="text-[10px] text-slate-500 font-semibold">
-                Horizontal progression axis tracking status transitions, comments, and milestones
-              </p>
+            <div className="flex items-center gap-2">
+              <div 
+                className="p-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-sky-400 cursor-grab active:cursor-grabbing transition-colors flex items-center justify-center shrink-0"
+                title="Drag handle: Drag to reorder timeline tracker card"
+              >
+                <GripVertical className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-sky-400" />
+                  Issue Timeline Progress Tracker
+                </h3>
+                <p className="text-[10px] text-slate-500 font-semibold">
+                  Horizontal progression axis tracking status transitions, comments, and milestones
+                </p>
+              </div>
             </div>
 
             {(() => {
@@ -4010,12 +4034,20 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         {/* Historical Metrics Performance Trends Section */}
         <div id="historical-metric-trends-section" className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                <TrendingUp className="w-4 h-4 text-indigo-400" />
-                Historical Metric Performance Trends
-              </h3>
-              <p className="text-[10px] text-slate-500 font-semibold">Historical progression mapping backlog scope volume alongside cumulative resolution rates</p>
+            <div className="flex items-center gap-2">
+              <div 
+                className="p-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-indigo-400 cursor-grab active:cursor-grabbing transition-colors flex items-center justify-center shrink-0"
+                title="Drag handle: Drag to reorder historical trends card"
+              >
+                <GripVertical className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-indigo-400" />
+                  Historical Metric Performance Trends
+                </h3>
+                <p className="text-[10px] text-slate-500 font-semibold">Historical progression mapping backlog scope volume alongside cumulative resolution rates</p>
+              </div>
             </div>
             {!metricsHistory || metricsHistory.length === 0 ? (
               <span className="text-[8px] font-extrabold uppercase px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 tracking-wider">
@@ -4358,15 +4390,24 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
       {/* 3.5 Issue Density Heatmap Grid Visualizer */}
       <div id="issue-density-heatmap-section" className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm space-y-4">
-        <div>
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-indigo-400" />
-            Issue Density Correlation Heatmap
-          </h3>
-          <p className="text-[10px] text-slate-500">
-            Grid density correlation matrix mapping issue volumes per assignee across standard workflow lifecycle categories. Click any density box to instantly filter the table.
-          </p>
+        <div className="flex items-center gap-2">
+          <div 
+            className="p-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-indigo-400 cursor-grab active:cursor-grabbing transition-colors flex items-center justify-center shrink-0"
+            title="Drag handle: Drag to reorder heatmap card"
+          >
+            <GripVertical className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-1.5">
+              <TrendingUp className="w-4 h-4 text-indigo-400" />
+              Issue Density Correlation Heatmap
+            </h3>
+            <p className="text-[10px] text-slate-500 font-semibold">Correlating ticket density across priority levels and issue categories</p>
+          </div>
         </div>
+        <p className="text-[10px] text-slate-500">
+          Grid density correlation matrix mapping issue volumes per assignee across standard workflow lifecycle categories. Click any density box to instantly filter the table.
+        </p>
 
         <div className="overflow-x-auto">
           <div className="min-w-[600px] border border-slate-800 rounded-xl overflow-hidden bg-slate-950/20">
@@ -4652,6 +4693,12 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
             ) : (
               <div className="flex items-center gap-2">
+                <div 
+                  className="p-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-blue-400 cursor-grab active:cursor-grabbing transition-colors flex items-center justify-center shrink-0"
+                  title="Drag handle: Drag to reorder data table card"
+                >
+                  <GripVertical className="w-4 h-4" />
+                </div>
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">Issue Analysis Matrix</h3>
                 <span className="text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
                   {filteredIssues.length} Matches

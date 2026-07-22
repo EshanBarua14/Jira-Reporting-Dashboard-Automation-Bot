@@ -99,6 +99,39 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Confirmation Modal state for Exports
+  const [confirmExportModal, setConfirmExportModal] = useState<{
+    isOpen: boolean;
+    format: "CSV" | "PDF" | "Google Sheets" | "JSON" | null;
+  }>({
+    isOpen: false,
+    format: null,
+  });
+  const [dontAskExportConfirm, setDontAskExportConfirm] = useState(false);
+
+  const handleExportClick = (format: "CSV" | "PDF" | "Google Sheets" | "JSON") => {
+    if (dontAskExportConfirm) {
+      if (format === "JSON" && onExportJson) {
+        onExportJson();
+      } else if (onTriggerExport) {
+        onTriggerExport(format);
+      }
+    } else {
+      setConfirmExportModal({ isOpen: true, format });
+    }
+  };
+
+  const executeConfirmedExport = () => {
+    if (!confirmExportModal.format) return;
+    const fmt = confirmExportModal.format;
+    setConfirmExportModal({ isOpen: false, format: null });
+    if (fmt === "JSON" && onExportJson) {
+      onExportJson();
+    } else if (onTriggerExport) {
+      onTriggerExport(fmt);
+    }
+  };
+
   // Slack Webhook Configuration State
   const [slackWebhookUrl, setSlackWebhookUrl] = useState(() => {
     return localStorage.getItem("omnisync_slack_webhook") || "https://hooks.slack.com/services/T000/B000/XXXXX";
@@ -478,7 +511,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </p>
         <button
           type="button"
-          onClick={onExportJson}
+          onClick={() => handleExportClick("JSON")}
           className="w-full text-[10.5px] py-2.5 px-3 rounded-lg border font-bold bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300 transition-all duration-300 flex items-center justify-center gap-1.5 uppercase cursor-pointer hover:shadow-[0_0_12px_rgba(245,158,11,0.15)]"
         >
           <Code className="w-3.5 h-3.5" /> Download raw JSON
@@ -524,7 +557,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         {/* Primary Export Trigger Button */}
         <button
           type="button"
-          onClick={() => onTriggerExport && onTriggerExport(exportFormat)}
+          onClick={() => handleExportClick(exportFormat)}
           className={`w-full text-xs py-3 px-4 rounded-xl font-black uppercase tracking-wider transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer border ${
             justGeneratedReport
               ? "bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 text-white border-emerald-300 animate-pulse ring-2 ring-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.5)]"
@@ -1012,6 +1045,80 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-black text-[10px] px-3 py-1.5 rounded-lg uppercase tracking-wider"
               >
                 Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Exports */}
+      {confirmExportModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-blue-500/30 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden space-y-4 p-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Confirm Report Export</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Verification required before initiating file generation</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmExportModal({ isOpen: false, format: null })}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <p className="text-slate-300 font-medium leading-relaxed">
+                You are about to compile and download the executive report dataset in <strong className="text-blue-400 uppercase">{confirmExportModal.format}</strong> format.
+              </p>
+
+              <div className="bg-slate-950/60 rounded-xl p-3 border border-white/5 space-y-2">
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="text-slate-400 font-semibold">Export Format:</span>
+                  <span className="font-extrabold text-white uppercase bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30">
+                    {confirmExportModal.format}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="text-slate-400 font-semibold">File Naming Rule:</span>
+                  <span className="font-mono text-slate-300 font-bold truncate max-w-[200px]" title={fileNamingRule}>
+                    {fileNamingRule}
+                  </span>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-[10px] text-slate-300 font-medium cursor-pointer pt-1 select-none">
+                <input
+                  type="checkbox"
+                  checked={dontAskExportConfirm}
+                  onChange={(e) => setDontAskExportConfirm(e.target.checked)}
+                  className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-950 cursor-pointer"
+                />
+                <span>Don't ask for confirmation again during this session</span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-white/10 pt-3.5">
+              <button
+                type="button"
+                onClick={() => setConfirmExportModal({ isOpen: false, format: null })}
+                className="px-4 py-2 rounded-xl text-xs font-extrabold text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-800 transition-colors uppercase tracking-wider cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeConfirmedExport}
+                className="px-4 py-2 rounded-xl text-xs font-black text-white bg-blue-600 hover:bg-blue-500 transition-all uppercase tracking-wider shadow-lg shadow-blue-500/25 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" /> Confirm & Export
               </button>
             </div>
           </div>

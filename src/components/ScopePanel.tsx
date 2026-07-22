@@ -127,6 +127,67 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
   const [loadingSuggestion, setLoadingSuggestion] = React.useState(false);
   const [aiSuggestion, setAiSuggestion] = React.useState<any | null>(null);
   const [showAiBox, setShowAiBox] = React.useState(false);
+  const [activePresetId, setActivePresetId] = React.useState<string>("");
+
+  const FILTER_PRESETS = [
+    {
+      id: "my_active_bugs",
+      label: "🐛 My Active Bugs",
+      description: "Filter to active Bug issues in To Do & In Progress state",
+      apply: () => {
+        onChangeIssueTypes(availableIssueTypes.includes("Bug") ? ["Bug"] : availableIssueTypes);
+        const activeStats = availableStatuses.filter(s => ["In Progress", "To Do", "In Review", "Open"].includes(s));
+        onChangeStatuses(activeStats.length > 0 ? activeStats : availableStatuses);
+        onChangeSummarySearchQuery?.("");
+      },
+    },
+    {
+      id: "sprint_review",
+      label: "🚀 Sprint Review",
+      description: "Filter to Sprint scope items (Stories, Tasks, Bugs in Progress/Done)",
+      apply: () => {
+        const reviewTypes = availableIssueTypes.filter(t => ["Story", "Task", "Bug"].includes(t));
+        onChangeIssueTypes(reviewTypes.length > 0 ? reviewTypes : availableIssueTypes);
+        const reviewStats = availableStatuses.filter(s => ["In Progress", "Done", "In Review"].includes(s));
+        onChangeStatuses(reviewStats.length > 0 ? reviewStats : availableStatuses);
+        if (availableSprints.length > 0 && !selectedSprint) {
+          onChangeSprint(availableSprints[0]);
+        }
+        onChangeSummarySearchQuery?.("");
+      },
+    },
+    {
+      id: "critical_escalations",
+      label: "⚡ Critical Escalations",
+      description: "Filter to high impact tickets or summary items with 'Critical'",
+      apply: () => {
+        onChangeSummarySearchQuery?.("Critical");
+      },
+    },
+    {
+      id: "completed_delivered",
+      label: "🏁 Completed / Delivered Work",
+      description: "Filter exclusively to completed and closed tickets",
+      apply: () => {
+        const doneStats = availableStatuses.filter(s => ["Done", "Closed", "Resolved"].includes(s));
+        onChangeStatuses(doneStats.length > 0 ? doneStats : availableStatuses);
+        onChangeSummarySearchQuery?.("");
+      },
+    },
+    {
+      id: "reset_all",
+      label: "🔄 Reset All Scope Filters",
+      description: "Clear all filter constraints to view entire project scope",
+      apply: () => {
+        onChangeProjects(availableProjects.map((p) => p.key));
+        onChangeIssueTypes(availableIssueTypes);
+        onChangeStatuses(availableStatuses);
+        onChangeSprint("");
+        onChangeAssignee("");
+        onChangeSummarySearchQuery?.("");
+      },
+    },
+  ];
 
   const fetchSmartFilter = async () => {
     if (!report) return;
@@ -320,6 +381,51 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
               )}
             </div>
           )}
+
+          {/* Quick Filter Preset Dropdown */}
+          <div className="space-y-1.5 p-3.5 rounded-xl bg-gradient-to-r from-slate-950/60 to-indigo-950/30 border border-indigo-500/20 shadow-inner">
+            <div className="flex items-center justify-between">
+              <label className="text-[9px] font-extrabold text-indigo-300 uppercase tracking-widest flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                Quick Filter Preset (JQL Sets)
+              </label>
+              {activePresetId && (
+                <button
+                  type="button"
+                  onClick={() => setActivePresetId("")}
+                  className="text-[9px] text-indigo-400 hover:text-indigo-200 font-bold transition-colors uppercase tracking-wider"
+                >
+                  Clear Preset
+                </button>
+              )}
+            </div>
+            <select
+              value={activePresetId}
+              onChange={(e) => {
+                const presetId = e.target.value;
+                setActivePresetId(presetId);
+                const matched = FILTER_PRESETS.find((p) => p.id === presetId);
+                if (matched) {
+                  matched.apply();
+                }
+              }}
+              className="w-full text-xs font-semibold px-3 py-2.5 bg-slate-950/90 border border-indigo-500/30 text-indigo-200 rounded-lg focus:outline-none focus:border-indigo-400 cursor-pointer shadow-sm transition-all"
+            >
+              <option value="" className="bg-slate-900 text-slate-400 font-semibold">
+                -- Select a Quick JQL Filter Preset --
+              </option>
+              {FILTER_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id} className="bg-slate-900 text-slate-100 font-medium py-1">
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[9px] text-indigo-300/80 leading-normal font-medium">
+              {activePresetId
+                ? FILTER_PRESETS.find((p) => p.id === activePresetId)?.description
+                : "Select predefined query scopes like 'My Active Bugs' or 'Sprint Review' to instantly tune your filters."}
+            </p>
+          </div>
 
           {/* Real-time Summary Search Filter */}
           <div className="space-y-1.5 p-3.5 rounded-xl bg-slate-950/40 border border-white/5 shadow-inner">

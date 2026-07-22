@@ -53,6 +53,17 @@ export function exportToCSV(issues: JiraIssue[], columns: ColumnDefinition[], fi
   document.body.removeChild(link);
 }
 
+export interface AppliedFiltersSummary {
+  projects?: string[];
+  dateRange?: string;
+  jqlFilter?: string;
+  issueTypes?: string[];
+  statuses?: string[];
+  summarySearchQuery?: string;
+  assignee?: string;
+  sprint?: string;
+}
+
 // Simple dynamic HTML Print window trigger to support one-click PDF generation
 export function exportToPDF(
   reportTitle: string, 
@@ -66,7 +77,8 @@ export function exportToPDF(
   companyName?: string,
   metrics?: MetricDefinition[],
   metricsHistory?: any[],
-  reportMetrics?: any
+  reportMetrics?: any,
+  appliedFilters?: AppliedFiltersSummary
 ) {
   const activeColumns = columns.filter(c => c.enabled);
   const printWindow = window.open("", "_blank");
@@ -195,6 +207,52 @@ export function exportToPDF(
     `;
   }
 
+  let filterSummaryHtml = "";
+  if (appliedFilters) {
+    const projStr = appliedFilters.projects && appliedFilters.projects.length > 0 ? appliedFilters.projects.join(", ") : "All Projects";
+    const dateStr = appliedFilters.dateRange || "All Time Scope";
+    const typesStr = appliedFilters.issueTypes && appliedFilters.issueTypes.length > 0 ? appliedFilters.issueTypes.join(", ") : "All Issue Types";
+    const statusStr = appliedFilters.statuses && appliedFilters.statuses.length > 0 ? appliedFilters.statuses.join(", ") : "All Statuses";
+    const jqlStr = appliedFilters.jqlFilter || "None (Default)";
+    const searchStr = appliedFilters.summarySearchQuery ? `"${appliedFilters.summarySearchQuery}"` : "None";
+    const sprintStr = appliedFilters.sprint || "All Sprints";
+    const assigneeStr = appliedFilters.assignee || "All Assignees";
+
+    filterSummaryHtml = `
+      <div style="margin-top: 15px; margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 16px; background-color: #f8fafc; page-break-inside: avoid;">
+        <h3 style="margin-top: 0; margin-bottom: 8px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #1e293b; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;">
+          ⚙️ Applied Filter & Scope Configuration
+        </h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 10px; font-family: sans-serif; margin-top: 5px;">
+          <tbody>
+            <tr>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569; width: 20%;">Target Projects:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a; width: 30%;">${projStr}</td>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569; width: 20%;">Timeframe / Dates:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a; width: 30%;">${dateStr}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569;">Issue Types:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a;">${typesStr}</td>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569;">Status Filter:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a;">${statusStr}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569;">Sprint / Assignee:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a;">${sprintStr} / ${assigneeStr}</td>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569;">Summary Query:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #0f172a;">${searchStr}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 8px; font-weight: 700; color: #475569;">Applied JQL Rule:</td>
+              <td style="padding: 4px 8px; font-weight: 800; color: #2563eb; font-family: monospace;" colspan="3">${jqlStr}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
   printWindow.document.write(`
     <html>
       <head>
@@ -247,6 +305,8 @@ export function exportToPDF(
           <span style="font-style: italic;">${customNote.replace(/\n/g, '<br/>')}</span>
         </div>
         ` : ""}
+
+        ${filterSummaryHtml}
 
         ${metricsDeepDiveHtml}
 

@@ -66,6 +66,7 @@ export interface ReportConfig {
     barChart: boolean;
     lineChart: boolean;
     table: boolean;
+    trendAnalysis?: boolean;
   };
   exportFormat: "CSV" | "PDF" | "Google Sheets";
   autoExport: boolean;

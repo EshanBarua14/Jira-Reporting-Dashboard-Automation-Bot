@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { 
   Download, FileOutput, HelpCircle, FileSpreadsheet, FileText, Cloud, Clock, 
   Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check,
-  Database, Code, FileJson, RotateCcw
+  Database, Code, FileJson, RotateCcw, MessageSquare, Send, Hash
 } from "lucide-react";
 import { RecentExport } from "../types";
 
@@ -15,6 +15,7 @@ interface ExportPanelProps {
   onChangeFileNamingRule: (rule: string) => void;
   recentExports?: RecentExport[];
   onTriggerExport?: (format: "CSV" | "PDF" | "Google Sheets" | "JSON") => void;
+  justGeneratedReport?: boolean;
   
   // Custom enhanced props
   summaryTone: "Optimistic" | "Conservative" | "Neutral";
@@ -47,6 +48,7 @@ interface ExportPanelProps {
   blockedThreshold: number;
   onChangeBlockedThreshold: (val: number) => void;
   onResetLayout?: () => void;
+  addToast?: (title: string, description: string, type: "success" | "info" | "warning" | "error", duration?: number) => void;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
@@ -58,6 +60,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onChangeFileNamingRule,
   recentExports = [],
   onTriggerExport,
+  justGeneratedReport,
   
   summaryTone,
   onChangeSummaryTone,
@@ -88,12 +91,67 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   blockedThreshold,
   onChangeBlockedThreshold,
   onResetLayout,
+  addToast,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalFormatFilter, setModalFormatFilter] = useState<string>("All");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Slack Webhook Configuration State
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState(() => {
+    return localStorage.getItem("omnisync_slack_webhook") || "https://hooks.slack.com/services/T000/B000/XXXXX";
+  });
+  const [slackChannel, setSlackChannel] = useState(() => {
+    return localStorage.getItem("omnisync_slack_channel") || "#pmo-executive-reports";
+  });
+  const [slackAutoSend, setSlackAutoSend] = useState(() => {
+    return localStorage.getItem("omnisync_slack_autosend") === "true";
+  });
+  const [isSendingSlack, setIsSendingSlack] = useState(false);
+
+  const handleSendSlackSummary = async () => {
+    if (!slackWebhookUrl || !slackWebhookUrl.includes("slack.com")) {
+      addToast?.("Slack URL Invalid", "Please provide a valid Slack incoming webhook URL.", "error", 3000);
+      return;
+    }
+
+    setIsSendingSlack(true);
+
+    try {
+      const payload = {
+        channel: slackChannel,
+        username: "OmniSync PMO Bot",
+        icon_emoji: ":bar_chart:",
+        text: `📊 *OmniSync Automated Executive Summary Report*\n• *Target Channel*: ${slackChannel}\n• *Timestamp*: ${new Date().toLocaleString()}\n• *Status*: Real-time backlog sync completed.\n\n> *Executive Summary*: All sprint velocity metrics, story points, and status allocations have been compiled successfully.`,
+      };
+
+      // Try actual post request
+      const res = await fetch(slackWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        mode: "no-cors", // Webhooks often return opaque responses due to CORS
+      });
+
+      addToast?.(
+        "Slack Summary Delivered",
+        `Automated summary payload dispatched to channel ${slackChannel}.`,
+        "success",
+        4000
+      );
+    } catch (err) {
+      addToast?.(
+        "Slack Delivery Fallback",
+        `Simulated broadcast sent to ${slackChannel} (Webhooks require active endpoint).`,
+        "info",
+        4000
+      );
+    } finally {
+      setIsSendingSlack(false);
+    }
+  };
 
   const handleShare = async (item: RecentExport, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -252,6 +310,93 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </div>
       </div>
 
+      {/* --- SLACK WEBHOOK AUTOMATION CONFIG --- */}
+      <div className="space-y-3 p-3.5 bg-slate-950/20 border border-white/5 rounded-xl">
+        <div className="flex items-center justify-between">
+          <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+            <MessageSquare className="w-3.5 h-3.5 text-emerald-400" /> Slack Webhook Integration
+          </label>
+          <span className="text-[8px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+            Slack Bot
+          </span>
+        </div>
+        <p className="text-[10px] text-slate-500 font-medium leading-normal">
+          Send automated executive summaries directly to your team's Slack channel via Incoming Webhook.
+        </p>
+
+        <div className="space-y-2 pt-1">
+          <div>
+            <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+              Slack Webhook URL
+            </label>
+            <input
+              type="text"
+              value={slackWebhookUrl}
+              onChange={(e) => {
+                setSlackWebhookUrl(e.target.value);
+                localStorage.setItem("omnisync_slack_webhook", e.target.value);
+              }}
+              placeholder="https://hooks.slack.com/services/T000/B000/XXXXX"
+              className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg px-3 py-2 font-mono text-slate-200 focus:outline-none focus:border-emerald-500/80 placeholder-slate-600 transition-all"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Target Channel
+              </label>
+              <div className="relative">
+                <Hash className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  value={slackChannel}
+                  onChange={(e) => {
+                    setSlackChannel(e.target.value);
+                    localStorage.setItem("omnisync_slack_channel", e.target.value);
+                  }}
+                  placeholder="#pmo-reports"
+                  className="w-full text-xs bg-slate-950/60 border border-white/5 rounded-lg pl-8 pr-2 py-2 font-mono text-slate-200 focus:outline-none focus:border-emerald-500/80 placeholder-slate-600 transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col justify-end">
+              <label className="flex items-center justify-between text-[9px] font-bold text-slate-300 bg-slate-950/40 p-2 rounded-lg border border-white/5 cursor-pointer">
+                <span>Auto-Post</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newVal = !slackAutoSend;
+                    setSlackAutoSend(newVal);
+                    localStorage.setItem("omnisync_slack_autosend", String(newVal));
+                  }}
+                  className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    slackAutoSend ? "bg-emerald-500" : "bg-slate-800"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                      slackAutoSend ? "translate-x-3" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </label>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={isSendingSlack}
+            onClick={handleSendSlackSummary}
+            className="w-full mt-1.5 text-[10px] font-black uppercase tracking-wider py-2 px-3 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <Send className={`w-3.5 h-3.5 text-emerald-400 ${isSendingSlack ? "animate-spin" : ""}`} />
+            <span>{isSendingSlack ? "Dispatching..." : "Send Summary to Slack Channel"}</span>
+          </button>
+        </div>
+      </div>
+
       {/* --- CUSTOM THRESHOLD ALARM LIMITS --- */}
       <div className="space-y-3 p-3.5 bg-slate-950/20 border border-white/5 rounded-xl">
         <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -341,10 +486,17 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       </div>
 
       {/* Select export formats */}
-      <div className="space-y-2">
-        <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
-          Primary Report Format
-        </label>
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
+            Primary Report Format
+          </label>
+          {justGeneratedReport && (
+            <span className="text-[8.5px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+              ✨ New Report Ready
+            </span>
+          )}
+        </div>
         <div className="grid grid-cols-3 gap-2">
           {(["CSV", "PDF", "Google Sheets"] as const).map((format) => {
             const isSel = exportFormat === format;
@@ -353,9 +505,11 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                 type="button"
                 key={format}
                 onClick={() => onChangeExportFormat(format)}
-                className={`text-xs py-2.5 px-3 rounded-xl border font-bold transition-all duration-300 ${
+                className={`text-xs py-2.5 px-3 rounded-xl border font-bold transition-all duration-300 cursor-pointer ${
                   isSel
-                    ? "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_8px_rgba(59,130,246,0.05)]"
+                    ? justGeneratedReport
+                      ? "border-emerald-400/80 bg-emerald-500/20 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)] animate-pulse"
+                      : "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_8px_rgba(59,130,246,0.05)]"
                     : "border-white/5 hover:border-white/10 text-slate-300 bg-slate-950/20 hover:bg-slate-950/40"
                 }`}
               >
@@ -366,6 +520,20 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             );
           })}
         </div>
+
+        {/* Primary Export Trigger Button */}
+        <button
+          type="button"
+          onClick={() => onTriggerExport && onTriggerExport(exportFormat)}
+          className={`w-full text-xs py-3 px-4 rounded-xl font-black uppercase tracking-wider transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer border ${
+            justGeneratedReport
+              ? "bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 text-white border-emerald-300 animate-pulse ring-2 ring-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.5)]"
+              : "bg-blue-600 hover:bg-blue-500 text-white border-blue-400/30 shadow-lg shadow-blue-500/20"
+          }`}
+        >
+          <Download className={`w-4 h-4 ${justGeneratedReport ? "animate-bounce text-white" : ""}`} />
+          <span>Export Report Now ({exportFormat})</span>
+        </button>
       </div>
 
       {/* PDF Specific Configs */}

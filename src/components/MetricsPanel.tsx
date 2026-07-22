@@ -1831,6 +1831,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
           {/* KPI Selection Card Grid with Automated Deviation Alert System */}
           <motion.div 
+            key={report ? report.timestamp : "empty"}
             variants={metricContainerVariants}
             initial="hidden"
             animate="show"

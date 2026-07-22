@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { 
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
-  Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X,
+  Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X, FileText,
   BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw
 } from "lucide-react";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
@@ -12,6 +12,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import { D3PieChart } from "./D3PieChart";
 import { SprintBurndownWidget } from "./SprintBurndownWidget";
 import { ProjectImpactChart } from "./ProjectImpactChart";
+import { TrendAnalysisChart } from "./TrendAnalysisChart";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -79,6 +80,8 @@ interface ReportDashboardProps {
   overdueThreshold?: number;
   blockedThreshold?: number;
   summarySearchQuery?: string;
+  onExportPDF?: () => void;
+  justGeneratedReport?: boolean;
 }
 
 const containerVariants = {
@@ -162,6 +165,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   overdueThreshold = 5,
   blockedThreshold = 3,
   summarySearchQuery,
+  onExportPDF,
+  justGeneratedReport = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
@@ -1844,44 +1849,59 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     const name = safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".csv";
-    exportToCSV(issues, safeConfig.columns, name);
-    if (onRecordExport) {
-      onRecordExport("CSV", name);
-    }
+    addToast?.("Preparing CSV Export...", `Structuring ${issues.length} issue records into custom columns...`, "info", 2000);
+    setTimeout(() => {
+      exportToCSV(issues, safeConfig.columns, name);
+      if (onRecordExport) {
+        onRecordExport("CSV", name);
+      }
+      addToast?.("CSV Export Successful", `Exported ${issues.length} issues to CSV spreadsheet.`, "success", 3000);
+    }, 500);
   };
 
   const downloadSearchedCSV = () => {
     const name = "Quick_Export_" + safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".csv";
-    exportToCSV(filteredIssues, safeConfig.columns, name);
-    if (onRecordExport) {
-      onRecordExport("CSV", name);
-    }
-    addToast?.("Quick Export Successful", `Exported ${filteredIssues.length} searched issues to CSV.`, "success", 2000);
+    addToast?.("Preparing Filtered CSV...", `Filtering ${filteredIssues.length} records...`, "info", 2000);
+    setTimeout(() => {
+      exportToCSV(filteredIssues, safeConfig.columns, name);
+      if (onRecordExport) {
+        onRecordExport("CSV", name);
+      }
+      addToast?.("Quick Export Successful", `Exported ${filteredIssues.length} searched issues to CSV.`, "success", 2000);
+    }, 400);
   };
 
   const downloadPDF = () => {
+    if (onExportPDF) {
+      onExportPDF();
+      return;
+    }
     const name = safeConfig.fileNamingRule
       .replace("{project}", safeConfig.selectedProjects.join("_"))
       .replace("{date}", new Date().toISOString().split("T")[0]) + ".pdf";
-    exportToPDF(
-      `Jira Executive Report - ${safeConfig.selectedProjects.join(", ")}`,
-      issues,
-      safeConfig.columns,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      report?.config?.metrics,
-      metricsHistory,
-      report?.metrics
-    );
-    if (onRecordExport) {
-      onRecordExport("PDF", name);
-    }
+    addToast?.("Rendering PDF Document...", `Compiling executive summary and ${issues.length} issues into print layout...`, "info", 2000);
+    setTimeout(() => {
+      exportToPDF(
+        `Jira Executive Report - ${safeConfig.selectedProjects.join(", ")}`,
+        issues,
+        safeConfig.columns,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        report?.config?.metrics,
+        metricsHistory,
+        report?.metrics
+      );
+      if (onRecordExport) {
+        onRecordExport("PDF", name);
+      }
+      addToast?.("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
+    }, 600);
   };
 
   const downloadSelectedCSV = () => {
@@ -2331,7 +2351,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
       className="space-y-6"
     >
       {/* Premium Dashboard Header Controls */}
-      <div className="bg-slate-900/60 backdrop-blur-md border border-white/5 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-slate-900/60 backdrop-blur-md border border-white/5 p-4 rounded-2xl flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4">
         <div>
           <h2 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -2342,7 +2362,37 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 w-full md:w-auto justify-end relative">
+        {/* Global Search & Live Filter Bar */}
+        <div className="flex-1 max-w-lg mx-0 xl:mx-4">
+          <div className="relative flex items-center">
+            <Search className="w-4 h-4 text-blue-400 absolute left-3.5 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Global Search: Live-filter table by summary or assignee name..."
+              className="w-full bg-slate-950/90 border border-white/10 focus:border-blue-500/80 text-xs font-medium text-white placeholder-slate-400 pl-10 pr-9 py-2.5 rounded-xl transition-all shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Clear global search query"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            ) : null}
+          </div>
+          {searchQuery && (
+            <div className="text-[9.5px] font-bold text-blue-400 mt-1 flex items-center gap-1.5 px-1 font-mono">
+              <span>Filtered by summary / assignee: "{searchQuery}"</span>
+              <span className="text-slate-500">({filteredIssues.length} matching tickets)</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end relative shrink-0">
           {/* Refresh Data Button */}
           {onRefreshData && (
             <button
@@ -2394,6 +2444,20 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               <span>Share Snapshot</span>
             </button>
           )}
+
+          {/* Dedicated Download as PDF Button */}
+          <button
+            onClick={downloadPDF}
+            className={`font-black text-[11px] px-4 py-2 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider cursor-pointer border shadow-md ${
+              justGeneratedReport
+                ? "bg-gradient-to-r from-red-600 via-rose-600 to-red-500 text-white border-rose-300 animate-pulse ring-2 ring-rose-400 shadow-[0_0_20px_rgba(244,63,94,0.5)]"
+                : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 hover:border-rose-500/50"
+            }`}
+            title="Download current report immediately as a high-fidelity executive PDF"
+          >
+            <FileText className={`w-3.5 h-3.5 text-rose-400 ${justGeneratedReport ? "animate-bounce text-white" : ""}`} />
+            <span>Download as PDF</span>
+          </button>
 
           {/* Direct Export Dropdown Container */}
           <div className="relative">
@@ -3545,6 +3609,11 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             </div>
           )}
         </div>
+
+        {/* 3.5. 30-Day Trend Analysis Visualization */}
+        {safeConfig.visualizations.trendAnalysis !== false && (
+          <TrendAnalysisChart issues={issues} />
+        )}
  
         {/* 4. Issue Timeline Progress Tracker Widget */}
         <div id="issue-timeline-tracker-section" className="bg-[#1E293B] rounded-xl border border-slate-800 p-5 shadow-sm space-y-4">

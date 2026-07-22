@@ -876,11 +876,13 @@ export default function App() {
     barChart: true,
     lineChart: true,
     table: true,
+    trendAnalysis: true,
   });
 
   const [exportFormat, setExportFormat] = useState<"CSV" | "PDF" | "Google Sheets">("CSV");
   const [autoExport, setAutoExport] = useState(false);
   const [fileNamingRule, setFileNamingRule] = useState("jira-report-{project}-{date}");
+  const [justGeneratedReport, setJustGeneratedReport] = useState<boolean>(false);
 
   // Custom states
   const [summaryTone, setSummaryTone] = useState<"Optimistic" | "Conservative" | "Neutral">("Neutral");
@@ -2173,6 +2175,11 @@ export default function App() {
       setFetchingProgress(100);
       setTimeout(() => setFetchingProgress(null), 500);
 
+      setJustGeneratedReport(true);
+      setTimeout(() => {
+        setJustGeneratedReport(false);
+      }, 10000);
+
       addToast(
         "Report Compiled Successfully",
         `Calculated metrics and PMO executive summary for project(s): ${selectedProjects.join(", ")}.`,
@@ -2668,28 +2675,83 @@ export default function App() {
       );
       return;
     }
+
+    setJustGeneratedReport(false);
     const filename = getFormattedFilename(fileNamingRule, selectedProjects);
+
     if (format === "CSV") {
-      exportToCSV(report.issues, columns, filename);
-      recordExport("CSV", filename + ".csv");
-      addToast("CSV Export Successful", `File "${filename}.csv" has been prepared for download.`, "success", 4000);
-    } else if (format === "PDF") {
-      exportToPDF(
-        `Jira Report - ${selectedProjects.join(", ")}`,
-        report.issues,
-        columns,
-        pdfCustomNote,
-        pdfWatermark,
-        pdfLogoBase64,
-        pdfHeaderTitle,
-        pdfHeaderSubtitle,
-        pdfCompanyName,
-        metrics,
-        metricsHistory,
-        report.metrics
+      const progressToastId = addToast(
+        "Preparing CSV Export...",
+        `Structuring ${report.issues.length} records into custom columns...`,
+        "info",
+        0
       );
-      recordExport("PDF", filename + ".pdf");
-      addToast("PDF Export Successful", "Your high-fidelity executive report PDF has been rendered and downloaded.", "success", 4000);
+
+      setTimeout(() => {
+        setToasts((prev) =>
+          prev.map((t) =>
+            t.id === progressToastId
+              ? { ...t, title: "Building CSV File...", message: "Encoding UTF-8 dataset and formatting output headers..." }
+              : t
+          )
+        );
+
+        setTimeout(() => {
+          exportToCSV(report.issues, columns, filename);
+          recordExport("CSV", filename + ".csv");
+          setToasts((prev) => prev.filter((t) => t.id !== progressToastId));
+          addToast(
+            "CSV Export Successful",
+            `File "${filename}.csv" has been prepared and downloaded.`,
+            "success",
+            4000
+          );
+        }, 600);
+      }, 400);
+
+    } else if (format === "PDF") {
+      const progressToastId = addToast(
+        "Rendering PDF Document...",
+        `Compiling executive summary and ${report.issues.length} issues into print layout...`,
+        "info",
+        0
+      );
+
+      setTimeout(() => {
+        setToasts((prev) =>
+          prev.map((t) =>
+            t.id === progressToastId
+              ? { ...t, title: "Applying Styling & Watermarks...", message: "Generating charts, metrics, and executive branding..." }
+              : t
+          )
+        );
+
+        setTimeout(() => {
+          exportToPDF(
+            `Jira Report - ${selectedProjects.join(", ")}`,
+            report.issues,
+            columns,
+            pdfCustomNote,
+            pdfWatermark,
+            pdfLogoBase64,
+            pdfHeaderTitle,
+            pdfHeaderSubtitle,
+            pdfCompanyName,
+            metrics,
+            metricsHistory,
+            report.metrics
+          );
+          recordExport("PDF", filename + ".pdf");
+          setToasts((prev) => prev.filter((t) => t.id !== progressToastId));
+          addToast(
+            "PDF Export Successful",
+            "Your high-fidelity executive report PDF has been rendered and downloaded.",
+            "success",
+            4000
+          );
+        }, 700);
+      }, 500);
+
     } else if (format === "Google Sheets") {
       triggerGoogleSheetsExport();
     }
@@ -3376,6 +3438,7 @@ export default function App() {
                     onChangeFileNamingRule={setFileNamingRule}
                     recentExports={recentExports}
                     onTriggerExport={handleTriggerExport}
+                    justGeneratedReport={justGeneratedReport}
                     summaryTone={summaryTone}
                     onChangeSummaryTone={setSummaryTone}
                     autoRunOnLogin={autoRunOnLogin}
@@ -3402,6 +3465,7 @@ export default function App() {
                     blockedThreshold={blockedThreshold}
                     onChangeBlockedThreshold={handleUpdateBlockedThreshold}
                     onResetLayout={handleResetWorkspaceLayout}
+                    addToast={addToast}
                     onClearHistory={() => {
                       setRecentExports([]);
                       localStorage.removeItem("jira_recent_exports");
@@ -3534,6 +3598,8 @@ export default function App() {
             report={report}
             loading={generating}
             onExportSheets={triggerGoogleSheetsExport}
+            onExportPDF={() => handleTriggerExport("PDF")}
+            justGeneratedReport={justGeneratedReport}
             jiraUrl={jiraUrl}
             isSandbox={isSandbox}
             onRecordExport={(format, filename) => recordExport(format, filename, report?.issues)}

@@ -8,12 +8,14 @@ interface VisualizationPanelProps {
     barChart: boolean;
     lineChart: boolean;
     table: boolean;
+    trendAnalysis?: boolean;
   };
   onChangeVisualizations: (visuals: {
     pieChart: boolean;
     barChart: boolean;
     lineChart: boolean;
     table: boolean;
+    trendAnalysis?: boolean;
   }) => void;
 }
 
@@ -56,6 +58,7 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     { key: "pieChart", label: "Pie Chart (Status Distribution)", desc: "Visualizes the percentage distribution of Done, In Progress, Blocked, and To Do issues." },
     { key: "barChart", label: "Bar Chart (Workload per Assignee)", desc: "Compares workload distribution and ticket completion velocity across your active squad." },
     { key: "lineChart", label: "Trend Line Chart (Cumulative Resolution)", desc: "Tracks cumulative issue resolutions over time to audit sprint and project velocity." },
+    { key: "trendAnalysis", label: "30-Day Trend Analysis (Points & Issues)", desc: "Displays change in story points and issue counts over the last 30 days with dual-axis metrics." },
     { key: "table", label: "Detailed Issues List Grid", desc: "Displays fully filterable, searchable columns of matching issues with real-time status attributes." },
   ] as const;
 

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle, CheckCircle2, RefreshCw, Compass, BookOpen, MessageSquare, ShieldAlert, UploadCloud, FileText } from "lucide-react";
+import { KeyRound, ShieldCheck, Globe, Mail, Eye, EyeOff, AlertTriangle, CheckCircle2, RefreshCw, Compass, BookOpen, MessageSquare, ShieldAlert, UploadCloud, FileText, Sun, Moon, Monitor } from "lucide-react";
 
 interface AuthPanelProps {
   isSandbox: boolean;
@@ -10,6 +10,11 @@ interface AuthPanelProps {
   isConnected: boolean;
   activeUser: { displayName: string; emailAddress: string; avatarUrl: string } | null;
   onClearCache: () => void;
+
+  // Theme settings props
+  theme?: "dark" | "light";
+  themeMode?: "system" | "dark" | "light";
+  onSelectThemeMode?: (mode: "system" | "dark" | "light") => void;
 
   // Multiplatform fields
   activePlatform: "Jira" | "Confluence" | "Discord";
@@ -38,6 +43,10 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   isConnected,
   activeUser,
   onClearCache,
+
+  theme,
+  themeMode = "system",
+  onSelectThemeMode,
 
   activePlatform,
   onChangeActivePlatform,
@@ -257,6 +266,64 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             }`}
           />
         </button>
+      </div>
+
+      {/* Global Theme Preference Switcher */}
+      <div className="p-3.5 rounded-xl bg-slate-950/40 border border-white/5 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+            Global Theme Preference
+          </div>
+          <span className="text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            {themeMode === "system" ? "Auto (OS)" : themeMode === "light" ? "High Contrast Light" : "Midnight Glass"}
+          </span>
+        </div>
+        <p className="text-[10px] text-slate-400 font-medium leading-normal">
+          Override automatic OS detection with a persistent global theme preference across all dashboard panels.
+        </p>
+
+        <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+          <button
+            type="button"
+            onClick={() => onSelectThemeMode?.("system")}
+            className={`flex-1 text-[10px] font-extrabold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 uppercase tracking-wider cursor-pointer ${
+              themeMode === "system"
+                ? "bg-indigo-600 text-white shadow-md font-black shadow-indigo-500/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+            title="Follow OS System Theme"
+          >
+            <Monitor className="w-3 h-3" />
+            System Auto
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectThemeMode?.("dark")}
+            className={`flex-1 text-[10px] font-extrabold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 uppercase tracking-wider cursor-pointer ${
+              themeMode === "dark"
+                ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+            title="Persistent Midnight Glass Dark Theme"
+          >
+            <Moon className="w-3 h-3" />
+            Midnight
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectThemeMode?.("light")}
+            className={`flex-1 text-[10px] font-extrabold py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 uppercase tracking-wider cursor-pointer ${
+              themeMode === "light"
+                ? "bg-slate-200 text-slate-950 shadow-md font-black shadow-slate-500/15"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+            title="Persistent High Contrast Light Theme"
+          >
+            <Sun className="w-3 h-3" />
+            Light
+          </button>
+        </div>
       </div>
 
       {isSandbox ? (

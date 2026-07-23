@@ -65,6 +65,7 @@ function DraggableCard({
   onExport,
   onCopy,
   onRefresh,
+  onShare,
   filterOptions,
   onToggleFilter,
   index,
@@ -84,6 +85,7 @@ function DraggableCard({
   onExport: () => void;
   onCopy: () => void;
   onRefresh: () => void;
+  onShare?: () => void;
   filterOptions?: Record<string, boolean>;
   onToggleFilter?: (key: string) => void;
   index: number;
@@ -114,159 +116,212 @@ function DraggableCard({
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
       onDrop={onDrop}
-      className={`transition-all duration-300 relative ${
+      className={`transition-all duration-300 relative rounded-2xl overflow-hidden ${
         isLight
-          ? "border border-slate-200 bg-white rounded-2xl shadow-sm hover:shadow-md hover:border-slate-300 overflow-hidden animate-in fade-in duration-200"
-          : ""
+          ? "border border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300 animate-in fade-in duration-200"
+          : "border border-white/5 bg-slate-900/40 shadow-xl"
       }`}
     >
-      {/* Light Theme Unified Header & Toolbar */}
-      {isLight && (
-        <div className="px-5 py-3.5 flex items-center justify-between border-b border-slate-100 bg-slate-50/70 rounded-t-2xl select-none">
-          <div className="flex items-center gap-2.5">
-            {/* Drag Handle Indicator */}
-            <span 
-              className="text-slate-400 cursor-grab active:cursor-grabbing hover:text-slate-600 transition-colors p-1 rounded hover:bg-slate-200/50"
-              title="Drag card to reorder layout"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <circle cx="9" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="9" cy="12" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
-                <circle cx="9" cy="19" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="19" r="1.5" fill="currentColor"/>
-              </svg>
-            </span>
-            <span className="text-xs font-extrabold text-slate-700 tracking-wide uppercase">{title}</span>
-          </div>
+      {/* Unified Card Header & Toolbar */}
+      <div className={`px-5 py-3.5 flex items-center justify-between border-b select-none transition-colors ${
+        isLight
+          ? "border-slate-100 bg-slate-50/70 text-slate-700 rounded-t-2xl"
+          : "border-white/10 bg-slate-950/60 text-slate-200 rounded-t-2xl"
+      }`}>
+        <div className="flex items-center gap-2.5">
+          {/* Drag Handle Indicator */}
+          <span 
+            className={`cursor-grab active:cursor-grabbing transition-colors p-1 rounded ${
+              isLight ? "text-slate-400 hover:text-slate-600 hover:bg-slate-200/50" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+            }`}
+            title="Drag card to reorder layout"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <circle cx="9" cy="5" r="1.5" fill="currentColor"/>
+              <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
+              <circle cx="9" cy="12" r="1.5" fill="currentColor"/>
+              <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
+              <circle cx="9" cy="19" r="1.5" fill="currentColor"/>
+              <circle cx="15" cy="19" r="1.5" fill="currentColor"/>
+            </svg>
+          </span>
+          <span className={`text-xs font-extrabold tracking-wide uppercase ${isLight ? "text-slate-700" : "text-slate-200"}`}>{title}</span>
+        </div>
 
-          <div className="flex items-center gap-1.5 relative">
-            {/* Quick Copy Data Button */}
+        <div className="flex items-center gap-1.5 relative">
+          {/* Share Report / Card Link Button */}
+          {onShare && (
             <button
-              onClick={(e) => { e.stopPropagation(); onCopy(); }}
-              title="Copy card processed data to clipboard"
-              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-              </svg>
-            </button>
-
-            {/* Quick Filter Popover Icon */}
-            {filterOptions && Object.keys(filterOptions).length > 0 && (
-              <div className="relative">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowFilterPopover(!showFilterPopover); }}
-                  title="Quick toggle card sub-filters"
-                  className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.82c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
-                  </svg>
-                </button>
-
-                {showFilterPopover && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-40" 
-                      onClick={(e) => { e.stopPropagation(); setShowFilterPopover(false); }} 
-                    />
-                    <div 
-                      className="absolute right-0 mt-2 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-3 text-xs text-slate-700 animate-in fade-in slide-in-from-top-2 duration-150 text-left"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="font-extrabold text-[10px] text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1 flex justify-between items-center">
-                        <span>Card Sub-Filters</span>
-                        <button 
-                          onClick={() => setShowFilterPopover(false)}
-                          className="text-slate-400 hover:text-slate-600 font-bold"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      <div className="space-y-1.5">
-                        {Object.keys(filterOptions).map((key) => (
-                          <label key={key} className="flex items-center gap-2 cursor-pointer py-1 px-1 rounded hover:bg-slate-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={!!filterOptions[key]}
-                              onChange={() => onToggleFilter?.(key)}
-                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                            />
-                            <span className="font-medium text-slate-600">{formatFilterKey(key)}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Quick Refresh Card Button */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-              title="Refresh this card dataset"
-              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-xs flex items-center"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3m-3-3v8" />
-              </svg>
-            </button>
-
-            {/* Quick Export Button */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onExport(); }}
-              title="Export report dataset"
-              className="p-1 px-2 rounded-lg hover:bg-slate-200/80 text-blue-600 hover:text-blue-700 transition-all text-xs flex items-center gap-1 font-bold border border-blue-150 bg-blue-50/30 cursor-pointer"
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onShare(); }}
+              title={`Share ${title} snapshot and report URL`}
+              className={`p-1 px-2 rounded-lg transition-all text-xs flex items-center gap-1 font-bold cursor-pointer ${
+                isLight
+                  ? "bg-indigo-50/80 text-indigo-600 hover:bg-indigo-100 border border-indigo-200/60"
+                  : "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20"
+              }`}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
-              <span>Export</span>
+              <span className="hidden sm:inline">Share</span>
             </button>
+          )}
 
-            {/* Accessibility Manual Sort Buttons */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
-              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer text-xs"
-              title="Move Card Up"
-            >
-              ▲
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
-              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 transition-colors cursor-pointer text-xs"
-              title="Move Card Down"
-            >
-              ▼
-            </button>
+          {/* Quick Copy Data Button */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onCopy(); }}
+            title="Copy card processed data to clipboard"
+            className={`p-1 rounded transition-colors cursor-pointer text-xs flex items-center ${
+              isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-800" : "hover:bg-white/10 text-slate-400 hover:text-white"
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+          </button>
 
-            {/* Collapse/Expand Toggle Chevron */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
-              className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
-              title={isCollapsed ? "Expand Panel" : "Collapse Panel"}
-            >
-              <svg
-                className={`w-4 h-4 transform transition-transform duration-300 ${isCollapsed ? "-rotate-90 text-slate-400" : "rotate-0 text-slate-600"}`}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                viewBox="0 0 24 24"
+          {/* Quick Filter Popover Icon */}
+          {filterOptions && Object.keys(filterOptions).length > 0 && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowFilterPopover(!showFilterPopover); }}
+                title="Quick toggle card sub-filters"
+                className={`p-1 rounded transition-colors cursor-pointer text-xs flex items-center ${
+                  isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-800" : "hover:bg-white/10 text-slate-400 hover:text-white"
+                }`}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.82c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+                </svg>
+              </button>
+
+              {showFilterPopover && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={(e) => { e.stopPropagation(); setShowFilterPopover(false); }} 
+                  />
+                  <div 
+                    className={`absolute right-0 mt-2 w-52 border rounded-xl shadow-xl z-50 p-3 text-xs animate-in fade-in slide-in-from-top-2 duration-150 text-left ${
+                      isLight ? "bg-white border-slate-200 text-slate-700" : "bg-slate-900 border-white/10 text-slate-200"
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className={`font-extrabold text-[10px] uppercase tracking-wider mb-2 border-b pb-1 flex justify-between items-center ${
+                      isLight ? "text-slate-400 border-slate-100" : "text-slate-500 border-white/5"
+                    }`}>
+                      <span>Card Sub-Filters</span>
+                      <button 
+                        type="button"
+                        onClick={() => setShowFilterPopover(false)}
+                        className="text-slate-400 hover:text-slate-600 font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {Object.keys(filterOptions).map((key) => (
+                        <label key={key} className={`flex items-center gap-2 cursor-pointer py-1 px-1 rounded transition-colors ${
+                          isLight ? "hover:bg-slate-50" : "hover:bg-white/5"
+                        }`}>
+                          <input
+                            type="checkbox"
+                            checked={!!filterOptions[key]}
+                            onChange={() => onToggleFilter?.(key)}
+                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                          />
+                          <span className={`font-medium ${isLight ? "text-slate-600" : "text-slate-300"}`}>{formatFilterKey(key)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Quick Refresh Card Button */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+            title="Refresh this card dataset"
+            className={`p-1 rounded transition-colors cursor-pointer text-xs flex items-center ${
+              isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-800" : "hover:bg-white/10 text-slate-400 hover:text-white"
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3m-3-3v8" />
+            </svg>
+          </button>
+
+          {/* Quick Export Button */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onExport(); }}
+            title="Export report dataset"
+            className={`p-1 px-2 rounded-lg transition-all text-xs flex items-center gap-1 font-bold border cursor-pointer ${
+              isLight
+                ? "hover:bg-slate-200/80 text-blue-600 hover:text-blue-700 border-blue-150 bg-blue-50/30"
+                : "hover:bg-blue-500/20 text-blue-400 border-blue-500/20 bg-blue-500/10"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span className="hidden sm:inline">Export</span>
+          </button>
+
+          {/* Accessibility Manual Sort Buttons */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+            className={`p-1 rounded transition-colors cursor-pointer text-xs ${
+              isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-700" : "hover:bg-white/10 text-slate-400 hover:text-white"
+            }`}
+            title="Move Card Up"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+            className={`p-1 rounded transition-colors cursor-pointer text-xs ${
+              isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-700" : "hover:bg-white/10 text-slate-400 hover:text-white"
+            }`}
+            title="Move Card Down"
+          >
+            ▼
+          </button>
+
+          {/* Collapse/Expand Toggle Chevron */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
+            className={`p-1 rounded transition-all cursor-pointer ${
+              isLight ? "hover:bg-slate-200/80 text-slate-500 hover:text-slate-800" : "hover:bg-white/10 text-slate-400 hover:text-white"
+            }`}
+            title={isCollapsed ? "Expand Panel" : "Collapse Panel"}
+          >
+            <svg
+              className={`w-4 h-4 transform transition-transform duration-300 ${isCollapsed ? "-rotate-90 text-slate-400" : "rotate-0 text-slate-600"}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
-      )}
+      </div>
 
       {/* Card Content Area - handles collapses */}
       <div 
         className={`transition-all duration-300 origin-top overflow-hidden ${
-          isCollapsed && isLight 
+          isCollapsed 
             ? "max-h-0 opacity-0 pointer-events-none p-0 border-none" 
             : "max-h-[2500px] opacity-100"
         }`}
@@ -286,6 +341,19 @@ export default function App() {
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [dragOverSlotIndex, setDragOverSlotIndex] = useState<number | null>(null);
 
+  const [themeMode, setThemeMode] = useState<"system" | "dark" | "light">(
+    () => {
+      const isManual = localStorage.getItem("jira_theme_manual") === "true";
+      if (isManual) {
+        const savedTheme = localStorage.getItem("jira_theme");
+        if (savedTheme === "dark" || savedTheme === "light") {
+          return savedTheme;
+        }
+      }
+      return "system";
+    }
+  );
+
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const savedTheme = localStorage.getItem("jira_theme");
     const isManual = localStorage.getItem("jira_theme_manual") === "true";
@@ -299,6 +367,34 @@ export default function App() {
     }
     return "dark";
   });
+
+  const handleSelectThemeMode = (mode: "system" | "dark" | "light") => {
+    setThemeMode(mode);
+    if (mode === "system") {
+      localStorage.setItem("jira_theme_manual", "false");
+      const prefersDark =
+        typeof window !== "undefined" && window.matchMedia
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          : true;
+      setTheme(prefersDark ? "dark" : "light");
+      addToast(
+        "Theme Preference Updated",
+        "Configured workspace theme to automatically match OS system settings.",
+        "info",
+        3000
+      );
+    } else {
+      localStorage.setItem("jira_theme_manual", "true");
+      localStorage.setItem("jira_theme", mode);
+      setTheme(mode);
+      addToast(
+        "Theme Override Applied",
+        `Applied global persistent ${mode === "dark" ? "Midnight Glass" : "High Contrast Light"} theme.`,
+        "info",
+        3000
+      );
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem("jira_theme", theme);
@@ -2943,31 +3039,37 @@ export default function App() {
                 <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
                   <button
                     type="button"
-                    onClick={() => {
-                      setTheme("dark");
-                      localStorage.setItem("jira_theme_manual", "true");
-                    }}
-                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
-                      theme === "dark"
+                    onClick={() => handleSelectThemeMode("system")}
+                    className={`text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer ${
+                      themeMode === "system"
+                        ? "bg-indigo-600 text-white shadow-md font-black shadow-indigo-500/10"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Follow System Auto OS Color Preference"
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectThemeMode("dark")}
+                    className={`text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer ${
+                      themeMode === "dark"
                         ? "bg-blue-600 text-white shadow-md font-black shadow-blue-500/10"
                         : "text-slate-400 hover:text-slate-200"
                     }`}
-                    title="Midnight Glass Theme"
+                    title="Persistent Midnight Glass Dark Theme"
                   >
                     Midnight
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setTheme("light");
-                      localStorage.setItem("jira_theme_manual", "true");
-                    }}
-                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider ${
-                      theme === "light"
+                    onClick={() => handleSelectThemeMode("light")}
+                    className={`text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer ${
+                      themeMode === "light"
                         ? "bg-slate-200 text-slate-950 shadow-md font-black shadow-slate-500/15"
                         : "text-slate-400 hover:text-slate-200"
                     }`}
-                    title="High Contrast Light Theme"
+                    title="Persistent High Contrast Light Theme"
                   >
                     Light
                   </button>
@@ -3311,6 +3413,9 @@ export default function App() {
                     onConnectDiscord={handleConnectDiscord}
                     onDisconnectDiscord={handleDisconnectDiscord}
                     subFilters={cardSubFilters.auth}
+                    theme={theme}
+                    themeMode={themeMode}
+                    onSelectThemeMode={handleSelectThemeMode}
                     onImportStatusMapping={setStatusMapping}
                     addToast={addToast}
                   />
@@ -3541,6 +3646,25 @@ export default function App() {
                   onExport={handleExport}
                   onCopy={() => handleCopyCardData(panelId)}
                   onRefresh={() => handleCardRefresh(panelId)}
+                  onShare={() => {
+                    const shareUrl = handleShareReport();
+                    if (shareUrl) {
+                      navigator.clipboard.writeText(shareUrl);
+                      addToast(
+                        "Panel Snapshot Shared",
+                        `Share URL for panel "${title}" copied to clipboard!`,
+                        "success",
+                        3500
+                      );
+                    } else {
+                      addToast(
+                        "Share Link",
+                        `Generate or query a dataset first to share "${title}" snapshots.`,
+                        "info",
+                        3000
+                      );
+                    }
+                  }}
                   filterOptions={cardSubFilters[panelId]}
                   onToggleFilter={(key) => handleToggleSubFilter(panelId, key)}
                   index={index}

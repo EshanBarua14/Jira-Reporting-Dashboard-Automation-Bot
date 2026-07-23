@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Terminal, X, Trash2, ShieldAlert, Key, Globe, RefreshCw, AlertCircle, CheckCircle, Download } from "lucide-react";
+import { Terminal, X, Trash2, ShieldAlert, Key, Globe, RefreshCw, AlertCircle, CheckCircle, Download, FileText } from "lucide-react";
 import { NetworkLog } from "../types";
 
 interface DiagnosticConsoleProps {
@@ -24,6 +24,40 @@ export const DiagnosticConsole: React.FC<DiagnosticConsoleProps> = ({
   onClear,
 }) => {
   const [expandedLogIdx, setExpandedLogIdx] = useState<number | null>(null);
+
+  const exportLogsJson = () => {
+    const exportData = {
+      app: "OmniSync Suite Jira Diagnostics",
+      exportedAt: new Date().toISOString(),
+      environment: {
+        isSandbox,
+        isConnected,
+        sessionIdToken: sessionId || null,
+        jiraInstanceHost: jiraUrl || null,
+        activeUser: activeUser
+          ? { displayName: activeUser.displayName, emailAddress: activeUser.emailAddress }
+          : null,
+      },
+      logCount: logs.length,
+      logs: logs.map((log) => ({
+        timestamp: log.timestamp,
+        method: log.method,
+        url: log.url,
+        status: log.status,
+        statusText: log.statusText || null,
+        details: log.details || null,
+      })),
+    };
+
+    const jsonString = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `jira-diagnostics-${new Date().toISOString().split("T")[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const exportLogsText = () => {
     const header = `=========================================
@@ -57,7 +91,7 @@ Details: ${log.details || "No details reported."}
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `jira-connection-diagnostics-${new Date().toISOString().split("T")[0]}.txt`;
+    link.download = `jira-diagnostics-${new Date().toISOString().split("T")[0]}.txt`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -80,15 +114,24 @@ Details: ${log.details || "No details reported."}
         </div>
         <div className="flex items-center gap-2">
           {logs.length > 0 && (
-            <>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={exportLogsJson}
+                className="text-[10px] text-white bg-blue-600/90 hover:bg-blue-600 font-bold px-2.5 py-1 rounded-lg border border-blue-500/40 transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer shadow-sm"
+                title="Download captured network logs as a JSON file"
+              >
+                <Download className="w-3 h-3" />
+                Download JSON Logs
+              </button>
               <button
                 type="button"
                 onClick={exportLogsText}
-                className="text-[10px] text-slate-400 hover:text-blue-400 font-bold px-2.5 py-1 rounded-lg hover:bg-white/5 border border-white/5 transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer"
-                title="Export log history to text file"
+                className="text-[10px] text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 font-bold px-2.5 py-1 rounded-lg border border-white/10 transition-all flex items-center gap-1 uppercase tracking-wider cursor-pointer"
+                title="Download captured network logs as a plain TXT file"
               >
-                <Download className="w-3 h-3" />
-                Export Logs
+                <FileText className="w-3 h-3" />
+                Download TXT Logs
               </button>
               <button
                 type="button"
@@ -97,9 +140,9 @@ Details: ${log.details || "No details reported."}
                 title="Clear log history"
               >
                 <Trash2 className="w-3 h-3" />
-                Clear Logs
+                Clear
               </button>
-            </>
+            </div>
           )}
           <button
             type="button"

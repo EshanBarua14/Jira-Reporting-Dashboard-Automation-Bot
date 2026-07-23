@@ -1,6 +1,8 @@
 {
-  "name": "Eshan Barua's OmniSync Suite",
-  "description": "A UI-driven Jira, Confluence, and Discord reporting and automated dashboard generator with read-only secure session handling and custom local executive PMO summaries.",
+  "name": "OmniSync Suite",
+  "description": "An enterprise-grade Agile Jira Reporting, Analytics, and Intelligence platform with automated executive summaries, JQL presets, and custom PDF export capabilities.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

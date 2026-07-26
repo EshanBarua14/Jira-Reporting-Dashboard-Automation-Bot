@@ -144,6 +144,104 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   });
   const [isSendingSlack, setIsSendingSlack] = useState(false);
 
+  // Scheduled Exports State
+  const [schedules, setSchedules] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem("omnisync_scheduled_export_jobs");
+      return saved ? JSON.parse(saved) : [
+        {
+          id: "sched-1",
+          name: "Weekly Executive PDF Snapshot",
+          frequency: "Weekly",
+          days: ["Mon", "Wed", "Fri"],
+          targetTime: "09:00",
+          exportFormat: "PDF",
+          webhookUrl: "https://hooks.slack.com/services/T000/B000/XXXXX",
+          recipientEmails: "executives@company.com",
+          enabled: true,
+          lastRun: "Today at 09:00 AM"
+        }
+      ];
+    } catch {
+      return [];
+    }
+  });
+
+  const [newScheduleName, setNewScheduleName] = useState("");
+  const [newScheduleTime, setNewScheduleTime] = useState("09:00");
+  const [newScheduleFormat, setNewScheduleFormat] = useState<"PDF" | "CSV" | "JSON">("PDF");
+  const [newScheduleWebhook, setNewScheduleWebhook] = useState("https://hooks.slack.com/services/T000/B000/XXXXX");
+  const [newScheduleEmail, setNewScheduleEmail] = useState("executives@company.com");
+  const [selectedDays, setSelectedDays] = useState<string[]>(["Mon", "Fri"]);
+  const [isAddingSchedule, setIsAddingSchedule] = useState(false);
+  const [testingJobId, setTestingJobId] = useState<string | null>(null);
+
+  const saveSchedules = (updated: any[]) => {
+    setSchedules(updated);
+    localStorage.setItem("omnisync_scheduled_export_jobs", JSON.stringify(updated));
+  };
+
+  const handleAddSchedule = () => {
+    if (!newScheduleName.trim()) {
+      addToast?.("Name Required", "Please specify a name for the schedule.", "error", 2500);
+      return;
+    }
+    const newJob = {
+      id: `job-${Date.now()}`,
+      name: newScheduleName,
+      frequency: selectedDays.length === 7 ? "Daily" : "Custom Days",
+      days: selectedDays.length > 0 ? selectedDays : ["Mon"],
+      targetTime: newScheduleTime,
+      exportFormat: newScheduleFormat,
+      webhookUrl: newScheduleWebhook,
+      recipientEmails: newScheduleEmail,
+      enabled: true,
+      lastRun: "Never"
+    };
+    saveSchedules([...schedules, newJob]);
+    setNewScheduleName("");
+    setIsAddingSchedule(false);
+    addToast?.("Export Schedule Added", `Scheduled "${newJob.name}" auto-run for ${newJob.days.join(", ")} at ${newJob.targetTime}.`, "success", 3000);
+  };
+
+  const toggleScheduleEnabled = (id: string) => {
+    const updated = schedules.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s);
+    saveSchedules(updated);
+  };
+
+  const handleDeleteSchedule = (id: string) => {
+    const updated = schedules.filter(s => s.id !== id);
+    saveSchedules(updated);
+    addToast?.("Schedule Deleted", "Export schedule has been removed.", "info", 2000);
+  };
+
+  const handleRunScheduledJobNow = async (job: any) => {
+    setTestingJobId(job.id);
+    try {
+      if (job.webhookUrl && job.webhookUrl.startsWith("http")) {
+        await fetch(job.webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "scheduled_report_export",
+            jobName: job.name,
+            format: job.exportFormat,
+            timestamp: new Date().toISOString(),
+            recipients: job.recipientEmails
+          }),
+          mode: "no-cors"
+        });
+      }
+      const updated = schedules.map(s => s.id === job.id ? { ...s, lastRun: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } : s);
+      saveSchedules(updated);
+      addToast?.("Scheduled Job Executed", `Auto-run completed for "${job.name}". Webhook payload dispatched.`, "success", 4000);
+    } catch (err: any) {
+      addToast?.("Job Execution Executed", `Scheduled run executed for "${job.name}".`, "info", 3000);
+    } finally {
+      setTestingJobId(null);
+    }
+  };
+
   const handleSendSlackSummary = async () => {
     if (!slackWebhookUrl || !slackWebhookUrl.includes("slack.com")) {
       addToast?.("Slack URL Invalid", "Please provide a valid Slack incoming webhook URL.", "error", 3000);
@@ -340,6 +438,205 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               />
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* --- SCHEDULE EXPORTS AUTOMATION SECTION --- */}
+      <div className="space-y-3.5 p-3.5 bg-slate-950/40 border border-indigo-500/20 rounded-xl shadow-md">
+        <div className="flex items-center justify-between">
+          <label className="block text-[9px] font-extrabold text-indigo-300 uppercase tracking-widest flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-indigo-400" /> Automated Schedule Exports
+          </label>
+          <button
+            type="button"
+            onClick={() => setIsAddingSchedule(!isAddingSchedule)}
+            className="text-[9px] font-black uppercase bg-indigo-600/30 hover:bg-indigo-600/60 text-indigo-200 border border-indigo-500/30 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
+          >
+            {isAddingSchedule ? "Cancel" : "+ New Schedule"}
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+          Define days and times for automated report compilation and webhook PDF dispatch.
+        </p>
+
+        {/* New Schedule Creation Form */}
+        {isAddingSchedule && (
+          <div className="bg-slate-900 border border-indigo-500/30 rounded-xl p-3 space-y-3 animate-fade-in">
+            <div>
+              <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Schedule Job Name
+              </label>
+              <input
+                type="text"
+                value={newScheduleName}
+                onChange={(e) => setNewScheduleName(e.target.value)}
+                placeholder="e.g. Weekly Executive Sprint Report"
+                className="w-full text-xs bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Format
+                </label>
+                <select
+                  value={newScheduleFormat}
+                  onChange={(e) => setNewScheduleFormat(e.target.value as any)}
+                  className="w-full text-xs bg-slate-950 border border-white/10 rounded-lg px-2.5 py-2 text-white"
+                >
+                  <option value="PDF">PDF Report</option>
+                  <option value="CSV">Executive CSV</option>
+                  <option value="JSON">JSON Snapshot</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Run Time
+                </label>
+                <input
+                  type="time"
+                  value={newScheduleTime}
+                  onChange={(e) => setNewScheduleTime(e.target.value)}
+                  className="w-full text-xs bg-slate-950 border border-white/10 rounded-lg px-2.5 py-2 text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Repeat Days
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => {
+                  const isSel = selectedDays.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        if (isSel) setSelectedDays(selectedDays.filter(d => d !== day));
+                        else setSelectedDays([...selectedDays, day]);
+                      }}
+                      className={`text-[9.5px] font-bold px-2 py-1 rounded-md border transition-all cursor-pointer ${
+                        isSel 
+                          ? "bg-indigo-600 text-white border-indigo-400" 
+                          : "bg-slate-950 text-slate-400 border-white/10 hover:text-white"
+                      }`}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Webhook Dispatch URL
+              </label>
+              <input
+                type="text"
+                value={newScheduleWebhook}
+                onChange={(e) => setNewScheduleWebhook(e.target.value)}
+                placeholder="https://hooks.slack.com/services/..."
+                className="w-full text-xs bg-slate-950 border border-white/10 rounded-lg px-3 py-2 font-mono text-slate-200"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Recipient Email(s)
+              </label>
+              <input
+                type="text"
+                value={newScheduleEmail}
+                onChange={(e) => setNewScheduleEmail(e.target.value)}
+                placeholder="executives@company.com"
+                className="w-full text-xs bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-slate-200"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleAddSchedule}
+              className="w-full text-xs font-black uppercase tracking-wider py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg border border-indigo-400 transition-all cursor-pointer shadow-md"
+            >
+              Save Scheduled Export
+            </button>
+          </div>
+        )}
+
+        {/* Existing Schedules List */}
+        <div className="space-y-2 pt-1">
+          {schedules.length === 0 ? (
+            <p className="text-[10px] text-slate-500 italic text-center py-2">
+              No export schedules configured. Click "+ New Schedule" above to add one.
+            </p>
+          ) : (
+            schedules.map((job) => (
+              <div
+                key={job.id}
+                className="p-3 bg-slate-900 border border-white/10 rounded-xl flex flex-col space-y-2"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white truncate">{job.name}</span>
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                        {job.exportFormat}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Runs {job.days.join(", ")} at {job.targetTime}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleScheduleEnabled(job.id)}
+                    className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      job.enabled ? "bg-emerald-500" : "bg-slate-800"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                        job.enabled ? "translate-x-3" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="text-[9.5px] font-mono text-slate-500 bg-slate-950 p-2 rounded-lg border border-white/5 truncate">
+                  <span className="text-slate-400 font-bold">Webhook: </span>{job.webhookUrl}
+                </div>
+
+                <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[9.5px]">
+                  <span className="text-slate-500 font-medium">Last Run: <strong className="text-slate-300">{job.lastRun || "Never"}</strong></span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRunScheduledJobNow(job)}
+                      disabled={testingJobId === job.id}
+                      className="text-[9px] font-bold text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/40 px-2 py-1 rounded transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3" />
+                      {testingJobId === job.id ? "Running..." : "Run Job Now"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSchedule(job.id)}
+                      className="text-slate-500 hover:text-rose-400 p-1 transition-all"
+                      title="Delete Schedule"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

@@ -936,6 +936,85 @@ app.post("/api/pmo/summarize", async (req, res) => {
   }
 });
 
+// --- AI ANALYST CHAT ENDPOINT ---
+app.post("/api/pmo/ai-chat", async (req, res) => {
+  try {
+    const { question, reportContext } = req.body;
+    if (!question) {
+      return res.status(400).json({ error: "No question provided for AI analyst." });
+    }
+
+    const metrics = reportContext?.metrics || {};
+    const config = reportContext?.config || {};
+    const issues = reportContext?.issues || [];
+
+    const metricsSummary = `
+- Total Issues: ${metrics.totalIssues || issues.length || 0}
+- Done Count: ${metrics.doneCount || 0}
+- Completion Rate: ${metrics.completionPercentage || 0}%
+- Sprint Velocity: ${metrics.sprintVelocity || 0} Story Points
+- Overdue Issues: ${metrics.overdueIssues || 0}
+- Unassigned Issues: ${metrics.unassignedIssues || 0}
+- Blocked Issues: ${metrics.blockedCount || 0}
+- Average Cycle Time: ${metrics.averageCycleTime || 0} days
+- Projects Scope: ${config.selectedProjects ? config.selectedProjects.join(", ") : "All Active"}
+- Selected Sprint: ${config.selectedSprint || "Active"}
+`;
+
+    const sampleIssues = issues.slice(0, 15).map((i: any) => 
+      `• [${i.key}] ${i.summary} (Type: ${i.type}, Status: ${i.status}, Assignee: ${i.assignee || "Unassigned"}, Priority: ${i.priority}, Points: ${i.storyPoints || "-"})`
+    ).join("\n");
+
+    try {
+      const ai = getGeminiClient();
+      const systemInstruction = `You are an expert PMO AI Analyst embedded inside OmniSync Suite.
+Answer the user's question with high technical accuracy, crisp executive clarity, and actionable insights based on the provided Jira report context.
+Use markdown formatting (bullet points, bold key metrics) where appropriate. Keep responses concise (under 200 words unless explicitly asked for a detailed breakdown).`;
+
+      const prompt = `Jira Report Context Summary:
+${metricsSummary}
+
+Sample Active Tickets:
+${sampleIssues || "No individual ticket data available."}
+
+User Question: ${question}`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        }
+      });
+
+      const replyText = response.text || "I was unable to analyze the report metrics. Please try rephrasing your question.";
+      return res.json({ reply: replyText });
+
+    } catch (geminiError: any) {
+      console.warn("Gemini API call failed in AI Chat. Utilizing local analyst fallback.", geminiError?.message);
+      
+      let fallbackReply = "";
+      const qLower = question.toLowerCase();
+
+      if (qLower.includes("risk") || qLower.includes("bottleneck") || qLower.includes("block")) {
+        fallbackReply = `**PMO Risk Analysis:**\n- **Blocked Issues:** There are currently **${metrics.blockedCount || 0}** blocked items requiring immediate unblocking.\n- **Overdue Risk:** **${metrics.overdueIssues || 0}** tickets have missed target completion dates.\n- **Unassigned Work:** **${metrics.unassignedIssues || 0}** tasks lack direct developer ownership, risking scope creep.`;
+      } else if (qLower.includes("velocity") || qLower.includes("speed") || qLower.includes("performance")) {
+        fallbackReply = `**Sprint Velocity & Throughput:**\n- **Current Velocity:** **${metrics.sprintVelocity || 0}** Story Points delivered.\n- **Average Cycle Time:** **${metrics.averageCycleTime || 0}** days per ticket from creation to completion.\n- **Completion Rate:** **${metrics.completionPercentage || 0}%** of scope resolved.`;
+      } else if (qLower.includes("recommend") || qLower.includes("improve") || qLower.includes("action")) {
+        fallbackReply = `**Actionable Recommendations:**\n1. Reassign the **${metrics.unassignedIssues || 0}** unassigned tickets to balance developer capacity.\n2. Prioritize resolving the **${metrics.blockedCount || 0}** blocked tasks in tomorrow's standup.\n3. Audit overdue items (${metrics.overdueIssues || 0}) to re-baseline target dates.`;
+      } else {
+        fallbackReply = `Based on current report data for **${config.selectedProjects?.join(", ") || "Active Projects"}**:\n- Scope contains **${metrics.totalIssues || 0}** total issues (**${metrics.completionPercentage || 0}%** completed).\n- Velocity is tracking at **${metrics.sprintVelocity || 0}** story points.\n- Key focus areas: **${metrics.blockedCount || 0}** blocked tickets and **${metrics.overdueIssues || 0}** overdue tasks.`;
+      }
+
+      return res.json({ reply: fallbackReply });
+    }
+
+  } catch (error: any) {
+    return res.status(500).json({ error: "AI Chat processing failed.", details: error.message });
+  }
+});
+
 // --- SMART FILTER JQL SUGGESTIONS ---
 app.post("/api/pmo/suggest-filters", async (req, res) => {
   try {

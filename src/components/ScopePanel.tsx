@@ -1,5 +1,6 @@
-import React from "react";
-import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders, Search } from "lucide-react";
+import React, { useState } from "react";
+import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders, Search, Terminal, Code } from "lucide-react";
+import { JqlBuilder } from "./JqlBuilder";
 
 interface ScopePanelProps {
   activePlatform: "Jira" | "Confluence" | "Discord";
@@ -32,6 +33,11 @@ interface ScopePanelProps {
   availableAssignees: { id: string; name: string }[];
   selectedAssignee: string;
   onChangeAssignee: (assignee: string) => void;
+
+  // Custom JQL Props
+  customJql?: string;
+  onApplyCustomJql?: (jql: string) => void;
+  addToast?: (title: string, message: string, type?: "info" | "success" | "warning" | "error", duration?: number) => void;
 
   // Confluence Props
   selectedConfluenceSpaces: string[];
@@ -123,11 +129,17 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
   // Summary Search
   summarySearchQuery = "",
   onChangeSummarySearchQuery,
+
+  // Custom JQL Props
+  customJql = "",
+  onApplyCustomJql,
+  addToast,
 }) => {
   const [loadingSuggestion, setLoadingSuggestion] = React.useState(false);
   const [aiSuggestion, setAiSuggestion] = React.useState<any | null>(null);
   const [showAiBox, setShowAiBox] = React.useState(false);
   const [activePresetId, setActivePresetId] = React.useState<string>("");
+  const [isJqlBuilderExpanded, setIsJqlBuilderExpanded] = React.useState(false);
 
   const FILTER_PRESETS = [
     {
@@ -322,6 +334,43 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
       {/* --- JIRA FILTERS VIEW --- */}
       {activePlatform === "Jira" && (
         <div className="space-y-5">
+          {/* Advanced JQL Builder Toggle Header */}
+          <div className="flex items-center justify-between bg-slate-950/60 border border-white/5 rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-indigo-400" />
+              <div>
+                <h3 className="text-xs font-black text-white uppercase tracking-wider">Advanced JQL Query Builder</h3>
+                <p className="text-[10px] text-slate-400">Syntax highlighting, autocomplete, & manual query refinement</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsJqlBuilderExpanded(!isJqlBuilderExpanded)}
+              className="text-[10px] font-black uppercase bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Code className="w-3.5 h-3.5" />
+              {isJqlBuilderExpanded ? "Collapse JQL Editor" : "Open JQL Editor"}
+            </button>
+          </div>
+
+          {/* Advanced JQL Builder Component */}
+          {isJqlBuilderExpanded && (
+            <JqlBuilder
+              initialJql={customJql}
+              onApplyJql={onApplyCustomJql}
+              availableProjects={availableProjects}
+              availableIssueTypes={availableIssueTypes}
+              availableStatuses={availableStatuses}
+              selectedProjects={selectedProjects}
+              selectedIssueTypes={selectedIssueTypes}
+              selectedStatuses={selectedStatuses}
+              selectedSprint={selectedSprint}
+              createdDateStart={createdDateStart}
+              createdDateEnd={createdDateEnd}
+              addToast={addToast}
+            />
+          )}
+
           {/* Smart AI Filter Button & Result */}
           {report && (
             <div className="bg-gradient-to-r from-indigo-950/40 via-blue-950/30 to-indigo-950/20 border border-indigo-900/40 rounded-xl p-3.5 space-y-2 relative overflow-hidden">

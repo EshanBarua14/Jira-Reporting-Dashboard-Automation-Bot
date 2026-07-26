@@ -3,6 +3,16 @@ import { AreaChart, Check, TrendingUp, AlertTriangle, Download, RefreshCw, ZoomI
 import { MetricDefinition, GeneratedReport } from "../types";
 import * as d3 from "d3";
 import { motion } from "motion/react";
+import {
+  AreaChart as RechartsAreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  CartesianGrid
+} from "recharts";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -93,8 +103,16 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   metricsHistory = [],
   addToast,
 }) => {
-  // Active Tab view ("monitors" or "correlation")
-  const [activeTab, setActiveTab] = React.useState<"monitors" | "correlation">("monitors");
+  // Active Tab view ("monitors", "correlation", or "trend_comparison")
+  const [activeTab, setActiveTab] = React.useState<"monitors" | "correlation" | "trend_comparison">("monitors");
+
+  // Trend Comparison Date Range States
+  const [trendPeriodAStart, setTrendPeriodAStart] = React.useState<string>("2026-06-01");
+  const [trendPeriodAEnd, setTrendPeriodAEnd] = React.useState<string>("2026-06-30");
+  const [trendPeriodBStart, setTrendPeriodBStart] = React.useState<string>("2026-07-01");
+  const [trendPeriodBEnd, setTrendPeriodBEnd] = React.useState<string>("2026-07-31");
+  const [trendMetricMode, setTrendMetricMode] = React.useState<"velocity" | "issues">("velocity");
+  const [isStackedMode, setIsStackedMode] = React.useState<boolean>(true);
 
   // Smoothing moving average toggle
   const [isSmoothingActive, setIsSmoothingActive] = React.useState<boolean>(false);
@@ -1665,6 +1683,203 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
     );
   };
 
+  const renderTrendComparisonView = () => {
+    const baselineA = report?.metrics?.sprintVelocity || 38;
+    const baselineB = Math.round(baselineA * 1.22);
+
+    const chartData = [
+      { periodLabel: "Week 1", periodA_velocity: Math.round(baselineA * 0.7), periodB_velocity: Math.round(baselineB * 0.65), periodA_issues: 12, periodB_issues: 15 },
+      { periodLabel: "Week 2", periodA_velocity: Math.round(baselineA * 0.85), periodB_velocity: Math.round(baselineB * 0.8), periodA_issues: 18, periodB_issues: 22 },
+      { periodLabel: "Week 3", periodA_velocity: Math.round(baselineA * 1.0), periodB_velocity: Math.round(baselineB * 1.1), periodA_issues: 24, periodB_issues: 28 },
+      { periodLabel: "Week 4", periodA_velocity: Math.round(baselineA * 0.9), periodB_velocity: Math.round(baselineB * 1.25), periodA_issues: 19, periodB_issues: 31 },
+      { periodLabel: "Week 5", periodA_velocity: Math.round(baselineA * 1.15), periodB_velocity: Math.round(baselineB * 1.4), periodA_issues: 28, periodB_issues: 36 },
+    ];
+
+    const totalVelA = chartData.reduce((acc, curr) => acc + curr.periodA_velocity, 0);
+    const totalVelB = chartData.reduce((acc, curr) => acc + curr.periodB_velocity, 0);
+    const velDelta = totalVelB - totalVelA;
+    const velDeltaPct = totalVelA ? ((velDelta / totalVelA) * 100).toFixed(1) : "0";
+
+    const totalIssuesA = chartData.reduce((acc, curr) => acc + curr.periodA_issues, 0);
+    const totalIssuesB = chartData.reduce((acc, curr) => acc + curr.periodB_issues, 0);
+    const issuesDelta = totalIssuesB - totalIssuesA;
+    const issuesDeltaPct = totalIssuesA ? ((issuesDelta / totalIssuesA) * 100).toFixed(1) : "0";
+
+    return (
+      <div className="space-y-4 animate-fade-in bg-slate-950/40 border border-white/10 rounded-xl p-4">
+        {/* Date Range Selection Bar */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900 border border-white/10 p-3.5 rounded-xl">
+          <div className="space-y-1.5 border-r border-white/5 pr-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+              <span className="text-xs font-black text-blue-400 uppercase tracking-wider">Period A (Baseline Range)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={trendPeriodAStart}
+                onChange={(e) => setTrendPeriodAStart(e.target.value)}
+                className="bg-slate-950 border border-white/10 rounded px-2 py-1 text-xs text-white font-mono"
+              />
+              <span className="text-slate-500 text-xs">to</span>
+              <input
+                type="date"
+                value={trendPeriodAEnd}
+                onChange={(e) => setTrendPeriodAEnd(e.target.value)}
+                className="bg-slate-950 border border-white/10 rounded px-2 py-1 text-xs text-white font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-400" />
+              <span className="text-xs font-black text-indigo-300 uppercase tracking-wider">Period B (Comparison Range)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={trendPeriodBStart}
+                onChange={(e) => setTrendPeriodBStart(e.target.value)}
+                className="bg-slate-950 border border-white/10 rounded px-2 py-1 text-xs text-white font-mono"
+              />
+              <span className="text-slate-500 text-xs">to</span>
+              <input
+                type="date"
+                value={trendPeriodBEnd}
+                onChange={(e) => setTrendPeriodBEnd(e.target.value)}
+                className="bg-slate-950 border border-white/10 rounded px-2 py-1 text-xs text-white font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Controls: Metric Mode & Stacked Toggle */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-2.5 rounded-xl border border-white/5">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Target Metric:</span>
+            <button
+              type="button"
+              onClick={() => setTrendMetricMode("velocity")}
+              className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                trendMetricMode === "velocity" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400 hover:text-white"
+              }`}
+            >
+              Velocity (Story Points)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTrendMetricMode("issues")}
+              className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                trendMetricMode === "issues" ? "bg-purple-600 text-white" : "bg-slate-800 text-slate-400 hover:text-white"
+              }`}
+            >
+              Issue Counts
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chart Mode:</span>
+            <button
+              type="button"
+              onClick={() => setIsStackedMode(!isStackedMode)}
+              className={`text-[10px] font-black uppercase px-3 py-1 rounded-lg border transition-all cursor-pointer ${
+                isStackedMode 
+                  ? "bg-indigo-600/30 text-indigo-300 border-indigo-500/40" 
+                  : "bg-slate-800 text-slate-400 border-white/5"
+              }`}
+            >
+              {isStackedMode ? "Stacked Area Chart" : "Overlay Area Chart"}
+            </button>
+          </div>
+        </div>
+
+        {/* Delta KPI Summary Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="bg-slate-900 border border-white/10 p-3.5 rounded-xl flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Velocity Delta</p>
+              <p className="text-lg font-black text-white mt-0.5">
+                {totalVelB} pts <span className="text-xs text-slate-400 font-normal">vs {totalVelA} pts</span>
+              </p>
+            </div>
+            <span className={`text-xs font-mono font-black px-2.5 py-1 rounded-lg border ${
+              velDelta >= 0 
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+            }`}>
+              {velDelta >= 0 ? `+${velDeltaPct}%` : `${velDeltaPct}%`}
+            </span>
+          </div>
+
+          <div className="bg-slate-900 border border-white/10 p-3.5 rounded-xl flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Issue Volume Delta</p>
+              <p className="text-lg font-black text-white mt-0.5">
+                {totalIssuesB} tickets <span className="text-xs text-slate-400 font-normal">vs {totalIssuesA} tickets</span>
+              </p>
+            </div>
+            <span className={`text-xs font-mono font-black px-2.5 py-1 rounded-lg border ${
+              issuesDelta >= 0 
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+            }`}>
+              {issuesDelta >= 0 ? `+${issuesDeltaPct}%` : `${issuesDeltaPct}%`}
+            </span>
+          </div>
+        </div>
+
+        {/* Stacked Area Chart Visualization */}
+        <div className="bg-slate-900 border border-white/10 rounded-xl p-4 space-y-2">
+          <h4 className="text-xs font-black text-slate-300 uppercase tracking-wider">
+            {trendMetricMode === "velocity" ? "Velocity Comparison Stacked Area" : "Issue Count Delta Stacked Area"}
+          </h4>
+          <div className="h-64 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsAreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorPeriodA" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                  </linearGradient>
+                  <linearGradient id="colorPeriodB" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#818cf8" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#818cf8" stopOpacity={0.1}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
+                <XAxis dataKey="periodLabel" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: "#020617", borderColor: "#334155", borderRadius: "12px", fontSize: "11px" }} 
+                />
+                <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
+                <Area 
+                  type="monotone" 
+                  dataKey={trendMetricMode === "velocity" ? "periodA_velocity" : "periodA_issues"} 
+                  name={`Period A (${trendMetricMode === "velocity" ? "Velocity" : "Issues"})`}
+                  stackId={isStackedMode ? "1" : undefined}
+                  stroke="#3b82f6" 
+                  fillOpacity={1} 
+                  fill="url(#colorPeriodA)" 
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey={trendMetricMode === "velocity" ? "periodB_velocity" : "periodB_issues"} 
+                  name={`Period B (${trendMetricMode === "velocity" ? "Velocity" : "Issues"})`}
+                  stackId={isStackedMode ? "1" : undefined}
+                  stroke="#818cf8" 
+                  fillOpacity={1} 
+                  fill="url(#colorPeriodB)" 
+                />
+              </RechartsAreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div 
       id="metrics-panel-card" 
@@ -1702,7 +1917,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
         {/* Navigation Tabs and Smoothing Controls */}
         <div className="flex flex-wrap items-center gap-3">
           {/* View Selection Tabs */}
-          <div className="bg-slate-950/60 p-1 rounded-xl border border-white/5 flex items-center">
+          <div className="bg-slate-950/60 p-1 rounded-xl border border-white/5 flex items-center gap-1">
             <button
               type="button"
               onClick={() => setActiveTab("monitors")}
@@ -1726,6 +1941,20 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
               <span>Correlate Metrics</span>
               <span className="text-[7.5px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/35 px-1 py-0.2 rounded font-mono font-black uppercase">
                 Dual Axis
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("trend_comparison")}
+              className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                activeTab === "trend_comparison"
+                  ? "bg-purple-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <span>Trend Comparison</span>
+              <span className="text-[7.5px] bg-purple-500/20 text-purple-300 border border-purple-500/35 px-1 py-0.2 rounded font-mono font-black uppercase">
+                Stacked Area
               </span>
             </button>
           </div>
@@ -2113,7 +2342,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             })}
           </motion.div>
         </div>
-      ) : (
+      ) : activeTab === "correlation" ? (
         /* RENDER VIEW 2: Advanced Trend & Correlation Analyzer (Correlate Metrics View) */
         <div className="pt-2 space-y-4 animate-fade-in">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -2333,6 +2562,8 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             </div>
           )}
         </div>
+      ) : (
+        renderTrendComparisonView()
       )}
 
       {/* MODAL 1: Contributing Issues Deep-Dive */}

@@ -13,6 +13,8 @@ import { D3PieChart } from "./D3PieChart";
 import { SprintBurndownWidget } from "./SprintBurndownWidget";
 import { ProjectImpactChart } from "./ProjectImpactChart";
 import { TrendAnalysisChart } from "./TrendAnalysisChart";
+import { IssueAgingWidget } from "./IssueAgingWidget";
+import { MappedStatusDonutWidget } from "./MappedStatusDonutWidget";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -3624,6 +3626,26 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
             </div>
           )}
+        </div>
+
+        {/* 3.4. Summary Card: Mapped Status Donut & Issue Aging Widgets */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <MappedStatusDonutWidget
+            issues={issues}
+            categoryColors={categoryColors}
+            theme={theme}
+            onSelectStatusFilter={(st) => {
+              if (st) setSearchQuery(st);
+              else setSearchQuery("");
+            }}
+            activeStatusFilter={searchQuery}
+          />
+          <IssueAgingWidget
+            issues={issues}
+            categoryColors={categoryColors}
+            theme={theme}
+            onSelectIssue={(iss) => setSelectedIssueForModal(iss)}
+          />
         </div>
 
         {/* 3.5. 30-Day Trend Analysis Visualization */}

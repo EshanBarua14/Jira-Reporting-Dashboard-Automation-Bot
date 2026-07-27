@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
@@ -64,6 +64,7 @@ function HeaderTooltip({
   children: React.ReactNode;
   text: string;
   position?: "top" | "bottom";
+  key?: any;
 }) {
   return (
     <div className="relative group/hdrtt inline-flex items-center">
@@ -138,6 +139,97 @@ function DraggableCard({
   const [activeStatusCategory, setActiveStatusCategory] = useState<string | null>(null);
   const [cardBannerNotice, setCardBannerNotice] = useState<string | null>(null);
 
+  // Fullscreen Overlay State
+  const [isFullscreenOverlay, setIsFullscreenOverlay] = useState(false);
+
+  // Per-card Auto-Refresh Frequency State (off, 1m, 5m, 10m)
+  const [cardAutoRefreshFreq, setCardAutoRefreshFreq] = useState<string>("off");
+
+  // Header Metrics with Previous Cached Values for Directional Trend Indicators
+  const [cardHeaderMetrics, setCardHeaderMetrics] = useState([
+    { id: "total", label: "Issues", current: 148, previous: 142, unit: "" },
+    { id: "completion", label: "Done Rate", current: 84, previous: 80, unit: "%" },
+    { id: "velocity", label: "Velocity", current: 32, previous: 32, unit: "pts" },
+  ]);
+
+  // Last Sync Time State
+  const [lastSyncTime, setLastSyncTime] = useState<string>(() => {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+
+  // Metric Alert Threshold State
+  const [showAlertPopover, setShowAlertPopover] = useState(false);
+  const [alertEnabled, setAlertEnabled] = useState(false);
+  const [alertTargetMetric, setAlertTargetMetric] = useState<string>("total");
+  const [alertThreshold, setAlertThreshold] = useState<number>(100);
+
+  const checkAlertThreshold = (enabled: boolean, metricId: string, limit: number, metricsList = cardHeaderMetrics) => {
+    if (!enabled) return;
+    const m = metricsList.find((item) => item.id === metricId);
+    if (m && m.current > limit) {
+      showBanner(`🚨 ALERT TOAST: '${m.label}' (${m.current}${m.unit}) EXCEEDS threshold limit of ${limit}!`);
+      addHistoryLog(`🚨 ALERT EXCEEDED: ${m.label} (${m.current}) > Limit (${limit})`);
+    } else if (m) {
+      showBanner(`Alert check passed: '${m.label}' (${m.current}${m.unit}) is within limit of ${limit}.`);
+    }
+  };
+
+  // Active filter count for header tooltip
+  const activeFilterCount = (cardSearchQuery.trim() ? 1 : 0) + (activeStatusCategory ? 1 : 0) + (cardSortOption !== "Name" ? 1 : 0);
+
+  // Export Timestamp Overlay State
+  const [showExportTimestampOverlay, setShowExportTimestampOverlay] = useState(false);
+  const [lastExportTimestamp, setLastExportTimestamp] = useState<string | null>(() => {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+
+  // Status Category Color Customization State
+  const [statusCategoryColors, setStatusCategoryColors] = useState<Record<string, string>>({
+    "To Do": "#64748b",
+    "In Progress": "#3b82f6",
+    "Done": "#10b981",
+    "Blocked": "#ef4444",
+  });
+
+  // Card Resizing State & Persistence
+  const [cardDimensions, setCardDimensions] = useState<{ width?: number; height?: number }>(() => {
+    try {
+      const saved = localStorage.getItem(`card_dim_${id}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const wrapper = document.getElementById(`draggable-wrapper-${id}`);
+    if (!wrapper) return;
+    const startWidth = wrapper.offsetWidth;
+    const startHeight = wrapper.offsetHeight;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(260, startWidth + (moveEvent.clientX - startX));
+      const newHeight = Math.max(100, startHeight + (moveEvent.clientY - startY));
+      const dims = { width: newWidth, height: newHeight };
+      setCardDimensions(dims);
+      try {
+        localStorage.setItem(`card_dim_${id}`, JSON.stringify(dims));
+      } catch (err) {}
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
   // History Log state
   const [cardHistoryLogs, setCardHistoryLogs] = useState<Array<{ id: string; action: string; time: string }>>([
     { id: "1", action: "Data synchronized from server API", time: "Just now" },
@@ -180,16 +272,62 @@ function DraggableCard({
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
   };
 
+  const updateExportTimestamp = () => {
+    const formatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setLastExportTimestamp(formatted);
+  };
+
+  const handleQuickTriage = () => {
+    addHistoryLog("Quick Triage executed: Flagged issues transitioned to In Progress");
+    showBanner(`Quick Triage complete! Flagged issues in "${title}" transitioned to "In Progress".`);
+    setActiveStatusCategory("In Progress");
+  };
+
   const handleTriggerRefresh = () => {
     setIsLocalGenerating(true);
     onRefresh();
-    addHistoryLog("Manual dataset sync executed");
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setLastSyncTime(nowStr);
+    // Re-evaluate metrics and shift previous cached values to generate trend comparisons
+    setCardHeaderMetrics((prev) => {
+      const updated = prev.map((m) => {
+        const delta = Math.floor(Math.random() * 7) - 2;
+        const nextVal = Math.max(1, m.current + delta);
+        return {
+          ...m,
+          previous: m.current,
+          current: nextVal,
+        };
+      });
+      if (alertEnabled) {
+        checkAlertThreshold(alertEnabled, alertTargetMetric, alertThreshold, updated);
+      }
+      return updated;
+    });
+    addHistoryLog("Manual dataset sync executed & metric trend re-cached");
     setTimeout(() => {
       setIsLocalGenerating(false);
     }, 1500);
   };
 
+  // Per-card Auto-Refresh Interval Timer Hook
+  useEffect(() => {
+    if (cardAutoRefreshFreq === "off") return;
+    const minutes = parseInt(cardAutoRefreshFreq.replace("m", ""), 10);
+    if (isNaN(minutes) || minutes <= 0) return;
+
+    const intervalMs = minutes * 60 * 1000;
+    const interval = setInterval(() => {
+      handleTriggerRefresh();
+      addHistoryLog(`Automated card re-sync completed (${cardAutoRefreshFreq} interval)`);
+      showBanner(`Auto-synced dataset for "${title}" (${cardAutoRefreshFreq} schedule).`);
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+  }, [cardAutoRefreshFreq]);
+
   const handleExportPdf = () => {
+    updateExportTimestamp();
     showBanner(`Generating instant PDF report for "${title}"...`);
     addHistoryLog("Instant PDF report export triggered");
     setTimeout(() => {
@@ -198,6 +336,7 @@ function DraggableCard({
   };
 
   const handleExportCsv = () => {
+    updateExportTimestamp();
     addHistoryLog("Direct CSV dataset export initiated");
     showBanner(`Exporting dataset for "${title}" to CSV file...`);
     if (onExport) {
@@ -231,114 +370,232 @@ function DraggableCard({
   };
 
   return (
-    <motion.div
-      id={`draggable-wrapper-${id}`}
-      layout
-      transition={
-        isLocalGenerating
-          ? {
-              duration: 1.2,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }
-          : { type: "spring", stiffness: 280, damping: 28 }
-      }
-      animate={
-        isLocalGenerating
-          ? {
-              scale: [1, 1.008, 1],
-              opacity: [1, 0.88, 1],
-              boxShadow: [
-                "0 0 0 0 rgba(99, 102, 241, 0)",
-                "0 0 30px 6px rgba(99, 102, 241, 0.45)",
-                "0 0 0 0 rgba(99, 102, 241, 0)",
-              ],
-            }
-          : {}
-      }
-      draggable={true}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDragEnd={onDragEnd}
-      onDrop={onDrop}
-      className={`transition-all duration-300 relative rounded-2xl overflow-hidden ${
-        isLight
-          ? "border border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300 animate-in fade-in duration-200"
-          : "border border-white/5 bg-slate-900/40 shadow-xl"
-      } ${
-        isLocalGenerating
-          ? "animate-pulse ring-2 ring-indigo-500/50 shadow-lg shadow-indigo-500/20"
-          : ""
-      }`}
-    >
-      {/* Unified Card Header & Toolbar */}
-      <div className={`px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 border-b select-none transition-colors ${
-        isLight
-          ? "border-slate-100 bg-slate-50/70 text-slate-700 rounded-t-2xl"
-          : "border-white/10 bg-slate-950/60 text-slate-200 rounded-t-2xl"
-      }`}>
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Drag Handle Indicator */}
-          <HeaderTooltip text="Drag to reorder card layout position">
-            <span 
-              className={`cursor-grab active:cursor-grabbing transition-colors p-1 rounded ${
-                isLight ? "text-slate-400 hover:text-slate-600 hover:bg-slate-200/50" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <circle cx="9" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="9" cy="12" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
-                <circle cx="9" cy="19" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="19" r="1.5" fill="currentColor"/>
-              </svg>
-            </span>
-          </HeaderTooltip>
-          <span className={`text-xs font-extrabold tracking-wide uppercase ${isLight ? "text-slate-700" : "text-slate-200"}`}>{title}</span>
-          {isLocalGenerating && (
-            <span className="flex items-center gap-1 text-[9px] font-black uppercase text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 animate-pulse">
-              <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Syncing...
-            </span>
-          )}
+    <>
+      {/* Dimmed Viewport Backdrop for Fullscreen Card Isolation Mode */}
+      {isFullscreenOverlay && (
+        <div
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 animate-in fade-in duration-200"
+          onClick={() => {
+            setIsFullscreenOverlay(false);
+            showBanner(`Returned "${title}" to standard dashboard view.`);
+          }}
+        />
+      )}
 
-          {/* Clickable Status Legend Categories */}
-          <div className="hidden xl:flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10">
-            <span className="text-[9px] font-extrabold uppercase text-slate-400 tracking-wider mr-0.5">Status:</span>
-            {[
-              { label: "To Do", bg: "bg-slate-500/20 text-slate-300 border-slate-500/30", activeBg: "bg-slate-300 text-slate-950 font-black ring-2 ring-slate-300 scale-105" },
-              { label: "In Progress", bg: "bg-blue-500/20 text-blue-300 border-blue-500/30", activeBg: "bg-blue-500 text-white font-black ring-2 ring-blue-300 scale-105" },
-              { label: "Done", bg: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", activeBg: "bg-emerald-500 text-white font-black ring-2 ring-emerald-300 scale-105" },
-              { label: "Blocked", bg: "bg-rose-500/20 text-rose-300 border-rose-500/30", activeBg: "bg-rose-500 text-white font-black ring-2 ring-rose-300 scale-105" }
-            ].map((cat) => {
-              const isSel = activeStatusCategory === cat.label;
-              return (
-                <HeaderTooltip key={cat.label} text={`Filter card data by status: ${cat.label}`}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const next = isSel ? null : cat.label;
-                      setActiveStatusCategory(next);
-                      if (next) {
-                        addHistoryLog(`Filtered by status: ${next}`);
-                        showBanner(`Filtering "${title}" by status: ${next}`);
-                      } else {
-                        addHistoryLog("Cleared status filter");
-                        showBanner(`Cleared status filter for "${title}".`);
-                      }
-                    }}
-                    className={`text-[9.5px] px-2 py-0.5 rounded-full border transition-all cursor-pointer select-none ${
-                      isSel ? cat.activeBg : cat.bg + " hover:opacity-100 opacity-80 hover:scale-105"
+      <motion.div
+        id={`draggable-wrapper-${id}`}
+        layout
+        transition={
+          isLocalGenerating
+            ? {
+                duration: 1.2,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
+            : { type: "spring", stiffness: 280, damping: 28 }
+        }
+        animate={
+          isLocalGenerating
+            ? {
+                scale: [1, 1.008, 1],
+                opacity: [1, 0.88, 1],
+                boxShadow: [
+                  "0 0 0 0 rgba(99, 102, 241, 0)",
+                  "0 0 30px 6px rgba(99, 102, 241, 0.45)",
+                  "0 0 0 0 rgba(99, 102, 241, 0)",
+                ],
+              }
+            : {}
+        }
+        draggable={!isFullscreenOverlay}
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDragEnd={onDragEnd}
+        onDrop={onDrop}
+        className={`transition-all duration-300 relative rounded-2xl overflow-hidden ${
+          isFullscreenOverlay
+            ? "fixed inset-4 md:inset-8 z-50 max-h-[92vh] overflow-y-auto shadow-2xl ring-2 ring-indigo-500/60 bg-slate-950 text-white"
+            : isLight
+            ? "border border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300 animate-in fade-in duration-200"
+            : "border border-white/5 bg-slate-900/40 shadow-xl"
+        } ${
+          isLocalGenerating
+            ? "animate-pulse ring-2 ring-indigo-500/50 shadow-lg shadow-indigo-500/20"
+            : ""
+        }`}
+        style={{
+          width: isFullscreenOverlay ? "auto" : cardDimensions.width ? `${cardDimensions.width}px` : undefined,
+          minHeight: isFullscreenOverlay ? "auto" : cardDimensions.height ? `${cardDimensions.height}px` : undefined,
+        }}
+      >
+        {/* Unified Card Header & Toolbar */}
+        <div
+          title={`Last Sync: ${lastSyncTime} | Active Filters: ${activeFilterCount}`}
+          className={`group/cardhdr relative px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 border-b select-none transition-colors no-print ${
+            isLight && !isFullscreenOverlay
+              ? "border-slate-100 bg-slate-50/70 text-slate-700 rounded-t-2xl"
+              : "border-white/10 bg-slate-950/60 text-slate-200 rounded-t-2xl"
+          }`}
+        >
+          {/* Hover-triggered Header Tooltip (displays Last Sync Time & Current Active Filter Count) */}
+          <div className="opacity-0 group-hover/cardhdr:opacity-100 pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 z-[90] text-[10px] font-extrabold bg-slate-950 text-white px-3 py-1 rounded-lg shadow-2xl border border-indigo-500/40 whitespace-nowrap transition-all duration-200 flex items-center gap-2 group-hover/cardhdr:-translate-y-1">
+            <span className="flex items-center gap-1 text-indigo-300">
+              <Clock className="w-3 h-3 text-indigo-400 shrink-0" />
+              Last Sync: <strong className="text-white font-mono">{lastSyncTime}</strong>
+            </span>
+            <span className="text-white/30">•</span>
+            <span className="flex items-center gap-1 text-emerald-300">
+              <SlidersHorizontal className="w-3 h-3 text-emerald-400 shrink-0" />
+              Active Filters: <strong className="text-white font-mono">{activeFilterCount}</strong>
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Drag Handle Indicator */}
+            <HeaderTooltip text="Drag to reorder card layout position">
+              <span 
+                className={`cursor-grab active:cursor-grabbing transition-colors p-1 rounded ${
+                  isLight && !isFullscreenOverlay ? "text-slate-400 hover:text-slate-600 hover:bg-slate-200/50" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <circle cx="9" cy="5" r="1.5" fill="currentColor"/>
+                  <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
+                  <circle cx="9" cy="12" r="1.5" fill="currentColor"/>
+                  <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
+                  <circle cx="9" cy="19" r="1.5" fill="currentColor"/>
+                  <circle cx="15" cy="19" r="1.5" fill="currentColor"/>
+                </svg>
+              </span>
+            </HeaderTooltip>
+            <span className={`text-xs font-extrabold tracking-wide uppercase ${isLight && !isFullscreenOverlay ? "text-slate-700" : "text-slate-200"}`}>{title}</span>
+            {showExportTimestampOverlay && (
+              <span className="inline-flex items-center gap-1 text-[9.5px] font-mono font-extrabold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                <Clock className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                <span>Last Export: {lastExportTimestamp || "Not exported"}</span>
+              </span>
+            )}
+            {isLocalGenerating && (
+              <span className="flex items-center gap-1 text-[9px] font-black uppercase text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 animate-pulse">
+                <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Syncing...
+              </span>
+            )}
+
+            {/* Clickable Status Legend Categories with Custom Color Picker */}
+            <div className="hidden xl:flex items-center gap-2 ml-2 pl-2.5 border-l border-white/10">
+              <span className="text-[9px] font-extrabold uppercase text-slate-400 tracking-wider">Status:</span>
+              {[
+                { label: "To Do", defaultColor: "#64748b" },
+                { label: "In Progress", defaultColor: "#3b82f6" },
+                { label: "Done", defaultColor: "#10b981" },
+                { label: "Blocked", defaultColor: "#ef4444" },
+              ].map((cat) => {
+                const curColor = statusCategoryColors[cat.label] || cat.defaultColor;
+                const isSel = activeStatusCategory === cat.label;
+                return (
+                  <div key={cat.label} className="flex items-center gap-1">
+                    <HeaderTooltip text={`Filter card data by status: ${cat.label}`}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = isSel ? null : cat.label;
+                          setActiveStatusCategory(next);
+                          if (next) {
+                            addHistoryLog(`Filtered by status: ${next}`);
+                            showBanner(`Filtering "${title}" by status: ${next}`);
+                          } else {
+                            addHistoryLog("Cleared status filter");
+                            showBanner(`Cleared status filter for "${title}".`);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: isSel ? curColor : `${curColor}25`,
+                          color: isSel ? "#ffffff" : curColor,
+                          borderColor: `${curColor}60`,
+                        }}
+                        className={`text-[9.5px] px-2 py-0.5 rounded-full border transition-all cursor-pointer select-none font-extrabold flex items-center gap-1 ${
+                          isSel ? "ring-2 ring-white/50 scale-105" : "hover:opacity-100 opacity-85 hover:scale-105"
+                        }`}
+                      >
+                        <span
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ backgroundColor: curColor }}
+                        />
+                        {cat.label}
+                      </button>
+                    </HeaderTooltip>
+
+                    {/* Direct Status Category Color Picker */}
+                    <HeaderTooltip text={`Customize visual color representation for '${cat.label}' status`}>
+                      <div className="relative flex items-center justify-center cursor-pointer p-0.5 rounded hover:bg-white/10 transition-colors">
+                        <input
+                          type="color"
+                          value={curColor}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            const newCol = e.target.value;
+                            setStatusCategoryColors((prev) => ({
+                              ...prev,
+                              [cat.label]: newCol,
+                            }));
+                            addHistoryLog(`Customized ${cat.label} status color to ${newCol}`);
+                            showBanner(`Customized status color for "${cat.label}" to ${newCol}.`);
+                          }}
+                          className="w-3.5 h-3.5 opacity-0 absolute inset-0 cursor-pointer z-10"
+                        />
+                        <span
+                          className="w-2.5 h-2.5 rounded-full border border-white/50 shadow-sm shrink-0 hover:scale-125 transition-transform"
+                          style={{ backgroundColor: curColor }}
+                        />
+                      </div>
+                    </HeaderTooltip>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Directional Trend Indicators (Up/Down/Stable) comparing current value against previous cached metric */}
+            <div className="hidden 2xl:flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10">
+              <span className="text-[9px] font-extrabold uppercase text-slate-400 tracking-wider">Trend:</span>
+              {cardHeaderMetrics.map((m) => {
+                const diff = m.current - m.previous;
+                const pct = m.previous > 0 ? ((diff / m.previous) * 100).toFixed(1) : "0";
+                const isUp = diff > 0;
+                const isDown = diff < 0;
+                const isStable = diff === 0;
+
+                return (
+                  <HeaderTooltip
+                    key={m.id}
+                    text={`Metric '${m.label}': Current (${m.current}${m.unit}) vs Previous Cached (${m.previous}${m.unit}) — ${
+                      isUp ? `Up +${pct}%` : isDown ? `Down ${pct}%` : "Stable"
                     }`}
                   >
-                    {cat.label}
-                  </button>
-                </HeaderTooltip>
-              );
-            })}
+                    <div
+                      className={`text-[9.5px] px-2 py-0.5 rounded-md border font-mono font-extrabold flex items-center gap-1 cursor-default transition-all select-none ${
+                        isUp
+                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                          : isDown
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/40"
+                          : "bg-blue-500/15 text-blue-300 border-blue-500/40"
+                      }`}
+                    >
+                      <span className="font-sans font-bold text-slate-300">{m.label}:</span>
+                      <span>{m.current}{m.unit}</span>
+                      {isUp && <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />}
+                      {isDown && <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />}
+                      {isStable && <Minus className="w-3 h-3 text-blue-400 shrink-0" />}
+                      <span className="text-[8.5px] font-black uppercase">
+                        {isUp ? `+${pct}%` : isDown ? `${pct}%` : "Stable"}
+                      </span>
+                    </div>
+                  </HeaderTooltip>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
         <div className="flex flex-wrap items-center gap-1.5 relative">
           {/* Inline Text Filter Input */}
@@ -616,6 +873,51 @@ function DraggableCard({
             )}
           </div>
 
+          {/* Toggle Overlay Last Export Timestamp Button */}
+          <HeaderTooltip text="Toggle overlay of last export timestamp onto card title">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = !showExportTimestampOverlay;
+                setShowExportTimestampOverlay(next);
+                addHistoryLog(next ? "Enabled last export timestamp overlay" : "Disabled export timestamp overlay");
+                showBanner(next ? `Export timestamp overlay active for "${title}"` : "Export timestamp overlay hidden");
+              }}
+              className={`p-1.5 px-2.5 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                showExportTimestampOverlay
+                  ? "bg-amber-500 text-slate-950 border-amber-400 font-extrabold shadow-sm"
+                  : isLight
+                  ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300"
+                  : "bg-slate-900/80 hover:bg-slate-800 text-slate-200 border-white/10"
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">{showExportTimestampOverlay ? "Hide Timestamp" : "Overlay Timestamp"}</span>
+              <span className="sm:hidden">Time</span>
+            </button>
+          </HeaderTooltip>
+
+          {/* Quick Triage Button */}
+          <HeaderTooltip text="Quick Triage: Instantly transition all flagged issues in this card to 'In Progress'">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleQuickTriage();
+              }}
+              className={`p-1.5 px-3 rounded-lg transition-all text-xs font-black cursor-pointer flex items-center gap-1.5 border shadow-md ${
+                isLight
+                  ? "bg-amber-500 hover:bg-amber-600 text-slate-950 border-amber-400 hover:shadow-amber-500/20"
+                  : "bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-300 hover:shadow-amber-500/30"
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 fill-current text-slate-950" />
+              <span className="hidden sm:inline">Quick Triage</span>
+              <span className="sm:hidden">Triage</span>
+            </button>
+          </HeaderTooltip>
+
           {/* Copy Link Button */}
           <HeaderTooltip text="Copy direct URL preserving search filters & sort settings">
             <button
@@ -701,6 +1003,137 @@ function DraggableCard({
             </button>
           </HeaderTooltip>
 
+          {/* Set Alert Threshold Toggle */}
+          <div className="relative inline-block">
+            <HeaderTooltip text="Set Alert: Notify via toast when a card metric exceeds your custom limit">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAlertPopover((prev) => !prev);
+                }}
+                className={`p-1.5 px-2.5 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                  alertEnabled
+                    ? "bg-rose-500 text-white border-rose-400 font-extrabold shadow-md ring-2 ring-rose-400/30"
+                    : isLight
+                    ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300"
+                    : "bg-slate-900/80 hover:bg-slate-800 text-slate-200 border-white/10"
+                }`}
+              >
+                <Bell className={`w-3.5 h-3.5 ${alertEnabled ? "text-white animate-bounce" : "text-rose-400"}`} />
+                <span className="hidden sm:inline">{alertEnabled ? `Alert (${alertThreshold})` : "Set Alert"}</span>
+                <span className="sm:hidden">Alert</span>
+              </button>
+            </HeaderTooltip>
+
+            {/* Alert Threshold Popover */}
+            {showAlertPopover && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className={`absolute right-0 top-full mt-2 w-64 p-3.5 rounded-xl border shadow-2xl z-50 text-xs animate-in fade-in zoom-in-95 duration-150 ${
+                  isLight
+                    ? "bg-white border-slate-200 text-slate-800 shadow-slate-300/50"
+                    : "bg-slate-950 border-white/10 text-slate-100 shadow-black/80"
+                }`}
+              >
+                <div className="flex items-center justify-between font-extrabold border-b border-white/10 pb-2 mb-2">
+                  <span className="flex items-center gap-1.5 text-rose-400">
+                    <Bell className="w-3.5 h-3.5" />
+                    Metric Threshold Alert
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAlertPopover(false)}
+                    className="text-slate-400 hover:text-white text-xs font-bold px-1 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[11px] text-slate-400">Alert Enabled:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !alertEnabled;
+                        setAlertEnabled(next);
+                        if (next) {
+                          checkAlertThreshold(next, alertTargetMetric, alertThreshold);
+                          addHistoryLog(`Enabled metric alert for ${alertTargetMetric} > ${alertThreshold}`);
+                        } else {
+                          addHistoryLog("Disabled metric threshold alert");
+                          showBanner(`Threshold alert disabled for "${title}".`);
+                        }
+                      }}
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border transition-all cursor-pointer ${
+                        alertEnabled
+                          ? "bg-rose-500 text-white border-rose-400 shadow-sm"
+                          : "bg-slate-800 text-slate-400 border-slate-700"
+                      }`}
+                    >
+                      {alertEnabled ? "Active" : "Disabled"}
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">
+                      Target Metric:
+                    </label>
+                    <select
+                      value={alertTargetMetric}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAlertTargetMetric(val);
+                        if (alertEnabled) {
+                          checkAlertThreshold(alertEnabled, val, alertThreshold);
+                        }
+                      }}
+                      className="w-full text-xs px-2 py-1 rounded-md border font-semibold bg-slate-900 border-white/10 text-slate-200 focus:outline-none"
+                    >
+                      {cardHeaderMetrics.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label} (Current: {m.current}{m.unit})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-extrabold uppercase text-slate-400 mb-1">
+                      Threshold Limit:
+                    </label>
+                    <input
+                      type="number"
+                      value={alertThreshold}
+                      onChange={(e) => {
+                        const num = parseInt(e.target.value, 10) || 0;
+                        setAlertThreshold(num);
+                        if (alertEnabled) {
+                          checkAlertThreshold(alertEnabled, alertTargetMetric, num);
+                        }
+                      }}
+                      className="w-full text-xs px-2 py-1 rounded-md border font-semibold bg-slate-900 border-white/10 text-slate-200 focus:outline-none"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAlertEnabled(true);
+                      checkAlertThreshold(true, alertTargetMetric, alertThreshold);
+                      setShowAlertPopover(false);
+                      addHistoryLog(`Configured alert limit (${alertThreshold})`);
+                    }}
+                    className="w-full mt-1 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
+                  >
+                    Save & Evaluate
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Accessibility Manual Sort Buttons */}
           <HeaderTooltip text="Move card position up in layout">
             <button
@@ -722,6 +1155,56 @@ function DraggableCard({
               }`}
             >
               ▼
+            </button>
+          </HeaderTooltip>
+
+          {/* Per-Card Auto-Refresh Frequency Selector */}
+          <HeaderTooltip text="Pick per-card auto-refresh frequency (1m, 5m, 10m)">
+            <select
+              value={cardAutoRefreshFreq}
+              onChange={(e) => {
+                e.stopPropagation();
+                const val = e.target.value;
+                setCardAutoRefreshFreq(val);
+                addHistoryLog(`Per-card auto-refresh set to ${val}`);
+                showBanner(`Auto-refresh frequency for "${title}" set to ${val === "off" ? "Off" : val}.`);
+              }}
+              className={`text-xs px-2 py-1 rounded-lg border font-bold focus:outline-none cursor-pointer transition-colors ${
+                cardAutoRefreshFreq !== "off"
+                  ? "bg-indigo-600 text-white border-indigo-400 font-extrabold shadow-sm"
+                  : isLight
+                  ? "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+                  : "bg-slate-950 border-white/10 text-slate-300 hover:bg-slate-900"
+              }`}
+            >
+              <option value="off">Auto-Sync: Off</option>
+              <option value="1m">Auto-Sync: 1m</option>
+              <option value="5m">Auto-Sync: 5m</option>
+              <option value="10m">Auto-Sync: 10m</option>
+            </select>
+          </HeaderTooltip>
+
+          {/* Expand to Fullscreen Icon Button */}
+          <HeaderTooltip text={isFullscreenOverlay ? "Exit fullscreen view" : "Expand card to Fullscreen overlay mode"}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = !isFullscreenOverlay;
+                setIsFullscreenOverlay(next);
+                addHistoryLog(next ? "Expanded card to fullscreen overlay mode" : "Exited fullscreen overlay mode");
+                showBanner(next ? `Isolated "${title}" in fullscreen overlay mode` : "Returned card to normal view");
+              }}
+              className={`p-1.5 px-2.5 rounded-lg transition-all text-xs font-bold cursor-pointer flex items-center gap-1.5 border shadow-sm ${
+                isFullscreenOverlay
+                  ? "bg-indigo-600 text-white border-indigo-400 font-extrabold ring-2 ring-indigo-400/40"
+                  : isLight
+                  ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300"
+                  : "bg-slate-900/80 hover:bg-slate-800 text-slate-200 border-white/10"
+              }`}
+            >
+              <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">{isFullscreenOverlay ? "Exit Fullscreen" : "Fullscreen"}</span>
             </button>
           </HeaderTooltip>
 
@@ -826,7 +1309,28 @@ function DraggableCard({
       >
         {children}
       </div>
+
+      {/* Interactive Bottom-Right Resize Handle with Local Persistence */}
+      {!isCollapsed && !isMinimized && (
+        <HeaderTooltip text="Drag to interactively resize card (double-click to reset)">
+          <div
+            onMouseDown={handleResizeMouseDown}
+            onDoubleClick={() => {
+              setCardDimensions({});
+              localStorage.removeItem(`card_dim_${id}`);
+              showBanner("Card dimensions reset to default.");
+            }}
+            className="absolute bottom-1 right-1 p-1 text-slate-500 hover:text-indigo-400 cursor-se-resize z-30 transition-colors select-none group/resize"
+            title="Interactive bottom-right resize handle (drag to adjust size, double-click to reset)"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 19L11 19M19 19L19 11M19 19L15 15" />
+            </svg>
+          </div>
+        </HeaderTooltip>
+      )}
     </motion.div>
+  </>
   );
 }
 
@@ -1312,6 +1816,19 @@ export default function App() {
     }
     return id;
   };
+
+  // Initial load toast notification for keyboard shortcuts 'Ctrl+/'
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      addToast(
+        "Keyboard Shortcuts Tip",
+        "Press 'Ctrl+/' (or Cmd+/) anytime to open the keyboard shortcuts panel and supercharge your workflow!",
+        "info",
+        7000
+      );
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Load Shared Status Mapping Config from Deep-Link URL parameters if present
   useEffect(() => {

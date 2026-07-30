@@ -15,6 +15,7 @@ import { ProjectImpactChart } from "./ProjectImpactChart";
 import { TrendAnalysisChart } from "./TrendAnalysisChart";
 import { IssueAgingWidget } from "./IssueAgingWidget";
 import { MappedStatusDonutWidget } from "./MappedStatusDonutWidget";
+import { StatusDistributionWidget } from "./StatusDistributionWidget";
 
 const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   totalIssues: {
@@ -135,6 +136,35 @@ const highlightText = (text: string, query: string) => {
   }
 };
 
+interface CellCopyButtonProps {
+  text: string;
+  cellId: string;
+  copiedCellId: string | null;
+  onCopy: (text: string, cellId: string, e: React.MouseEvent) => void;
+}
+
+const CellCopyButton: React.FC<CellCopyButtonProps> = ({ text, cellId, copiedCellId, onCopy }) => {
+  const isCopied = copiedCellId === cellId;
+  return (
+    <button
+      type="button"
+      onClick={(e) => onCopy(text, cellId, e)}
+      className={`opacity-0 group-hover/cell:opacity-100 p-1 rounded-md transition-all duration-150 shrink-0 ${
+        isCopied 
+          ? "bg-emerald-500/20 text-emerald-400 opacity-100" 
+          : "hover:bg-slate-800 text-slate-500 hover:text-slate-350"
+      }`}
+      title={isCopied ? "Copied!" : "Copy cell value to clipboard"}
+    >
+      {isCopied ? (
+        <Check className="w-3 h-3 text-emerald-400" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </button>
+  );
+};
+
 export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   report,
   loading,
@@ -232,27 +262,9 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
     });
   };
 
-  const CellCopyButton = ({ text, cellId }: { text: string; cellId: string }) => {
-    const isCopied = copiedCellId === cellId;
-    return (
-      <button
-        type="button"
-        onClick={(e) => handleCopyCell(text, cellId, e)}
-        className={`opacity-0 group-hover/cell:opacity-100 p-1 rounded-md transition-all duration-150 shrink-0 ${
-          isCopied 
-            ? "bg-emerald-500/20 text-emerald-400 opacity-100" 
-            : "hover:bg-slate-800 text-slate-500 hover:text-slate-350"
-        }`}
-        title={isCopied ? "Copied!" : "Copy cell value to clipboard"}
-      >
-        {isCopied ? (
-          <Check className="w-3 h-3 text-emerald-400" />
-        ) : (
-          <Copy className="w-3 h-3" />
-        )}
-      </button>
-    );
-  };
+  const renderCellCopyButton = (text: string, cellId: string) => (
+    <CellCopyButton text={text} cellId={cellId} copiedCellId={copiedCellId} onCopy={handleCopyCell} />
+  );
 
   const [copiedSummary, setCopiedSummary] = useState(false);
 
@@ -1785,6 +1797,30 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
   const totalPages = Math.ceil(filteredIssues.length / rowsPerPage) || 1;
 
+  const reportIssues = report?.issues ?? [];
+  const originalMetrics = report?.metrics;
+
+  const metrics = useMemo(() => {
+    if (!originalMetrics) return originalMetrics;
+    const unsnoozedOverdueCount = reportIssues.filter((i) => {
+      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
+      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
+      return isOverdue && !isSnoozed;
+    }).length;
+    return {
+      ...originalMetrics,
+      overdueIssues: unsnoozedOverdueCount
+    };
+  }, [originalMetrics, reportIssues, todayStr, snoozedAlerts]);
+
+  const overdueIssuesList = useMemo(() => {
+    return reportIssues.filter((i) => {
+      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
+      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
+      return isOverdue && !isSnoozed;
+    });
+  }, [reportIssues, todayStr, snoozedAlerts]);
+
   if (loading) {
     return (
       <div className="bg-[#1E293B] rounded-xl border border-slate-800 p-12 text-center shadow-md flex flex-col items-center justify-center min-h-[400px]">
@@ -1814,28 +1850,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     );
   }
 
-  const { issues, metrics: originalMetrics, aiSummary, sprintComparison, config, timestamp } = report;
-
-  const metrics = useMemo(() => {
-    if (!originalMetrics) return originalMetrics;
-    const unsnoozedOverdueCount = issues.filter((i) => {
-      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
-      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
-      return isOverdue && !isSnoozed;
-    }).length;
-    return {
-      ...originalMetrics,
-      overdueIssues: unsnoozedOverdueCount
-    };
-  }, [originalMetrics, issues, todayStr, snoozedAlerts]);
-
-  const overdueIssuesList = useMemo(() => {
-    return issues.filter((i) => {
-      const isOverdue = i.dueDate && i.dueDate < todayStr && i.mappedStatus !== "Done";
-      const isSnoozed = snoozedAlerts[i.key] && snoozedAlerts[i.key] > Date.now();
-      return isOverdue && !isSnoozed;
-    });
-  }, [issues, todayStr, snoozedAlerts]);
+  const { issues, aiSummary, sprintComparison, config, timestamp } = report;
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -3628,8 +3643,8 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           )}
         </div>
 
-        {/* 3.4. Summary Card: Mapped Status Donut & Issue Aging Widgets */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* 3.4. Summary Cards: Mapped Status Donut, Status Distribution, & Issue Aging Widgets */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <MappedStatusDonutWidget
             issues={issues}
             categoryColors={categoryColors}
@@ -3639,6 +3654,10 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               else setSearchQuery("");
             }}
             activeStatusFilter={searchQuery}
+          />
+          <StatusDistributionWidget
+            issues={issues}
+            theme={theme}
           />
           <IssueAgingWidget
             issues={issues}
@@ -5032,7 +5051,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                         <span className="text-[9px] opacity-70">↗</span>
                                       </a>
                                     </div>
-                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-key`} />
+                                    {renderCellCopyButton(String(val), `${issue.key}-key`)}
                                   </div>
                                 </td>
                               );
@@ -5080,7 +5099,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                       </span>
                                       {riskBadge}
                                     </div>
-                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-summary`} />
+                                    {renderCellCopyButton(String(val), `${issue.key}-summary`)}
                                   </div>
                                 </td>
                               );
@@ -5104,7 +5123,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                     >
                                       {val}
                                     </span>
-                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-status`} />
+                                    {renderCellCopyButton(String(val), `${issue.key}-status`)}
                                   </div>
                                 </td>
                               );
@@ -5121,7 +5140,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                     <span className={`px-1.5 py-0.5 rounded font-semibold ${pColor}`}>
                                       {val}
                                     </span>
-                                    <CellCopyButton text={String(val)} cellId={`${issue.key}-priority`} />
+                                    {renderCellCopyButton(String(val), `${issue.key}-priority`)}
                                   </div>
                                 </td>
                               );
@@ -5137,7 +5156,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                         <span className="text-slate-600">-</span>
                                       )}
                                     </div>
-                                    <CellCopyButton text={val !== null ? String(val) : ""} cellId={`${issue.key}-storyPoints`} />
+                                    {renderCellCopyButton(val !== null ? String(val) : "", `${issue.key}-storyPoints`)}
                                   </div>
                                 </td>
                               );
@@ -5157,7 +5176,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                       {tags.length > 3 && <span className="text-[9px] text-slate-500 font-bold">+{tags.length - 3}</span>}
                                       {tags.length === 0 && <span className="text-slate-600">-</span>}
                                     </div>
-                                    <CellCopyButton text={tagsText} cellId={`${issue.key}-${col.id}`} />
+                                    {renderCellCopyButton(tagsText, `${issue.key}-${col.id}`)}
                                   </div>
                                 </td>
                               );
@@ -5194,7 +5213,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                           <UserPlus className="w-3.5 h-3.5" />
                                         )}
                                       </button>
-                                      <CellCopyButton text={String(val || "Unassigned")} cellId={`${issue.key}-assignee`} />
+                                      {renderCellCopyButton(String(val || "Unassigned"), `${issue.key}-assignee`)}
                                     </div>
                                   </div>
                                 </td>
@@ -5232,7 +5251,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                         )
                                       )}
                                     </div>
-                                    <CellCopyButton text={val ? String(val) : ""} cellId={`${issue.key}-dueDate`} />
+                                    {renderCellCopyButton(val ? String(val) : "", `${issue.key}-dueDate`)}
                                   </div>
                                 </td>
                               );
@@ -5243,7 +5262,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                 <td key={col.id} className="p-3 font-mono text-xs font-semibold text-slate-350">
                                   <div className="flex items-center justify-between gap-2 group/cell">
                                     <span>{val !== null && val !== undefined ? `${val}h` : <span className="text-slate-600">-</span>}</span>
-                                    <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
+                                    {renderCellCopyButton(val !== null && val !== undefined ? String(val) : "", `${issue.key}-${col.id}`)}
                                   </div>
                                 </td>
                               );
@@ -5257,7 +5276,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                 <td key={col.id} className={`p-3 font-mono text-xs font-bold ${isOver ? "text-rose-400" : "text-slate-300"}`}>
                                   <div className="flex items-center justify-between gap-2 group/cell">
                                     <span>{val !== null && val !== undefined ? `${val}h` : <span className="text-slate-600">-</span>}</span>
-                                    <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
+                                    {renderCellCopyButton(val !== null && val !== undefined ? String(val) : "", `${issue.key}-${col.id}`)}
                                   </div>
                                 </td>
                               );
@@ -5267,7 +5286,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                               <td key={col.id} className="p-3 truncate max-w-[120px] text-slate-400 font-medium">
                                 <div className="flex items-center justify-between gap-2 group/cell">
                                   <span>{val !== null && val !== undefined ? String(val) : <span className="text-slate-600">-</span>}</span>
-                                  <CellCopyButton text={val !== null && val !== undefined ? String(val) : ""} cellId={`${issue.key}-${col.id}`} />
+                                  {renderCellCopyButton(val !== null && val !== undefined ? String(val) : "", `${issue.key}-${col.id}`)}
                                 </div>
                               </td>
                             );

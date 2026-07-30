@@ -32,7 +32,7 @@ export const DiagnosticConsole: React.FC<DiagnosticConsoleProps> = ({
       environment: {
         isSandbox,
         isConnected,
-        sessionIdToken: sessionId || null,
+        sessionIdToken: sessionId ? `${sessionId.slice(0, 8)}...[REDACTED]` : null,
         jiraInstanceHost: jiraUrl || null,
         activeUser: activeUser
           ? { displayName: activeUser.displayName, emailAddress: activeUser.emailAddress }
@@ -68,7 +68,7 @@ Exported on: ${new Date().toLocaleString()}
 --- ENVIRONMENT DETAILS ---
 Environment Mode: ${isSandbox ? "Sandbox Playground" : "Production Jira Cloud"}
 Connection State: ${isConnected ? "Connected" : "Disconnected"}
-Session ID Token: ${sessionId || "None"}
+Session ID Token: ${sessionId ? `${sessionId.slice(0, 8)}...[REDACTED]` : "None"}
 Jira Instance Host: ${jiraUrl || "Not configured"}
 Active User: ${activeUser ? `${activeUser.displayName} (${activeUser.emailAddress})` : "None"}
 
@@ -186,7 +186,7 @@ Details: ${log.details || "No details reported."}
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Session ID Token:</span>
                 <span className="font-mono text-[10px] text-slate-300">
-                  {sessionId ? `${sessionId.slice(0, 15)}...` : "None (Unauthorized)"}
+                  {sessionId ? `${sessionId.slice(0, 8)}...[REDACTED]` : "None (Unauthorized)"}
                 </span>
               </div>
               {sessionId && (

@@ -43,7 +43,8 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         style: {
           borderRadius: "16px",
           padding: "24px",
-        }
+        },
+        filter: (domNode) => domNode.tagName !== "IFRAME",
       });
       const link = document.createElement("a");
       link.download = `jira-dashboard-snapshot-${new Date().toISOString().split("T")[0]}.png`;

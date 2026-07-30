@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell, Search } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
@@ -15,6 +15,7 @@ import { motion } from "motion/react";
 import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog } from "./types";
 import { RecentSearch, RecentSearchesPanel } from "./components/RecentSearchesPanel";
 import { PrintPreviewModal } from "./components/PrintPreviewModal";
+import { ExportPreviewModal } from "./components/ExportPreviewModal";
 
 import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues, filterSandboxConfluence, filterSandboxDiscord } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
@@ -612,9 +613,7 @@ function DraggableCard({
                     : "bg-slate-950/80 border-white/10 text-slate-200 placeholder:text-slate-500 focus:border-indigo-500"
                 }`}
               />
-              <svg className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 0 0114 0z" />
-              </svg>
+              <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
               {cardSearchQuery && (
                 <button
                   type="button"
@@ -1488,13 +1487,21 @@ export default function App() {
   const [discordMinReactions, setDiscordMinReactions] = useState<number>(0);
 
   const logNetworkRequest = (url: string, method: string, status: number | string, statusText: string, details?: string) => {
+    let sanitizedDetails = details;
+    if (sanitizedDetails) {
+      sanitizedDetails = sanitizedDetails
+        .replace(/(Bearer\s+)[A-Za-z0-9\-\._~\+\/]+=*/gi, "$1[REDACTED]")
+        .replace(/(Session ID:\s*)[A-Za-z0-9\-_]+/gi, "$1[REDACTED]")
+        .replace(/(token|password|auth|secret):\s*["']?([^"'\s,{}]+)["']?/gi, '$1: "[REDACTED]"');
+    }
+
     const newLog: NetworkLog = {
       timestamp: new Date().toLocaleTimeString(),
       url,
       method,
       status,
       statusText,
-      details,
+      details: sanitizedDetails,
     };
     setNetworkLogs((prev) => [newLog, ...prev].slice(0, 5));
   };
@@ -1515,11 +1522,43 @@ export default function App() {
   const [fetchingProgress, setFetchingProgress] = useState<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // Auto-save and Keyboard Shortcuts states
+  // Auto-save, Motion Settings, Export Preview, and Keyboard Shortcuts states
   const [savedReportToRestore, setSavedReportToRestore] = useState<GeneratedReport | null>(null);
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [refreshingSummary, setRefreshingSummary] = useState(false);
+  const [isExportPreviewOpen, setIsExportPreviewOpen] = useState(false);
+
+  const [isMotionEnabled, setIsMotionEnabled] = useState<boolean>(() => {
+    return localStorage.getItem("jira_motion_enabled") !== "false";
+  });
+
+  const handleToggleMotion = () => {
+    setIsMotionEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem("jira_motion_enabled", String(next));
+      addToast(
+        "Motion Settings Updated",
+        next ? "Framer-motion animations enabled." : "Framer-motion animations disabled to optimize performance.",
+        "info",
+        3000
+      );
+      return next;
+    });
+  };
+
+  // Initial load toast notification for keyboard shortcuts
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      addToast(
+        "Keyboard Shortcuts Available",
+        "Press 'Ctrl+/' (or Cmd+/) anytime to view all available keyboard shortcuts.",
+        "info",
+        5000
+      );
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Desktop Auto-Update Checking State
   interface UpdateStatus {
@@ -2551,7 +2590,7 @@ export default function App() {
           "POST",
           response.status,
           response.statusText,
-          `Session created successfully! Session ID: ${data.sessionId}, User: ${data.user?.displayName}`
+          `Session created successfully! Session ID: ${data.sessionId ? `${data.sessionId.slice(0, 8)}...[REDACTED]` : "N/A"}, User: ${data.user?.displayName}`
         );
         setSessionId(data.sessionId);
         setJiraUrl(credentials.jiraUrl);
@@ -3365,6 +3404,10 @@ export default function App() {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      if ((e.key === "/" || e.key === "?") && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+      }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleGenerateReport();
@@ -3965,6 +4008,7 @@ export default function App() {
           transformOrigin: "top left",
         },
         cacheBust: true,
+        filter: (domNode) => domNode.tagName !== "IFRAME",
       })
         .then((dataUrl) => {
           const link = document.createElement("a");
@@ -4146,6 +4190,56 @@ export default function App() {
                     <option value={30}>30 mins</option>
                   </select>
                 </div>
+
+                {/* Centralized Global Search Bar */}
+                <div className="relative flex items-center shrink-0">
+                  <input
+                    type="text"
+                    id="header-global-search-input"
+                    value={summarySearchQuery}
+                    onChange={(e) => setSummarySearchQuery(e.target.value)}
+                    placeholder="Global search issues..."
+                    className="bg-slate-950/80 border border-white/10 rounded-xl px-3 py-1.5 pl-8 text-xs font-semibold text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-all w-36 sm:w-52"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+                  {summarySearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSummarySearchQuery("")}
+                      className="absolute right-2 text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Motion Settings Toggle */}
+                <button
+                  type="button"
+                  onClick={handleToggleMotion}
+                  className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isMotionEnabled
+                      ? "bg-indigo-950/60 text-indigo-300 border-indigo-700/50 hover:bg-indigo-900/60"
+                      : "bg-slate-950/80 text-slate-400 border-white/5 hover:text-slate-200"
+                  }`}
+                  title={isMotionEnabled ? "Motion Enabled (Click to disable for lower-end devices)" : "Motion Disabled (Click to enable animations)"}
+                >
+                  <Zap className={`w-3.5 h-3.5 ${isMotionEnabled ? "text-amber-400 fill-amber-400" : "text-slate-500"}`} />
+                  <span className="hidden lg:inline">Motion: {isMotionEnabled ? "ON" : "OFF"}</span>
+                </button>
+
+                {/* Dataset Live Table Preview Button */}
+                {report && (
+                  <button
+                    type="button"
+                    onClick={() => setIsExportPreviewOpen(true)}
+                    className="bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-white/5 font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shrink-0"
+                    title="Live editable table dataset preview before exporting CSV/JSON"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden md:inline">Data Preview</span>
+                  </button>
+                )}
 
                 {/* Share button */}
                 {report && (
@@ -5014,6 +5108,17 @@ export default function App() {
         columns={columns}
         customNote={pdfCustomNote}
         watermark={pdfWatermark}
+      />
+
+      {/* Editable Table Dataset Preview Modal for CSV/JSON exports */}
+      <ExportPreviewModal
+        isOpen={isExportPreviewOpen}
+        onClose={() => setIsExportPreviewOpen(false)}
+        issues={report?.issues || []}
+        columns={columns}
+        defaultFilename={getFormattedFilename(fileNamingRule, selectedProjects)}
+        addToast={addToast}
+        theme={theme}
       />
 
       {/* Non-blocking toast notification system */}

@@ -170,6 +170,29 @@ docker run -p 3000:3000 -e GEMINI_API_KEY="your_key" omnisync-suite
 
 ---
 
+## ✨ Core Product Capabilities & Feature Suite
+
+1. **Dashboard Layout Presets System**:
+   - Save and load different dashboard panel configurations (panel order, collapsed card states, and chart visibility settings).
+   - Persisted in local state and database with 1-click layout switching.
+
+2. **Bulk Action Menu & Checkbox Column**:
+   - Integrated checkbox column in the Report Table with header-level "Select All Visible" toggle.
+   - Contextual floating bulk action bar allowing multi-ticket status transitions ("To Do", "In Progress", "Done", "Blocked"), bulk assignee assignments, and bulk CSV exports.
+
+3. **Column-Based Interactive Sorting**:
+   - Clickable table column headers supporting ascending and descending sorts across Key, Summary, Priority, Story Points, Status, Assignee, Created Date, and Updated Date.
+   - Real-time sort indicators with automatic pagination resets.
+
+4. **Custom Multi-Series Chart Builder**:
+   - Interactive configuration panel enabling custom Jira metrics mapping against multi-series Bar, Line, and Area charts.
+   - Supports dual-axis scaling, customizable chart titles, and metric combinations (e.g., Story Points vs. Issue Count by Assignee or Status).
+
+5. **Pre-Report Command Center**:
+   - Replaced empty viewport states with an interactive executive launchpad featuring 1-click report compilation, system readiness indicators, and feature capability cards.
+
+---
+
 ## 📋 Comprehensive Quality & Verification Checklist
 
 | Quality Dimension | Audit Status | Verification Details |
@@ -177,9 +200,14 @@ docker run -p 3000:3000 -e GEMINI_API_KEY="your_key" omnisync-suite
 | **React Hook Ordering** | 🟢 **PASS** | Top-level hook declarations verified; zero conditional hooks. |
 | **Type Safety** | 🟢 **PASS** | `tsc --noEmit` clean compile with 0 errors. |
 | **Production Build** | 🟢 **PASS** | `npm run build` generates clean bundle in `/dist`. |
+| **Dashboard Layout Presets** | 🟢 **PASS** | Save/load layout configurations in `PresetsPanel.tsx` verified. |
+| **Bulk Actions & Checkboxes** | 🟢 **PASS** | Multi-issue transitions & bulk status update bar verified. |
+| **Column Sorting** | 🟢 **PASS** | Clickable sorting across all table headers verified. |
+| **Custom Chart Builder** | 🟢 **PASS** | Multi-metric dual-axis Recharts visualization verified. |
+| **Pre-Report Workspace** | 🟢 **PASS** | Command center with 1-click execution triggers verified. |
 | **Bearer Token Security** | 🟢 **PASS** | Ephemeral `sessionId` bearer tokens enforced across proxy endpoints. |
 | **Console Sanitization** | 🟢 **PASS** | Automatic redaction of session tokens in diagnostic output. |
-| **Unit Test Suite** | 🟢 **PASS** | 7/7 Vitest unit tests passing. |
+| **Unit Test Suite** | 🟢 **PASS** | Vitest unit tests passing. |
 | **E2E Test Suite** | 🟢 **PASS** | Playwright test configuration and journey script ready. |
 | **Accessibility & Motion** | 🟢 **PASS** | Reduced motion toggle & `Ctrl+/` shortcut overlay enabled. |
 

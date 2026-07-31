@@ -936,6 +936,71 @@ app.post("/api/pmo/summarize", async (req, res) => {
   }
 });
 
+// --- QUICK 3-SENTENCE AI SUMMARY ENDPOINT ---
+app.post("/api/pmo/quick-summary", async (req, res) => {
+  try {
+    const { metrics, issues, projectsScope } = req.body;
+    const total = metrics?.totalIssues || (issues ? issues.length : 0);
+    const completion = metrics?.completionPercentage || 0;
+    const overdue = metrics?.overdueIssues || 0;
+    const blocked = metrics?.blockedCount || 0;
+    const cycleTime = metrics?.averageCycleTime || 0;
+    const scope = projectsScope?.length ? projectsScope.join(", ") : "Current Workspace";
+
+    let threeSentenceSummary = "";
+
+    try {
+      const ai = getGeminiClient();
+      const prompt = `Generate exactly a 3-sentence executive summary of this Jira report.
+Data:
+- Projects/Scope: ${scope}
+- Total Issues: ${total}
+- Completion Rate: ${completion}%
+- Overdue Issues: ${overdue}
+- Blocked Issues: ${blocked}
+- Average Cycle Time: ${cycleTime} days
+
+Rules:
+1. Output MUST be exactly 3 sentences.
+2. Sentence 1: High-level progress & completion status.
+3. Sentence 2: Key risks (blocked or overdue items, cycle times).
+4. Sentence 3: Strategic recommendation for the team.
+Do NOT include markdown headings or bullet points. Just raw text of 3 concise sentences.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: prompt,
+        config: {
+          systemInstruction: "You are an elite Agile PMO Lead. Provide concise, impactful 3-sentence report summaries.",
+          temperature: 0.5,
+        }
+      });
+
+      threeSentenceSummary = response.text ? response.text.trim() : "";
+    } catch (err: any) {
+      console.warn("Gemini call for quick summary failed, using smart local fallback:", err?.message);
+    }
+
+    if (!threeSentenceSummary) {
+      const sentence1 = `The ${scope} report tracks ${total} total issues with an overall completion rate of ${completion}%.`;
+      const sentence2 = blocked > 0 || overdue > 0
+        ? `Delivery velocity currently faces risk from ${blocked} blocked task${blocked === 1 ? '' : 's'} and ${overdue} overdue item${overdue === 1 ? '' : 's'}, with an average cycle time of ${cycleTime} days.`
+        : `Team velocity is stable with an average cycle time of ${cycleTime} days and zero active delivery blockages.`;
+      const sentence3 = blocked > 0
+        ? `Immediate focus should be directed at resolving blocked dependencies during daily standups.`
+        : overdue > 0
+        ? `The team should re-baseline overdue target dates to maintain predictable sprint commitments.`
+        : `The team is well-positioned to maintain current sprint velocity into the upcoming milestone.`;
+      
+      threeSentenceSummary = `${sentence1} ${sentence2} ${sentence3}`;
+    }
+
+    return res.json({ summary: threeSentenceSummary });
+  } catch (error: any) {
+    return res.status(500).json({ error: "Failed to generate quick summary.", details: error.message });
+  }
+});
+
 // --- AI ANALYST CHAT ENDPOINT ---
 app.post("/api/pmo/ai-chat", async (req, res) => {
   try {

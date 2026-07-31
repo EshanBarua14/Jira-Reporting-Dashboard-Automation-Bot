@@ -12,10 +12,12 @@ import { ReportDashboard } from "./components/ReportDashboard";
 import { DiagnosticConsole } from "./components/DiagnosticConsole";
 import { ToastNotification, Toast } from "./components/ToastNotification";
 import { motion } from "motion/react";
-import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog } from "./types";
+import { ColumnDefinition, MetricDefinition, ReportConfig, GeneratedReport, JiraIssue, ExecutiveSummary, RecentExport, NetworkLog, AppAccountUser, CustomChartConfig, DashboardLayoutPreset } from "./types";
 import { RecentSearch, RecentSearchesPanel } from "./components/RecentSearchesPanel";
 import { PrintPreviewModal } from "./components/PrintPreviewModal";
 import { ExportPreviewModal } from "./components/ExportPreviewModal";
+import { UserAuthModal } from "./components/UserAuthModal";
+import { KeyboardHintWidget } from "./components/KeyboardHintWidget";
 
 import { filterSandboxIssues, SANDBOX_PROJECTS, SANDBOX_ISSUE_TYPES, SANDBOX_STATUSES, SANDBOX_SPRINTS, SANDBOX_ASSIGNEES, getSandboxIssues, filterSandboxConfluence, filterSandboxDiscord } from "./components/MockData";
 import { getFormattedFilename, exportToCSV, exportToPDF } from "./utils/export";
@@ -1602,7 +1604,66 @@ export default function App() {
     return {};
   });
 
+  const [customChartConfig, setCustomChartConfig] = useState<CustomChartConfig>({
+    enabled: true,
+    chartType: "bar",
+    xAxisField: "assignee",
+    primaryMetric: "storyPoints",
+    secondaryMetric: "issueCount",
+    chartTitle: "Multi-Metric Custom Distribution",
+  });
+
+  const handleLoadLayoutPreset = (layoutPreset: DashboardLayoutPreset) => {
+    if (layoutPreset.panelOrder && layoutPreset.panelOrder.length > 0) {
+      setPanelOrder(layoutPreset.panelOrder);
+      localStorage.setItem("omnisync_panel_order", JSON.stringify(layoutPreset.panelOrder));
+    }
+    if (layoutPreset.collapsedPanels) {
+      setCollapsedPanels(layoutPreset.collapsedPanels);
+      localStorage.setItem("omnisync_collapsed_panels", JSON.stringify(layoutPreset.collapsedPanels));
+    }
+    if (layoutPreset.visualizations) {
+      setVisualizations((prev) => ({
+        ...prev,
+        ...layoutPreset.visualizations,
+      }));
+    }
+    addToast("Layout Preset Applied", `Switched layout to "${layoutPreset.name}".`, "info", 2500);
+  };
+
+  // User Authentication & Account State
+  const [currentAppUser, setCurrentAppUser] = useState<AppAccountUser | null>(() => {
+    const saved = localStorage.getItem("omnisync_current_app_user");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
+  const [isUserAuthModalOpen, setIsUserAuthModalOpen] = useState<boolean>(false);
+  const [userAuthInitialMode, setUserAuthInitialMode] = useState<"login" | "register" | "phone" | "forgot">("login");
+
+  const handleOpenUserAuthModal = (mode: "login" | "register" | "phone" | "forgot" = "login") => {
+    setUserAuthInitialMode(mode);
+    setIsUserAuthModalOpen(true);
+  };
+
+  const handleLoginSuccess = (user: AppAccountUser) => {
+    setCurrentAppUser(user);
+    localStorage.setItem("omnisync_current_app_user", JSON.stringify(user));
+  };
+
+  const handleUserLogout = () => {
+    setCurrentAppUser(null);
+    localStorage.removeItem("omnisync_current_app_user");
+    addToast("Signed Out", "Logged out of OmniSync account.", "info", 2500);
+  };
+
   const [cardSubFilters, setCardSubFilters] = useState<Record<string, Record<string, boolean>>>(() => {
+
     const saved = localStorage.getItem("omnisync_card_sub_filters");
     if (saved) {
       try {
@@ -4094,8 +4155,44 @@ export default function App() {
                     <span>Update Available</span>
                   </button>
                 )}
+
+                {/* User Account & Security Pill */}
+                {currentAppUser ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenUserAuthModal("login")}
+                    className="bg-slate-950/90 hover:bg-slate-900 border border-white/10 hover:border-blue-500/50 rounded-xl px-3 py-1.5 flex items-center gap-2 transition-all cursor-pointer shrink-0 group"
+                    title="Manage Account, Profile, and Two-Factor Security"
+                  >
+                    <img
+                      src={currentAppUser.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed=user"}
+                      alt={currentAppUser.name}
+                      className="w-6 h-6 rounded-full border border-blue-400 bg-slate-800"
+                    />
+                    <div className="text-left hidden sm:block">
+                      <p className="text-[11px] font-black text-white group-hover:text-blue-400 transition-colors leading-tight">
+                        {currentAppUser.name}
+                      </p>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase leading-none mt-0.5">
+                        {currentAppUser.authProvider} {currentAppUser.is2FAEnabled && "• 2FA Active"}
+                      </p>
+                    </div>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenUserAuthModal("login")}
+                    className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-xs px-3.5 py-2 rounded-xl transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shrink-0"
+                    title="Sign in with Email, Google OAuth, or SMS Phone OTP"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Sign In / Register</span>
+                  </button>
+                )}
+
                 {/* Color Theme Selector */}
                 <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+
                   <button
                     type="button"
                     onClick={() => handleSelectThemeMode("system")}
@@ -4512,6 +4609,9 @@ export default function App() {
                     isConnected={isConnected}
                     activeUser={activeUser}
                     onClearCache={handleClearCache}
+                    currentAppUser={currentAppUser}
+                    onOpenUserAuthModal={handleOpenUserAuthModal}
+                    onLogoutAppUser={handleUserLogout}
                     activePlatform={activePlatform}
                     onChangeActivePlatform={setActivePlatform}
                     discordToken={discordToken}
@@ -4550,9 +4650,12 @@ export default function App() {
                     currentExportFormat={exportFormat}
                     currentAutoExport={autoExport}
                     currentFileNamingRule={fileNamingRule}
+                    currentPanelOrder={panelOrder}
+                    currentCollapsedPanels={collapsedPanels}
                     onLoadPreset={handleLoadPreset}
                     onInstantRunPreset={handleInstantRunPreset}
                     onResetToDefault={handleResetToDefault}
+                    onLoadLayoutPreset={handleLoadLayoutPreset}
                   />
                 );
                 break;
@@ -4667,6 +4770,8 @@ export default function App() {
                   <VisualizationPanel
                     visualizations={visualizations}
                     onChangeVisualizations={setVisualizations}
+                    customChartConfig={customChartConfig}
+                    onChangeCustomChartConfig={setCustomChartConfig}
                   />
                 );
                 break;
@@ -4813,7 +4918,8 @@ export default function App() {
 
         {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
         <section className={(viewMode === "dashboard" && !isPrintFriendlyMode) ? "lg:col-span-7 space-y-6" : "lg:col-span-12 space-y-6"}>
-          {errorMsg && (
+          <div className="w-full max-w-5xl mx-auto space-y-6">
+            {errorMsg && (
             <div className="p-5 rounded-xl bg-red-950/15 border border-red-900/40 flex gap-4 text-red-300 shadow-xl relative overflow-hidden backdrop-blur-sm">
               <div className="absolute top-0 left-0 w-1.5 h-full bg-red-600"></div>
               <ShieldAlert className="w-5.5 h-5.5 shrink-0 text-red-500 mt-0.5" />
@@ -4884,7 +4990,10 @@ export default function App() {
             overdueThreshold={overdueThreshold}
             blockedThreshold={blockedThreshold}
             summarySearchQuery={summarySearchQuery}
+            customChartConfig={customChartConfig}
+            onGenerateReport={() => handleGenerateReport()}
           />
+          </div>
         </section>
       </main>
 
@@ -5120,6 +5229,20 @@ export default function App() {
         addToast={addToast}
         theme={theme}
       />
+
+      {/* User Authentication & 2FA Modal */}
+      <UserAuthModal
+        isOpen={isUserAuthModalOpen}
+        onClose={() => setIsUserAuthModalOpen(false)}
+        currentUser={currentAppUser}
+        onLoginSuccess={handleLoginSuccess}
+        onLogout={handleUserLogout}
+        addToast={addToast}
+        initialMode={userAuthInitialMode}
+      />
+
+      {/* Persistent Keyboard Shortcuts Hint Widget */}
+      <KeyboardHintWidget />
 
       {/* Non-blocking toast notification system */}
       <ToastNotification 

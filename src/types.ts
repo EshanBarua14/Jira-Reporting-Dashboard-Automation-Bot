@@ -168,6 +168,32 @@ export interface RecentExport {
   issuesSnapshot?: JiraIssue[];
 }
 
+export interface DashboardLayoutPreset {
+  id: string;
+  name: string;
+  description?: string;
+  timestamp: string;
+  panelOrder: string[];
+  collapsedPanels: Record<string, boolean>;
+  visualizations: {
+    pieChart: boolean;
+    barChart: boolean;
+    lineChart: boolean;
+    table: boolean;
+    trendAnalysis?: boolean;
+    customChart?: boolean;
+  };
+}
+
+export interface CustomChartConfig {
+  enabled: boolean;
+  chartType: "bar" | "line" | "area";
+  xAxisField: "assignee" | "status" | "type" | "priority" | "sprint";
+  primaryMetric: "issueCount" | "storyPoints" | "timeSpent" | "avgAge";
+  secondaryMetric: "none" | "issueCount" | "storyPoints" | "timeSpent" | "overdueCount";
+  chartTitle: string;
+}
+
 export interface NetworkLog {
   timestamp: string;
   url: string;
@@ -175,6 +201,20 @@ export interface NetworkLog {
   status: number | string;
   statusText: string;
   details?: string;
+}
+
+export interface AppAccountUser {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  avatarUrl?: string;
+  authProvider: "email" | "google" | "phone";
+  is2FAEnabled: boolean;
+  secret2FA?: string;
+  backupCodes?: string[];
+  createdAt: string;
+  lastLoginAt: string;
 }
 
 

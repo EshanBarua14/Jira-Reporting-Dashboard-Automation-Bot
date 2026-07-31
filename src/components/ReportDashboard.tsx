@@ -3,7 +3,8 @@ import {
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
   Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X, FileText,
-  BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw, GripVertical
+  BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw, GripVertical, Play, LayoutGrid,
+  Loader2, Filter
 } from "lucide-react";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
 import { exportToCSV, exportToPDF } from "../utils/export";
@@ -52,6 +53,9 @@ const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
   }
 };
 
+import { CustomChartWidget } from "./CustomChartWidget";
+import { CustomChartConfig } from "../types";
+
 interface ReportDashboardProps {
   report: GeneratedReport | null;
   loading: boolean;
@@ -85,6 +89,8 @@ interface ReportDashboardProps {
   summarySearchQuery?: string;
   onExportPDF?: () => void;
   justGeneratedReport?: boolean;
+  customChartConfig?: CustomChartConfig;
+  onGenerateReport?: () => void;
 }
 
 const containerVariants = {
@@ -199,6 +205,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   summarySearchQuery,
   onExportPDF,
   justGeneratedReport = false,
+  customChartConfig,
+  onGenerateReport,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
@@ -840,6 +848,76 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
   
   // Smart Automation State
   const [isSmartLoading, setIsSmartLoading] = useState(false);
+
+  // Quick Summary & Anomaly Detector States
+  const [isQuickSummaryOpen, setIsQuickSummaryOpen] = useState(false);
+  const [quickSummaryLoading, setQuickSummaryLoading] = useState(false);
+  const [quickSummaryText, setQuickSummaryText] = useState("");
+  const [showOnlyAnomalies, setShowOnlyAnomalies] = useState(false);
+
+  // Anomaly Detector Engine: Calculate Story Point & Aging/Cycle Time Outliers
+  const anomalyDetailsMap = useMemo(() => {
+    const issuesList = report?.issues ?? [];
+    const map = new Map<string, { isAnomaly: boolean; reason: string }>();
+    if (issuesList.length === 0) return map;
+
+    const sps = issuesList.filter((i) => i.storyPoints != null && i.storyPoints > 0).map((i) => i.storyPoints!);
+    const meanSP = sps.length ? sps.reduce((a, b) => a + b, 0) / sps.length : 0;
+    const stdSP = Math.sqrt(sps.reduce((a, b) => a + Math.pow(b - meanSP, 2), 0) / (sps.length || 1));
+    const spOutlierThreshold = Math.max(8, Math.round(meanSP + 1.75 * stdSP));
+
+    issuesList.forEach((issue) => {
+      const isSPOutlier = issue.storyPoints != null && issue.storyPoints >= spOutlierThreshold;
+      const createdTime = issue.created ? new Date(issue.created).getTime() : 0;
+      const daysOld = createdTime ? Math.floor((Date.now() - createdTime) / (1000 * 60 * 60 * 24)) : 0;
+      const isAgingOutlier = issue.mappedStatus !== "Done" && daysOld >= 14;
+
+      if (isSPOutlier && isAgingOutlier) {
+        map.set(issue.key, { isAnomaly: true, reason: `High SP (${issue.storyPoints}) & Aging (${daysOld}d)` });
+      } else if (isSPOutlier) {
+        map.set(issue.key, { isAnomaly: true, reason: `High SP Outlier (${issue.storyPoints} pts)` });
+      } else if (isAgingOutlier) {
+        map.set(issue.key, { isAnomaly: true, reason: `Aging Outlier (${daysOld}d unresolved)` });
+      }
+    });
+
+    return map;
+  }, [report?.issues]);
+
+  const totalAnomaliesCount = useMemo(() => {
+    let count = 0;
+    anomalyDetailsMap.forEach((val) => {
+      if (val.isAnomaly) count++;
+    });
+    return count;
+  }, [anomalyDetailsMap]);
+
+  const handleTriggerQuickSummary = async () => {
+    setIsQuickSummaryOpen(true);
+    setQuickSummaryLoading(true);
+    setQuickSummaryText("");
+    try {
+      const res = await fetch("/api/pmo/quick-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          metrics: report?.metrics,
+          issues: report?.issues,
+          projectsScope: report?.config?.selectedProjects
+        })
+      });
+      const data = await res.json();
+      if (data.summary) {
+        setQuickSummaryText(data.summary);
+      } else {
+        setQuickSummaryText("Could not compile summary at this time.");
+      }
+    } catch (err) {
+      setQuickSummaryText("Failed to generate quick AI summary.");
+    } finally {
+      setQuickSummaryLoading(false);
+    }
+  };
   
   // States for Macro creation
   const [isCreatingPreset, setIsCreatingPreset] = useState(false);
@@ -1741,6 +1819,11 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
       }
     }
 
+    // Anomaly Detector Outliers Filter
+    if (showOnlyAnomalies) {
+      result = result.filter((i) => anomalyDetailsMap.get(i.key)?.isAnomaly);
+    }
+
     // Search query filter (summary, key, assignee)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -1838,14 +1921,101 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
   if (!report) {
     return (
-      <div className="bg-[#1E293B] rounded-xl border border-dashed border-slate-800 p-12 text-center shadow-md flex flex-col items-center justify-center min-h-[350px] bg-slate-900/10">
-        <div className="w-14 h-14 rounded-full bg-blue-950 text-blue-400 flex items-center justify-center mb-4 border border-blue-900/40">
-          <Eye className="w-7 h-7" />
+      <div className="bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6 lg:p-8 space-y-6 shadow-2xl relative overflow-hidden">
+        {/* Glow gradient background */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Header Banner */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3" />
+                OmniSync Intelligence Engine
+              </span>
+              <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+                Ready to Compile
+              </span>
+            </div>
+            <h2 className="text-xl font-black text-white tracking-tight">Executive Dashboard Ready</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">
+              Configure target project scope parameters on the left or launch an immediate 1-click execution below.
+            </p>
+          </div>
+
+          {onGenerateReport && (
+            <button
+              type="button"
+              onClick={onGenerateReport}
+              className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-xs px-6 py-3.5 rounded-xl shadow-xl shadow-blue-500/20 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer uppercase tracking-wider shrink-0"
+            >
+              <Play className="w-4 h-4 fill-current text-current stroke-none" />
+              ⚡ Compile Executive Report Now
+            </button>
+          )}
         </div>
-        <h3 className="text-sm font-bold text-white">No Active Report Generated</h3>
-        <p className="text-xs text-slate-400 mt-1 max-w-sm">
-          Please configure your authentication and scope parameters in the panels on the left, then click the **Generate Report** button above to compile your dashboards.
-        </p>
+
+        {/* System Status & Config Overview Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5 space-y-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Query Scope</span>
+            <p className="text-sm font-black text-slate-200">Active Filters Configured</p>
+            <p className="text-[10px] text-slate-400 font-medium">Projects, Issue Types & Sprints mapped</p>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5 space-y-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Visualizations</span>
+            <p className="text-sm font-black text-blue-400">D3 & Recharts Active</p>
+            <p className="text-[10px] text-slate-400 font-medium">Pie, Bar, Line, Trend & Custom Charts</p>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5 space-y-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Export Engine</span>
+            <p className="text-sm font-black text-emerald-400">PDF, CSV, Sheets & PNG</p>
+            <p className="text-[10px] text-slate-400 font-medium">Automated formatted downloads</p>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5 space-y-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Bulk Actions</span>
+            <p className="text-sm font-black text-purple-400">Multi-Issue Transitions</p>
+            <p className="text-[10px] text-slate-400 font-medium">Checkbox column & bulk status updates</p>
+          </div>
+        </div>
+
+        {/* Interactive Feature Highlights */}
+        <div className="p-5 rounded-xl bg-slate-950/30 border border-white/5 space-y-3">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <LayoutGrid className="w-4 h-4 text-blue-400" />
+            Dashboard Layout & Performance Capabilities
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-white/5 space-y-1">
+              <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                Custom Chart Builder
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Map custom Jira metrics against multi-series Bar, Line, and Area charts with dual-axis scaling.
+              </p>
+            </div>
+            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-white/5 space-y-1">
+              <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-400" />
+                Dashboard Layout Presets
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Save and load custom panel order and card visibility arrangements in 1 click.
+              </p>
+            </div>
+            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-white/5 space-y-1">
+              <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                Column Sorting & Filtering
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Click any column header to sort ascending or descending with instantaneous pagination update.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -2419,7 +2589,18 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           )}
         </div>
 
-        <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end relative shrink-0">
+        <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end relative shrink-0 flex-wrap">
+          {/* Quick Summary AI Button */}
+          <button
+            onClick={handleTriggerQuickSummary}
+            disabled={quickSummaryLoading}
+            className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-[11px] px-4 py-2 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider shadow-lg shadow-blue-500/20 cursor-pointer border border-white/10 shrink-0"
+            title="Trigger instant AI-powered 3-sentence summary of current report using Gemini"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-amber-300 ${quickSummaryLoading ? "animate-spin" : ""}`} />
+            <span>{quickSummaryLoading ? "Analyzing..." : "Quick Summary"}</span>
+          </button>
+
           {/* Refresh Data Button */}
           {onRefreshData && (
             <button
@@ -2556,6 +2737,97 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
       <div id="dashboard-visuals-container" className="space-y-6">
         
+        {/* Quick AI Summary Animated Banner */}
+        <AnimatePresence>
+          {isQuickSummaryOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -15, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -15, scale: 0.98 }}
+              transition={{ duration: 0.25 }}
+              className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/80 to-slate-900 border border-blue-500/30 shadow-2xl relative overflow-hidden text-slate-100"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md">
+                    <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white flex items-center gap-2 tracking-tight">
+                      Gemini AI Executive Quick Summary
+                    </h3>
+                    <p className="text-[10px] text-blue-300 font-mono">3-Sentence Instant PMO Synthesis</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (quickSummaryText) {
+                        navigator.clipboard.writeText(quickSummaryText);
+                        addToast?.("Copied to Clipboard", "AI Quick Summary text copied.", "success", 2000);
+                      }
+                    }}
+                    disabled={!quickSummaryText || quickSummaryLoading}
+                    className="p-1.5 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors border border-white/10"
+                    title="Copy AI summary"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-blue-400" /> Copy Text
+                  </button>
+                  <button
+                    onClick={() => setIsQuickSummaryOpen(false)}
+                    className="p-1.5 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg cursor-pointer transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {quickSummaryLoading ? (
+                <div className="flex items-center gap-3 py-4 text-xs text-blue-300 font-mono animate-pulse">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                  Gemini 3.6 Flash is analyzing current report metrics and synthesizing a concise 3-sentence summary...
+                </div>
+              ) : (
+                <div className="text-xs sm:text-sm text-slate-200 leading-relaxed font-medium bg-slate-950/50 p-4 rounded-xl border border-white/5 shadow-inner">
+                  {quickSummaryText}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Anomaly Detector Alert Banner */}
+        {totalAnomaliesCount > 0 && (
+          <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-300 backdrop-blur-sm">
+            <div className="flex items-center gap-2.5 min-w-0 text-amber-200">
+              <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400 animate-bounce" />
+              </div>
+              <div>
+                <div className="font-bold text-white flex items-center gap-2">
+                  <span>Anomaly Detector:</span>
+                  <span className="text-amber-400 font-extrabold">{totalAnomaliesCount} Outlier Issues Flagged</span>
+                </div>
+                <div className="text-[10px] text-slate-300 font-medium mt-0.5">
+                  Automated scan detected tickets exceeding story point standard deviation or remaining in active development past 14 days.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 self-end sm:self-center shrink-0">
+              <button
+                onClick={() => setShowOnlyAnomalies(!showOnlyAnomalies)}
+                className={`text-[10px] uppercase font-black tracking-wider px-3.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border ${
+                  showOnlyAnomalies
+                    ? "bg-amber-400 text-slate-950 font-black border-amber-300 ring-2 ring-amber-400/40"
+                    : "bg-amber-950/80 hover:bg-amber-900 text-amber-200 border-amber-500/40 hover:border-amber-400"
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5" /> {showOnlyAnomalies ? "Show All Issues" : "Filter Outliers Only"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Active Filter Clear Ribbon */}
         {activeMetricFilter && (
           <div className="bg-blue-950/20 border border-blue-900/30 px-4 py-2.5 rounded-xl flex items-center justify-between">
@@ -3670,6 +3942,11 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         {/* 3.5. 30-Day Trend Analysis Visualization */}
         {safeConfig.visualizations.trendAnalysis !== false && (
           <TrendAnalysisChart issues={issues} />
+        )}
+
+        {/* 3.6. Custom Multi-Series Metric Chart Builder Widget */}
+        {(safeConfig.visualizations?.customChart || customChartConfig?.enabled) && (
+          <CustomChartWidget issues={issues} config={customChartConfig} />
         )}
  
         {/* 4. Issue Timeline Progress Tracker Widget */}
@@ -5057,6 +5334,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                               );
                             }
                             if (col.id === "summary") {
+                              const anomalyInfo = anomalyDetailsMap.get(issue.key);
                               const ts = issue.timeSpent || 0;
                               const oe = issue.originalEstimate || 0;
                               const hasOverrun = ts > oe && oe > 0;
@@ -5098,6 +5376,15 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                         )}
                                       </span>
                                       {riskBadge}
+                                      {anomalyInfo?.isAnomaly && (
+                                        <span
+                                          className="shrink-0 bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-black text-[8.5px] uppercase tracking-wider flex items-center gap-1"
+                                          title={`Anomaly Flag: ${anomalyInfo.reason}`}
+                                        >
+                                          <AlertTriangle className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                                          <span>{anomalyInfo.reason}</span>
+                                        </span>
+                                      )}
                                     </div>
                                     {renderCellCopyButton(String(val), `${issue.key}-summary`)}
                                   </div>

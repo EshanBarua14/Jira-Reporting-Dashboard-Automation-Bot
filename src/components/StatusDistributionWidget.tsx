@@ -6,6 +6,7 @@ import { BarChart3, Layers, Filter, Info } from "lucide-react";
 interface StatusDistributionWidgetProps {
   issues: JiraIssue[];
   theme?: "dark" | "light";
+  onDrillDownFilter?: (filterType: "status" | "assignee" | "priority" | "project", value: string) => void;
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -21,7 +22,8 @@ const STATUSES = ["To Do", "In Progress", "Done", "Blocked"];
 
 export const StatusDistributionWidget: React.FC<StatusDistributionWidgetProps> = ({
   issues,
-  theme = "dark"
+  theme = "dark",
+  onDrillDownFilter,
 }) => {
   const isLight = theme === "light";
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string | null>(null);
@@ -168,7 +170,16 @@ export const StatusDistributionWidget: React.FC<StatusDistributionWidgetProps> =
       ) : (
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+              onClick={(state) => {
+                if (state && state.activeLabel && onDrillDownFilter) {
+                  onDrillDownFilter("status", state.activeLabel);
+                }
+              }}
+              className="cursor-pointer"
+            >
               <CartesianGrid strokeDasharray="3 3" stroke={isLight ? "#e2e8f0" : "#1e293b"} />
               <XAxis
                 dataKey="status"

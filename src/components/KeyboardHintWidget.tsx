@@ -99,37 +99,18 @@ export const KeyboardHintWidget: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         className="pointer-events-auto flex items-center gap-2 bg-slate-900/90 hover:bg-slate-900 border border-white/15 hover:border-blue-500/40 rounded-full px-3 py-1.5 shadow-2xl backdrop-blur-md text-xs text-slate-300 transition-all duration-200"
       >
+        {/* Explicit 'Show Shortcuts' Floating Trigger Button */}
         <button
+          type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1.5 hover:text-white cursor-pointer group"
-          title="Click to view all keyboard shortcuts"
+          aria-label="Show Shortcuts Cheat Sheet"
+          aria-expanded={isOpen}
+          className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-full shadow-2xl flex items-center gap-2 border border-white/20 transition-all hover:scale-105 active:scale-95 cursor-pointer"
         >
-          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-          <Keyboard className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
-          <span className="font-semibold text-slate-400 group-hover:text-slate-200 text-[11px]">Hint:</span>
+          <Keyboard className="w-4 h-4 text-white animate-pulse" aria-hidden="true" />
+          <span>Show Shortcuts</span>
+          <span className="bg-black/30 text-[10px] font-mono px-1.5 py-0.5 rounded border border-white/20">Ctrl+/</span>
         </button>
-
-        {/* Animated Shortcut Display */}
-        <div
-          onClick={() => setIsOpen(!isOpen)}
-          className="relative h-5 overflow-hidden w-44 cursor-pointer flex items-center"
-        >
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentShortcut.keyCombo}
-              initial={{ y: 12, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -12, opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              className="absolute inset-0 flex items-center justify-between gap-1 text-[11px]"
-            >
-              <span className="truncate text-slate-200 font-medium">{currentShortcut.label}</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-950 border border-white/20 font-mono text-[9px] text-blue-300 shrink-0 shadow-sm">
-                {currentShortcut.keyCombo}
-              </kbd>
-            </motion.div>
-          </AnimatePresence>
-        </div>
 
         {/* Next / Prev Controls */}
         <div className="flex items-center gap-0.5 border-l border-white/10 pl-1.5 ml-0.5">

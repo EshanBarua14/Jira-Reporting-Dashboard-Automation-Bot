@@ -71,7 +71,7 @@ export interface PresetsPanelProps {
   onLoadLayoutPreset?: (preset: DashboardLayoutPreset) => void;
 }
 
-const DEFAULT_LAYOUT_PRESETS: DashboardLayoutPreset[] = [
+export const DEFAULT_LAYOUT_PRESETS: DashboardLayoutPreset[] = [
   {
     id: "layout-executive",
     name: "Executive Overview",

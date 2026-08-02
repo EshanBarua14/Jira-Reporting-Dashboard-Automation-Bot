@@ -11,6 +11,56 @@ body {
   color: #cbd5e1;
 }
 
+/* Bento Grid System Utilities */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1.25rem; /* 20px */
+  grid-auto-flow: dense;
+}
+
+.bento-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.75rem; /* 12px */
+  grid-auto-flow: dense;
+}
+
+.bento-card {
+  background-color: rgba(30, 41, 59, 0.85);
+  border-radius: 1rem; /* 16px */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.bento-card:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 20px 35px -10px rgba(0, 0, 0, 0.4), 0 0 20px 0 rgba(99, 102, 241, 0.12);
+}
+
+.bento-card-compact {
+  padding: 0.875rem !important; /* 14px */
+}
+
+/* Compact Mode Spacing Utility Overrides */
+.compact-mode .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.875rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.875rem * var(--tw-space-y-reverse));
+}
+
+.compact-mode .p-5, .compact-mode .p-6 {
+  padding: 1rem !important;
+}
+
+.compact-mode .gap-5, .compact-mode .gap-6 {
+  gap: 0.75rem !important;
+}
+
 /* Premium Glassmorphism Light Theme Overrides */
 .light-theme {
   background: radial-gradient(ellipse at 50% -20%, rgba(59, 130, 246, 0.08), rgba(248, 250, 252, 0.95)) !important;

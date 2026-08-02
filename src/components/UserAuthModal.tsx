@@ -25,7 +25,13 @@ import {
   Layers,
   LockKeyhole,
   Zap,
-  ChevronRight
+  ChevronRight,
+  Trash2,
+  Github,
+  Globe,
+  ExternalLink,
+  ShieldOff,
+  Database
 } from "lucide-react";
 import { AppAccountUser } from "../types";
 
@@ -64,7 +70,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
   initialMode = "login",
 }) => {
   const [view, setView] = useState<
-    "login" | "register" | "phone" | "forgot" | "google_popup" | "2fa_verify" | "account"
+    "login" | "register" | "phone" | "forgot" | "google_popup" | "github_popup" | "ms_popup" | "2fa_verify" | "account"
   >(initialMode);
 
   // Form states
@@ -86,10 +92,15 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
   const [otpCode, setOtpCode] = useState(["", "", "", "", "", ""]);
   const [otpCountdown, setOtpCountdown] = useState(0);
 
-  // Forgot Password state
+  // Forgot Password state & Email Recovery Link
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
   const [resetCode, setResetCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [recoveryToken, setRecoveryToken] = useState("");
+
+  // Account Management & Deletion / Data Wipe state
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
 
   // 2FA MFA state
   const [pendingUserFor2FA, setPendingUserFor2FA] = useState<AppAccountUser | null>(null);
@@ -330,7 +341,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
     }, 800);
   };
 
-  // 4. Handle Google OAuth Simulation
+  // 4. Handle Google, GitHub, and Microsoft OAuth Simulations
   const handleGoogleAuthSelect = (selectedEmail: string, selectedName: string) => {
     setLoading(true);
     setTimeout(() => {
@@ -357,7 +368,59 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
     }, 700);
   };
 
-  // 5. Handle Forgot Password
+  const handleGitHubAuthSelect = (selectedEmail: string, selectedName: string) => {
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      const githubUser: AppAccountUser = {
+        id: `usr_github_${Date.now()}`,
+        name: selectedName,
+        email: selectedEmail,
+        avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedEmail}`,
+        authProvider: "github" as any,
+        is2FAEnabled: false,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+
+      onLoginSuccess(githubUser);
+      addToast?.(
+        "GitHub OAuth Verified",
+        `Authenticated via GitHub Enterprise for ${selectedEmail}`,
+        "success",
+        3500
+      );
+      onClose();
+    }, 700);
+  };
+
+  const handleMicrosoftAuthSelect = (selectedEmail: string, selectedName: string) => {
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      const msUser: AppAccountUser = {
+        id: `usr_ms_${Date.now()}`,
+        name: selectedName,
+        email: selectedEmail,
+        avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedEmail}`,
+        authProvider: "microsoft" as any,
+        is2FAEnabled: false,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+
+      onLoginSuccess(msUser);
+      addToast?.(
+        "Microsoft Azure AD Authenticated",
+        `Signed in via Microsoft Enterprise SSO (${selectedEmail})`,
+        "success",
+        3500
+      );
+      onClose();
+    }, 700);
+  };
+
+  // 5. Handle Forgot Password Email Recovery Flow
   const handleRequestPasswordReset = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !email.includes("@")) {
@@ -369,12 +432,14 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
 
     setTimeout(() => {
       setLoading(false);
+      const token = `OMNI_${Math.floor(100000 + Math.random() * 900000)}_RESET`;
+      setRecoveryToken(token);
       setForgotStep(2);
       addToast?.(
-        "Reset Code Sent",
-        `Password reset code sent to ${email}. (Use code: 888999)`,
+        "Password Recovery Email Sent",
+        `Recovery token link dispatched to ${email}. Token: ${token} (Code: 888999)`,
         "info",
-        5000
+        6000
       );
     }, 800);
   };
@@ -382,7 +447,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
   const handleConfirmPasswordReset = (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetCode.trim()) {
-      setError("Please enter the reset code.");
+      setError("Please enter the reset code or click the temporary token link.");
       return;
     }
     if (newPassword.length < 6) {
@@ -396,11 +461,41 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
       setForgotStep(3);
       addToast?.(
         "Password Reset Complete",
-        "Your password has been updated. You can now log in.",
+        "Your password has been updated successfully. You can now log in.",
         "success",
         4000
       );
     }, 800);
+  };
+
+  // 6. Handle Account Deletion & Complete Data Wipe
+  const handlePerformAccountDeletionAndWipe = () => {
+    if (deleteConfirmInput.trim() !== "DELETE") {
+      setError("Please type 'DELETE' in uppercase to confirm account deletion.");
+      return;
+    }
+
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      // Remove all local user records and active session storage
+      localStorage.removeItem("omnisync_current_app_user");
+      localStorage.removeItem("omnisync_app_users");
+      localStorage.removeItem("jira_active_user");
+      localStorage.removeItem("jira_is_connected");
+      localStorage.removeItem("jira_session_id");
+
+      onLogout();
+      setIsDeleteConfirmOpen(false);
+      setDeleteConfirmInput("");
+      addToast?.(
+        "Account & Data Wiped",
+        "Your account profile and all local data caches have been permanently deleted.",
+        "warning",
+        5000
+      );
+      onClose();
+    }, 900);
   };
 
   // 6. Handle 2FA MFA Verification Login
@@ -773,7 +868,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                 </div>
 
                 {/* Social Auth Buttons */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setView("google_popup")}
@@ -797,7 +892,30 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                       />
                     </svg>
-                    Google OAuth
+                    Google
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setView("github_popup")}
+                    className="bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-200 hover:text-white text-xs font-bold py-2.5 rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer group"
+                  >
+                    <Github className="w-4 h-4 text-purple-400" />
+                    GitHub
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setView("ms_popup")}
+                    className="bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-200 hover:text-white text-xs font-bold py-2.5 rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer group"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 23 23">
+                      <path fill="#f35325" d="M1 1h10v10H1z" />
+                      <path fill="#81bc06" d="M12 1h10v10H12z" />
+                      <path fill="#05a6f0" d="M1 12h10v10H1z" />
+                      <path fill="#ffba08" d="M12 12h10v10H12z" />
+                    </svg>
+                    Microsoft
                   </button>
 
                   <button
@@ -1187,7 +1305,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                       <span className="text-xs font-black text-white">Google Accounts OAuth 2.0</span>
                     </div>
                     <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      Sandbox Provider
+                      Google Provider
                     </span>
                   </div>
 
@@ -1244,6 +1362,163 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
             )}
 
             {/* ========================================================================= */}
+            {/* VIEW: GITHUB OAUTH FLOW SIMULATION */}
+            {/* ========================================================================= */}
+            {view === "github_popup" && !currentUser && (
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => setView("login")}
+                  className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Back to Login Options
+                </button>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <Github className="w-5 h-5 text-purple-400" />
+                      <span className="text-xs font-black text-white">GitHub Enterprise OAuth</span>
+                    </div>
+                    <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                      GitHub Provider
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400">
+                    Authorize <span className="text-white font-bold">OmniSync Suite</span> to access your GitHub user identity:
+                  </p>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => handleGitHubAuthSelect("barua.eshan@github.com", "Eshan Barua (GitHub)")}
+                      className="w-full p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/5 text-left flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-purple-600 text-white font-black text-xs flex items-center justify-center">
+                          EB
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-white group-hover:text-purple-400 transition-colors">
+                            Eshan Barua
+                          </p>
+                          <p className="text-[10px] text-slate-400">barua.eshan@github.com</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleGitHubAuthSelect("dev.lead@github.com", "Senior Dev Lead")}
+                      className="w-full p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/5 text-left flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-black text-xs flex items-center justify-center">
+                          SL
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-white group-hover:text-purple-400 transition-colors">
+                            Senior Dev Lead
+                          </p>
+                          <p className="text-[10px] text-slate-400">dev.lead@github.com</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
+                    </button>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 text-[10px] text-slate-500 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    <span>OAuth scopes requested: read:user, user:email.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================================= */}
+            {/* VIEW: MICROSOFT AZURE AD OAUTH FLOW SIMULATION */}
+            {/* ========================================================================= */}
+            {view === "ms_popup" && !currentUser && (
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => setView("login")}
+                  className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Back to Login Options
+                </button>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5" viewBox="0 0 23 23">
+                        <path fill="#f35325" d="M1 1h10v10H1z" />
+                        <path fill="#81bc06" d="M12 1h10v10H12z" />
+                        <path fill="#05a6f0" d="M1 12h10v10H1z" />
+                        <path fill="#ffba08" d="M12 12h10v10H12z" />
+                      </svg>
+                      <span className="text-xs font-black text-white">Microsoft Azure AD SSO</span>
+                    </div>
+                    <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                      Microsoft Provider
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400">
+                    Sign in with your Microsoft 365 or Azure AD work account:
+                  </p>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => handleMicrosoftAuthSelect("eshan.barua@corporate.microsoft.com", "Eshan Barua (Enterprise)")}
+                      className="w-full p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/5 text-left flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-cyan-600 text-white font-black text-xs flex items-center justify-center">
+                          MS
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-white group-hover:text-cyan-400 transition-colors">
+                            Eshan Barua (Enterprise)
+                          </p>
+                          <p className="text-[10px] text-slate-400">eshan.barua@corporate.microsoft.com</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMicrosoftAuthSelect("pmo.director@enterprise.com", "PMO Director")}
+                      className="w-full p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/5 text-left flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-blue-700 text-white font-black text-xs flex items-center justify-center">
+                          PM
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-white group-hover:text-cyan-400 transition-colors">
+                            PMO Director
+                          </p>
+                          <p className="text-[10px] text-slate-400">pmo.director@enterprise.com</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
+                    </button>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 text-[10px] text-slate-500 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <span>Azure AD Single Sign-On active. Validated via enterprise directory.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================================= */}
             {/* VIEW: FORGOT PASSWORD */}
             {/* ========================================================================= */}
             {view === "forgot" && !currentUser && (
@@ -1259,7 +1534,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                 {forgotStep === 1 && (
                   <form onSubmit={handleRequestPasswordReset} className="space-y-4">
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      Enter your account email address. We will dispatch a 6-digit password recovery code.
+                      Enter your account email address. We will dispatch a temporary recovery token and 6-digit password verification code.
                     </p>
 
                     <div className="space-y-1.5">
@@ -1283,16 +1558,39 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                       className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs py-3 rounded-2xl shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer uppercase tracking-wider"
                     >
                       {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                      Send Reset Verification Code
+                      Send Reset Token & Code Link
                     </button>
                   </form>
                 )}
 
                 {forgotStep === 2 && (
                   <form onSubmit={handleConfirmPasswordReset} className="space-y-3.5">
-                    <p className="text-xs text-slate-400">
-                      Enter the verification code dispatched to <span className="text-white font-bold">{email}</span> and pick a new password.
-                    </p>
+                    <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-extrabold text-blue-300 flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5" /> Simulated Email Inbox Dispatch
+                        </span>
+                        <span className="text-[9px] bg-blue-500/20 text-blue-400 font-mono px-2 py-0.5 rounded font-bold">
+                          Token Dispatched
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-300">
+                        Verification link for <span className="text-white font-bold">{email || "your email"}</span>:
+                      </p>
+                      <div className="bg-slate-950 p-2 rounded-lg border border-white/10 flex items-center justify-between text-[10px] font-mono text-emerald-400 overflow-x-auto">
+                        <span className="truncate">https://omnisync.io/reset-password?token={recoveryToken || "OMNI_RESET_98231"}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetCode("888999");
+                            addToast?.("Token Clicked", "Simulated token link opened and code 888999 filled!", "success", 2500);
+                          }}
+                          className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-sans font-bold px-2 py-1 rounded ml-2 shrink-0 cursor-pointer flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Auto-fill Code (888999)
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-300">Verification Code</label>
@@ -1612,6 +1910,73 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                       >
                         Disable 2FA Protection
                       </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Account Management & Data Wipe Section */}
+                <div className="p-4 rounded-2xl bg-red-950/20 border border-red-500/20 space-y-3">
+                  <div className="flex items-center justify-between border-b border-red-500/10 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <Trash2 className="w-4 h-4 text-red-400" />
+                      <div>
+                        <h4 className="text-xs font-black text-white">Account Deletion & Data Wipe</h4>
+                        <p className="text-[10px] text-red-300/80">Permanently remove profile and scrub local session data</p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded">
+                      Irreversible
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Initiating an account wipe will purge your personal credentials, disconnect OAuth tokens, and erase local Jira workspace preferences permanently.
+                  </p>
+
+                  {!isDeleteConfirmOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeleteConfirmOpen(true)}
+                      className="w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-extrabold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <ShieldOff className="w-4 h-4" /> Request Secure Account & Data Erasure
+                    </button>
+                  ) : (
+                    <div className="space-y-3 bg-red-950/40 p-3.5 rounded-xl border border-red-500/30">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-red-200">
+                          Type <span className="font-mono text-white font-extrabold bg-red-500/20 px-1.5 py-0.5 rounded">DELETE</span> to confirm:
+                        </label>
+                        <input
+                          type="text"
+                          value={deleteConfirmInput}
+                          onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                          placeholder="DELETE"
+                          className="w-full bg-slate-950 border border-red-500/30 rounded-xl py-2 px-3 text-xs text-white placeholder-slate-600 font-mono font-extrabold uppercase text-center focus:outline-none focus:border-red-500"
+                        />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handlePerformAccountDeletionAndWipe}
+                          disabled={loading || deleteConfirmInput.trim() !== "DELETE"}
+                          className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-black text-xs py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          Permanently Wipe Account
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsDeleteConfirmOpen(false);
+                            setDeleteConfirmInput("");
+                          }}
+                          className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

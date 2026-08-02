@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { 
   Sparkles, AlertCircle, AlertTriangle, User, UserPlus, UserCheck, Calendar, Tag, CheckCircle2, 
   Search, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Download, FileJson, 
   Printer, TrendingUp, Users, CheckSquare, Clock, FileSpreadsheet, Eye, ArrowUpRight, ArrowDownRight, X, FileText,
   BellOff, Copy, Check, Share2, Flag, ArrowRight, MessageSquare, RotateCcw, RotateCw, GripVertical, Play, LayoutGrid,
-  Loader2, Filter
+  Loader2, Filter, HelpCircle, FolderDown, Info, Zap, Maximize2, Minimize2, Grid, Wand2, Sliders
 } from "lucide-react";
+import { useBentoAutoLayout, BentoCardConfig } from "../hooks/useBentoAutoLayout";
 import { JiraIssue, ReportConfig, ExecutiveSummary, GeneratedReport, ColumnDefinition, MetricDefinition } from "../types";
 import { exportToCSV, exportToPDF } from "../utils/export";
 import { motion, AnimatePresence } from "motion/react";
@@ -55,6 +56,8 @@ const METRIC_FORMULAS: Record<string, { formula: string; source: string }> = {
 
 import { CustomChartWidget } from "./CustomChartWidget";
 import { CustomChartConfig } from "../types";
+import { detectJiraAnomalies, AnomalyItem } from "../utils/anomaly";
+import { JqlVisualBuilder } from "./JqlVisualBuilder";
 
 interface ReportDashboardProps {
   report: GeneratedReport | null;
@@ -91,6 +94,8 @@ interface ReportDashboardProps {
   justGeneratedReport?: boolean;
   customChartConfig?: CustomChartConfig;
   onGenerateReport?: () => void;
+  onLoadLayoutPreset?: (presetName: string) => void;
+  userLayoutPresets?: Array<{ id: string; name: string }>;
 }
 
 const containerVariants = {
@@ -207,6 +212,8 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   justGeneratedReport = false,
   customChartConfig,
   onGenerateReport,
+  onLoadLayoutPreset,
+  userLayoutPresets,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [tableQuickFilter, setTableQuickFilter] = useState<"All" | "Overdue" | "Unassigned" | "Blocked">("All");
@@ -217,6 +224,74 @@ export const ReportDashboard: React.FC<ReportDashboardProps> = ({
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [selectedIssueForModal, setSelectedIssueForModal] = useState<JiraIssue | null>(null);
   const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
+
+  // Anomaly Modal & JQL Builder States
+  const [isAnomalyModalOpen, setIsAnomalyModalOpen] = useState(false);
+  const [showJqlBuilderCard, setShowJqlBuilderCard] = useState(false);
+
+  // Compact Mode & Auto-Adjust Layout States
+  const [compactMode, setCompactMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("jira_compact_mode") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [isAutoAdjustActive, setIsAutoAdjustActive] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("jira_auto_adjust_active") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleCompactMode = useCallback(() => {
+    const nextCompact = !compactMode;
+    setCompactMode(nextCompact);
+    localStorage.setItem("jira_compact_mode", String(nextCompact));
+    addToast?.(
+      nextCompact ? "Compact Mode Enabled" : "Compact Mode Disabled",
+      nextCompact ? "Gaps auto-filled with tighter padding." : "Standard card spacing restored.",
+      "info",
+      2000
+    );
+  }, [compactMode, addToast]);
+
+  const handleAutoAdjustLayout = useCallback(() => {
+    const nextAutoAdjust = !isAutoAdjustActive;
+    setIsAutoAdjustActive(nextAutoAdjust);
+    localStorage.setItem("jira_auto_adjust_active", String(nextAutoAdjust));
+
+    if (nextAutoAdjust) {
+      addToast?.(
+        "Auto-Adjust Layout Activated",
+        "Layout recalculation service evaluated metrics & active anomalies. Re-ordered dashboard cards by data density.",
+        "success",
+        3000
+      );
+    } else {
+      addToast?.(
+        "Auto-Adjust Layout Disabled",
+        "Restored default card arrangement.",
+        "info",
+        2000
+      );
+    }
+  }, [isAutoAdjustActive, addToast]);
+
+  const reportIssues = useMemo(() => report?.issues || [], [report?.issues]);
+  const detectedAnomalies = useMemo(() => detectJiraAnomalies(reportIssues, overdueThreshold), [reportIssues, overdueThreshold]);
+
+  const handleDrillDownFilter = (filterType: "status" | "assignee" | "priority" | "project", value: string) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
+    addToast?.("Drill-Down Filter Applied", `Filtered issue list by ${filterType}: "${value}"`, "info", 3000);
+    const target = document.getElementById("issue-list-grid") || document.getElementById("dashboard-table");
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   // Column reordering & row animation state
   const [customColumnOrder, setCustomColumnOrder] = useState<string[]>(() => {
@@ -849,11 +924,64 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
   // Smart Automation State
   const [isSmartLoading, setIsSmartLoading] = useState(false);
 
-  // Quick Summary & Anomaly Detector States
+  // Quick Summary, Anomaly Detector & Header Help States
   const [isQuickSummaryOpen, setIsQuickSummaryOpen] = useState(false);
   const [quickSummaryLoading, setQuickSummaryLoading] = useState(false);
   const [quickSummaryText, setQuickSummaryText] = useState("");
   const [showOnlyAnomalies, setShowOnlyAnomalies] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+
+  // Global 'Export All Panels' Handler
+  const handleExportAllPanels = () => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    const exportBundle = {
+      exportTimestamp: new Date().toISOString(),
+      reportTitle: report?.config?.title || "OmniSync PMO Aggregate Dashboard Export",
+      selectedProjects: report?.config?.selectedProjects || [],
+      executiveMetrics: report?.metrics || {},
+      totalFilteredIssues: filteredIssues.length,
+      outliersCount: totalAnomaliesCount,
+      statusDistribution: Object.entries(
+        filteredIssues.reduce((acc, issue) => {
+          const status = issue.mappedStatus || issue.status || "To Do";
+          acc[status] = (acc[status] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>)
+      ).map(([status, count]) => ({ status, count })),
+      issuesDataset: filteredIssues.map((i) => ({
+        key: i.key,
+        summary: i.summary,
+        status: i.status,
+        mappedStatus: i.mappedStatus,
+        type: i.type,
+        priority: i.priority,
+        assignee: i.assignee || "Unassigned",
+        reporter: i.reporter || "N/A",
+        storyPoints: i.storyPoints ?? null,
+        created: i.created,
+        updated: i.updated,
+        anomalyFlag: anomalyDetailsMap.get(i.key)?.reason || null
+      }))
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportBundle, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `OmniSync_All_Panels_Export_${dateStr}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+
+    if (onRecordExport) {
+      onRecordExport("JSON", `OmniSync_All_Panels_Export_${dateStr}.json`);
+    }
+    addToast?.(
+      "All Panels Exported",
+      `Successfully exported aggregate data bundle for ${filteredIssues.length} issues and all dashboard widgets to JSON.`,
+      "success",
+      3500
+    );
+  };
 
   // Anomaly Detector Engine: Calculate Story Point & Aging/Cycle Time Outliers
   const anomalyDetailsMap = useMemo(() => {
@@ -1880,7 +2008,6 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
 
   const totalPages = Math.ceil(filteredIssues.length / rowsPerPage) || 1;
 
-  const reportIssues = report?.issues ?? [];
   const originalMetrics = report?.metrics;
 
   const metrics = useMemo(() => {
@@ -2667,6 +2794,108 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
             <span>Download as PDF</span>
           </button>
 
+          {/* Global 'Export All Panels' Button */}
+          <button
+            onClick={handleExportAllPanels}
+            className="bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-emerald-200 border border-emerald-500/40 hover:border-emerald-400 font-extrabold text-[11px] px-4 py-2 rounded-xl transition-all flex items-center gap-2 uppercase tracking-wider cursor-pointer shadow-md shadow-emerald-500/10"
+            title="Export complete aggregate dataset across all visual dashboard panels to JSON"
+          >
+            <FolderDown className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Export All Panels</span>
+          </button>
+
+          {/* Anomaly Detection Notification Badge */}
+          {detectedAnomalies.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsAnomalyModalOpen(true)}
+              className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 font-extrabold text-[11px] px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shadow-md shadow-amber-500/10 animate-pulse hover:animate-none shrink-0"
+              title={`View ${detectedAnomalies.length} detected workflow & cycle time anomalies`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              <span>{detectedAnomalies.length} Anomalies</span>
+            </button>
+          )}
+
+          {/* Visual JQL Builder Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowJqlBuilderCard(!showJqlBuilderCard)}
+            className={`border font-extrabold text-[11px] px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shadow-md shrink-0 ${
+              showJqlBuilderCard
+                ? "bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/40"
+                : "bg-slate-950 border-white/10 text-slate-200 hover:text-white hover:border-slate-700"
+            }`}
+            title="Toggle Visual JQL Drag-and-Drop Query Builder"
+          >
+            <Filter className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{showJqlBuilderCard ? "Hide JQL Builder" : "JQL Visual Builder"}</span>
+          </button>
+
+          {/* Auto-Adjust Layout Recalculation Service Toggle */}
+          <button
+            type="button"
+            onClick={handleAutoAdjustLayout}
+            className={`border font-extrabold text-[11px] px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shadow-md shrink-0 ${
+              isAutoAdjustActive
+                ? "bg-gradient-to-r from-amber-600 to-orange-600 text-white border-amber-400 ring-2 ring-amber-400/40 shadow-amber-500/20"
+                : "bg-slate-950 border-white/10 text-slate-200 hover:text-white hover:border-amber-500/50"
+            }`}
+            title="Auto-Adjust Layout: Triggers layout recalculation service to re-sort cards by data intensity and active risk factors"
+          >
+            <Zap className={`w-3.5 h-3.5 ${isAutoAdjustActive ? "text-amber-200 animate-pulse" : "text-amber-400"}`} />
+            <span>{isAutoAdjustActive ? "Auto-Adjust On" : "Auto-Adjust Layout"}</span>
+          </button>
+
+          {/* Compact Mode Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleCompactMode}
+            className={`border font-extrabold text-[11px] px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer shadow-md shrink-0 ${
+              compactMode
+                ? "bg-gradient-to-r from-indigo-600 to-blue-600 text-white border-blue-400 ring-2 ring-blue-400/40 shadow-blue-500/20"
+                : "bg-slate-950 border-white/10 text-slate-200 hover:text-white hover:border-blue-500/50"
+            }`}
+            title="Toggle Compact Mode: Eliminates empty gaps and auto-fits dashboard cards across grid columns"
+          >
+            {compactMode ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-blue-300" />
+                <span>Compact Mode</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-blue-400" />
+                <span>Standard Layout</span>
+              </>
+            )}
+          </button>
+
+          {/* Dashboard Layout Presets Dropdown Selector */}
+          {onLoadLayoutPreset && (
+            <div className="relative shrink-0">
+              <select
+                id="dashboard-preset-layout-selector"
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onLoadLayoutPreset(e.target.value);
+                    addToast?.("Layout Preset Switched", `Applied layout preset "${e.target.value}"`, "success", 2500);
+                  }
+                }}
+                className="bg-slate-950 border border-white/10 hover:border-slate-700 text-slate-200 text-[11px] font-extrabold rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer uppercase tracking-wider"
+                defaultValue=""
+              >
+                <option value="" disabled>Layout Preset...</option>
+                <option value="Executive Overview">Executive Overview</option>
+                <option value="Developer Velocity">Developer Velocity</option>
+                <option value="Compact Review Mode">Compact Review Mode</option>
+                {userLayoutPresets?.map((p) => (
+                  <option key={p.id} value={p.name}>Preset: {p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Direct Export Dropdown Container */}
           <div className="relative">
             <button
@@ -2685,8 +2914,18 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                   className="fixed inset-0 z-40" 
                   onClick={() => setIsExportDropdownOpen(false)} 
                 />
-                <div className="absolute right-0 mt-2 w-48 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
                   <div className="py-1.5">
+                    <button
+                      onClick={() => {
+                        setIsExportDropdownOpen(false);
+                        handleExportAllPanels();
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-emerald-300 hover:text-white hover:bg-emerald-950/50 font-bold flex items-center gap-2.5 transition-colors border-b border-white/5"
+                    >
+                      <FolderDown className="w-4 h-4 text-emerald-400" />
+                      <span>Export All Panels (JSON)</span>
+                    </button>
                     <button
                       onClick={() => {
                         setIsExportDropdownOpen(false);
@@ -2732,10 +2971,169 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </>
             )}
           </div>
+
+          {/* Header Help Icon & Shortcuts Tooltip Popover */}
+          <div className="relative">
+            <button
+              onClick={() => setIsHelpOpen(!isHelpOpen)}
+              className="p-2 bg-slate-950 border border-white/10 hover:border-blue-500/50 hover:bg-slate-900 text-slate-300 hover:text-white rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center"
+              title="Dashboard Keyboard Shortcuts & Help"
+            >
+              <HelpCircle className="w-4 h-4 text-blue-400" />
+            </button>
+
+            <AnimatePresence>
+              {isHelpOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setIsHelpOpen(false)}
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 mt-2 w-72 bg-slate-900 border border-white/15 rounded-2xl shadow-2xl z-50 p-4 text-slate-200 backdrop-blur-xl"
+                  >
+                    <div className="flex items-center justify-between pb-2.5 border-b border-white/10 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Info className="w-4 h-4 text-blue-400" />
+                        <span className="text-xs font-black text-white uppercase tracking-wider">Dashboard Shortcuts</span>
+                      </div>
+                      <button
+                        onClick={() => setIsHelpOpen(false)}
+                        className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-300 font-medium">Quick AI Summary</span>
+                        <kbd className="px-2 py-0.5 rounded bg-slate-950 border border-white/15 font-mono text-[10px] text-blue-300">Ctrl + Q</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-300 font-medium">Print Report View</span>
+                        <kbd className="px-2 py-0.5 rounded bg-slate-950 border border-white/15 font-mono text-[10px] text-blue-300">Ctrl + P</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-300 font-medium">Direct Export Options</span>
+                        <kbd className="px-2 py-0.5 rounded bg-slate-950 border border-white/15 font-mono text-[10px] text-blue-300">Ctrl + E</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-300 font-medium">Refresh Live JQL Data</span>
+                        <kbd className="px-2 py-0.5 rounded bg-slate-950 border border-white/15 font-mono text-[10px] text-blue-300">Ctrl + G</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-300 font-medium">Global Search Filter</span>
+                        <kbd className="px-2 py-0.5 rounded bg-slate-950 border border-white/15 font-mono text-[10px] text-blue-300">Ctrl + K</kbd>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-white/10 text-[10px] text-slate-400 text-center font-mono">
+                      Tip: Use Esc to quickly dismiss open panels.
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 
-      <div id="dashboard-visuals-container" className="space-y-6">
+      {/* JQL Visual Builder Expander Container */}
+      <AnimatePresence>
+        {showJqlBuilderCard && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="p-4 bg-slate-900/90 border border-indigo-500/40 rounded-2xl shadow-2xl backdrop-blur-md">
+              <JqlVisualBuilder
+                isLight={theme === "light"}
+                onApplyJql={(jql) => {
+                  setSearchQuery(jql);
+                  addToast?.("JQL Filter Applied", `Applied visual query filter: ${jql}`, "success", 3000);
+                }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Anomaly Auditor Triage Modal */}
+      {isAnomalyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-amber-950/30">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    Workflow & Cycle Time Anomaly Auditor
+                  </h3>
+                  <p className="text-[10px] text-amber-300/80 font-medium">
+                    {detectedAnomalies.length} risk items identified across cycle time, estimation, and blockage metrics
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAnomalyModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-3 divide-y divide-white/5">
+              {detectedAnomalies.map((item) => (
+                <div key={item.id} className="pt-3 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                        item.severity === "critical" ? "bg-rose-500/20 text-rose-300 border border-rose-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                      }`}>
+                        {item.severity}
+                      </span>
+                      <span className="font-mono text-xs font-bold text-blue-400">{item.issueKey}</span>
+                      <span className="text-xs font-bold text-white truncate max-w-md">{item.summary}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAnomalyModalOpen(false);
+                        handleDrillDownFilter("status", item.issueKey);
+                      }}
+                      className="text-[10px] font-extrabold uppercase text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 px-2.5 py-1 rounded-lg border border-indigo-500/40 transition-colors shrink-0 cursor-pointer"
+                    >
+                      Drill Down
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-300 font-medium">{item.description}</p>
+                  <p className="text-[10px] text-emerald-400 font-mono">💡 Recommendation: {item.recommendation}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-3 bg-slate-950 border-t border-white/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsAnomalyModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Close Auditor
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div id="dashboard-visuals-container" className={compactMode ? "compact-mode space-y-3.5" : "space-y-6"}>
         
         {/* Quick AI Summary Animated Banner */}
         <AnimatePresence>
@@ -3755,7 +4153,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               </div>
 
               <div className="flex-1 flex items-center justify-center my-2">
-                <D3PieChart data={statusChartData} totalCount={issues.length} categoryColors={categoryColors} />
+                <D3PieChart data={statusChartData} totalCount={issues.length} categoryColors={categoryColors} onDrillDownFilter={handleDrillDownFilter} />
               </div>
             </div>
           )}
@@ -3926,10 +4324,12 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
               else setSearchQuery("");
             }}
             activeStatusFilter={searchQuery}
+            onDrillDownFilter={handleDrillDownFilter}
           />
           <StatusDistributionWidget
             issues={issues}
             theme={theme}
+            onDrillDownFilter={handleDrillDownFilter}
           />
           <IssueAgingWidget
             issues={issues}
@@ -5731,6 +6131,71 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           </div>
         </div>
       )}
+
+      {/* Persistent Status-to-Color Legend Card */}
+      <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 backdrop-blur-md space-y-3 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-white/5 pb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+              Status-to-Color Legend
+            </h4>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono">
+            Persistent Jira Lifecycle Mapping Reference
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+          <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 flex items-center gap-2.5 hover:bg-emerald-950/50 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-emerald-300 uppercase tracking-tight truncate">Done</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">Resolved / Closed</div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-500/30 flex items-center gap-2.5 hover:bg-blue-950/50 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-blue-400 shrink-0 shadow-[0_0_8px_rgba(96,165,250,0.5)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-blue-300 uppercase tracking-tight truncate">In Progress</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">In Dev / Active</div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-700/60 flex items-center gap-2.5 hover:bg-slate-850 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-slate-400 shrink-0 shadow-[0_0_8px_rgba(148,163,184,0.3)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-slate-300 uppercase tracking-tight truncate">To Do</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">Backlog / Open</div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-red-950/30 border border-red-500/30 flex items-center gap-2.5 hover:bg-red-950/50 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-red-400 shrink-0 shadow-[0_0_8px_rgba(248,113,113,0.5)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-red-300 uppercase tracking-tight truncate">Blocked</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">Impediment / Risk</div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-500/30 flex items-center gap-2.5 hover:bg-purple-950/50 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-purple-400 shrink-0 shadow-[0_0_8px_rgba(192,132,252,0.5)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-purple-300 uppercase tracking-tight truncate">In Review</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">QA / Code Review</div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/30 flex items-center gap-2.5 hover:bg-amber-950/50 transition-colors">
+            <span className="w-3 h-3 rounded-full bg-amber-400 shrink-0 shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-amber-300 uppercase tracking-tight truncate">Anomaly</div>
+              <div className="text-[9px] text-slate-400 font-medium truncate">High SP / Aging 14d+</div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* 5. Enhanced Floating Bulk Update Toolbar */}
       {selectedIssueKeys.length > 0 && (

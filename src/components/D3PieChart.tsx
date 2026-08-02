@@ -16,9 +16,10 @@ interface D3PieChartProps {
   };
   totalCount: number;
   categoryColors?: Record<string, string>;
+  onDrillDownFilter?: (filterType: "status" | "assignee" | "priority" | "project", value: string) => void;
 }
 
-export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount, categoryColors }) => {
+export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount, categoryColors, onDrillDownFilter }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
@@ -121,6 +122,11 @@ export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount, catego
           .attr("d", arc as any)
           .style("opacity", 0.9);
         setHoveredSlice(null);
+      })
+      .on("click", function (event, d) {
+        if (onDrillDownFilter) {
+          onDrillDownFilter("status", d.data.label);
+        }
       });
 
     // Donut Center Text
@@ -167,8 +173,10 @@ export const D3PieChart: React.FC<D3PieChartProps> = ({ data, totalCount, catego
           return (
             <div
               key={item.label}
-              className={`flex items-center gap-2 px-2.5 py-1 rounded-lg transition-all duration-200 ${
-                isHovered ? "bg-slate-800 text-white scale-[1.04]" : "hover:bg-slate-800/30 text-slate-400"
+              onClick={() => onDrillDownFilter?.("status", item.label)}
+              title={`Click to filter issue list by status "${item.label}"`}
+              className={`flex items-center gap-2 px-2.5 py-1 rounded-lg transition-all duration-200 cursor-pointer ${
+                isHovered ? "bg-slate-800 text-white scale-[1.04]" : "hover:bg-slate-800/50 text-slate-400 hover:text-white"
               }`}
             >
               <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${item.bg}`} />

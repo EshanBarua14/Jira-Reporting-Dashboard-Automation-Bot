@@ -190,52 +190,77 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   return (
     <div 
       id="auth-panel-card" 
+      role="region"
+      aria-label="OmniSync Platform Connection and Authentication Panel"
       className="bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-2xl p-5 space-y-4 shadow-[0_8px_32px_rgba(0,0,0,0.3)] hover:shadow-[0_8px_32px_rgba(59,130,246,0.1)] transition-all duration-300 relative overflow-hidden"
     >
       <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Unified Platform Selection Tab Menu */}
       {!(subFilters?.showJira === false && subFilters?.showDiscord === false) && (
-        <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center justify-between shrink-0 select-none">
+        <div 
+          role="tablist" 
+          aria-label="Integration Platform Switcher"
+          className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center justify-between shrink-0 select-none"
+        >
           {subFilters?.showJira !== false && (
             <button
               type="button"
+              role="tab"
+              aria-selected={activePlatform === "Jira"}
+              aria-controls="jira-auth-section"
               onClick={() => onChangeActivePlatform("Jira")}
-              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+              onKeyDown={(e) => {
+                if (e.key === "ArrowRight") onChangeActivePlatform("Confluence");
+              }}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer ${
                 activePlatform === "Jira"
                   ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
-              <Compass className="w-3.5 h-3.5" />
+              <Compass className="w-3.5 h-3.5" aria-hidden="true" />
               Jira
             </button>
           )}
           {subFilters?.showJira !== false && (
             <button
               type="button"
+              role="tab"
+              aria-selected={activePlatform === "Confluence"}
+              aria-controls="confluence-auth-section"
               onClick={() => onChangeActivePlatform("Confluence")}
-              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft") onChangeActivePlatform("Jira");
+                if (e.key === "ArrowRight") onChangeActivePlatform("Discord");
+              }}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer ${
                 activePlatform === "Confluence"
                   ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
-              <BookOpen className="w-3.5 h-3.5" />
+              <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
               Confluence
             </button>
           )}
           {subFilters?.showDiscord !== false && (
             <button
               type="button"
+              role="tab"
+              aria-selected={activePlatform === "Discord"}
+              aria-controls="discord-auth-section"
               onClick={() => onChangeActivePlatform("Discord")}
-              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider ${
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft") onChangeActivePlatform("Confluence");
+              }}
+              className={`flex-1 text-[10px] font-black py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer ${
                 activePlatform === "Discord"
                   ? "bg-purple-600 text-white shadow-md shadow-purple-500/10"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
-              <MessageSquare className="w-3.5 h-3.5" />
+              <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
               Discord
             </button>
           )}
@@ -537,7 +562,10 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
                   </div>
 
                   {testResult && (
-                    <div className={`p-3.5 rounded-xl border flex gap-2.5 text-xs font-semibold ${
+                    <div 
+                      role="status"
+                      aria-live="polite"
+                      className={`p-3.5 rounded-xl border flex gap-2.5 text-xs font-semibold ${
                       testResult.success
                         ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400"
                         : "bg-red-950/20 border-red-900/50 text-red-400"
@@ -549,7 +577,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
                       )}
                       <div className="text-[11px] leading-relaxed">
                         <span className="font-bold uppercase tracking-wider block mb-0.5">
-                          Atlassian Connect Success
+                          Atlassian Connect Status
                         </span>
                         <p className="font-medium">{testResult.message}</p>
                       </div>
@@ -557,7 +585,11 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
                   )}
 
                   {errorMsg && (
-                    <div className="p-3.5 rounded-xl bg-red-950/20 border border-red-900/50 flex gap-2.5 text-red-400">
+                    <div 
+                      role="alert"
+                      aria-live="polite"
+                      className="p-3.5 rounded-xl bg-red-950/20 border border-red-900/50 flex gap-2.5 text-red-400"
+                    >
                       <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
                       <div className="text-[11px] space-y-1">
                         <span className="font-bold uppercase tracking-wider block text-red-500">Connection Error</span>

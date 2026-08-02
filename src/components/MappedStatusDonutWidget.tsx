@@ -9,6 +9,7 @@ interface MappedStatusDonutWidgetProps {
   theme?: "dark" | "light";
   onSelectStatusFilter?: (status: string | null) => void;
   activeStatusFilter?: string | null;
+  onDrillDownFilter?: (filterType: "status" | "assignee" | "priority" | "project", value: string) => void;
 }
 
 export const MappedStatusDonutWidget: React.FC<MappedStatusDonutWidgetProps> = ({
@@ -22,6 +23,7 @@ export const MappedStatusDonutWidget: React.FC<MappedStatusDonutWidgetProps> = (
   theme = "dark",
   onSelectStatusFilter,
   activeStatusFilter,
+  onDrillDownFilter,
 }) => {
   const isLight = theme === "light";
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
@@ -116,6 +118,7 @@ export const MappedStatusDonutWidget: React.FC<MappedStatusDonutWidgetProps> = (
             data={statusCounts}
             totalCount={totalCount}
             categoryColors={categoryColors}
+            onDrillDownFilter={onDrillDownFilter}
           />
           <div className="text-[9.5px] font-extrabold text-slate-400 uppercase tracking-widest mt-2 font-mono">
             Proportional Donut View

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell, Search } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell, Search, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
-import { PresetsPanel, SavedPreset } from "./components/PresetsPanel";
+import { PresetsPanel, SavedPreset, DEFAULT_LAYOUT_PRESETS } from "./components/PresetsPanel";
 import { StatusMappingPanel } from "./components/StatusMappingPanel";
 import { ColumnPanel } from "./components/ColumnPanel";
 import { MetricsPanel } from "./components/MetricsPanel";
@@ -387,6 +387,26 @@ function DraggableCard({
 
       <motion.div
         id={`draggable-wrapper-${id}`}
+        role="region"
+        aria-label={`${title} Dashboard Card`}
+        aria-expanded={!isCollapsed && !isMinimized}
+        aria-roledescription="sortable dashboard panel card"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.altKey && e.key === "ArrowUp") {
+            e.preventDefault();
+            onMoveUp?.();
+            showBanner(`Moved "${title}" up in layout position via keyboard shortcut.`);
+          } else if (e.altKey && e.key === "ArrowDown") {
+            e.preventDefault();
+            onMoveDown?.();
+            showBanner(`Moved "${title}" down in layout position via keyboard shortcut.`);
+          } else if (e.key === "Escape" && isFullscreenOverlay) {
+            e.preventDefault();
+            setIsFullscreenOverlay(false);
+            showBanner(`Exited fullscreen view for "${title}".`);
+          }
+        }}
         layout
         transition={
           isLocalGenerating
@@ -415,7 +435,7 @@ function DraggableCard({
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDrop={onDrop}
-        className={`transition-all duration-300 relative rounded-2xl overflow-hidden ${
+        className={`transition-all duration-300 relative rounded-2xl overflow-hidden focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
           isFullscreenOverlay
             ? "fixed inset-4 md:inset-8 z-50 max-h-[92vh] overflow-y-auto shadow-2xl ring-2 ring-indigo-500/60 bg-slate-950 text-white"
             : isLight
@@ -1511,6 +1531,13 @@ export default function App() {
 
   // View Mode Switcher state
   const [viewMode, setViewMode] = useState<"dashboard" | "report">("dashboard");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("omnisync_sidebar_collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [showExportPanel, setShowExportPanel] = useState(true);
 
   // Jira-fetched Projects, Sprints, Assignees list (loaded on authentication)
@@ -1656,11 +1683,51 @@ export default function App() {
     localStorage.setItem("omnisync_current_app_user", JSON.stringify(user));
   };
 
-  const handleUserLogout = () => {
+  const handleUserLogout = (isAuto = false) => {
     setCurrentAppUser(null);
     localStorage.removeItem("omnisync_current_app_user");
-    addToast("Signed Out", "Logged out of OmniSync account.", "info", 2500);
+    if (isAuto) {
+      addToast(
+        "Auto-Logged Out",
+        "Your session was ended automatically due to 30 minutes of inactivity for shared environment security.",
+        "warning",
+        6000
+      );
+    } else {
+      addToast("Signed Out", "Logged out of OmniSync account.", "info", 2500);
+    }
   };
+
+  // Global 30-minute Inactivity Auto-Logout Timer Hook
+  useEffect(() => {
+    if (!currentAppUser) return;
+
+    const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+    let inactivityTimer: NodeJS.Timeout;
+
+    const resetInactivityTimer = () => {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        handleUserLogout(true);
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    // User activity event listeners
+    const activityEvents = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, resetInactivityTimer, { passive: true });
+    });
+
+    // Start timer initially
+    resetInactivityTimer();
+
+    return () => {
+      clearTimeout(inactivityTimer);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, resetInactivityTimer);
+      });
+    };
+  }, [currentAppUser]);
 
   const [cardSubFilters, setCardSubFilters] = useState<Record<string, Record<string, boolean>>>(() => {
 
@@ -3469,6 +3536,20 @@ export default function App() {
         e.preventDefault();
         setShowShortcutsModal((prev) => !prev);
       }
+      if (e.key.toLowerCase() === "b" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setIsSidebarCollapsed((prev) => {
+          const next = !prev;
+          localStorage.setItem("omnisync_sidebar_collapsed", String(next));
+          addToast(
+            next ? "Sidebar Collapsed" : "Sidebar Expanded",
+            next ? "Configuration cards hidden. Dashboard expanded to full screen." : "Configuration cards restored.",
+            "info",
+            2000
+          );
+          return next;
+        });
+      }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleGenerateReport();
@@ -4231,8 +4312,42 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* View Mode Switcher */}
+                {/* View Mode Switcher & Sidebar Toggle */}
                 <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+                  {viewMode === "dashboard" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isSidebarCollapsed;
+                        setIsSidebarCollapsed(next);
+                        localStorage.setItem("omnisync_sidebar_collapsed", String(next));
+                        addToast(
+                          next ? "Config Sidebar Hidden" : "Config Sidebar Restored",
+                          next ? "Configuration cards hidden. Report dashboard expanded to full width." : "Configuration cards re-expanded.",
+                          "info",
+                          2000
+                        );
+                      }}
+                      className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer ${
+                        isSidebarCollapsed
+                          ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-600/40 shadow-md shadow-indigo-500/10 font-black"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                      title="Toggle left configuration panel sidebar (Ctrl+B)"
+                    >
+                      {isSidebarCollapsed ? (
+                        <>
+                          <PanelLeftOpen className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Show Config</span>
+                        </>
+                      ) : (
+                        <>
+                          <PanelLeftClose className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Hide Config</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setViewMode("dashboard")}
@@ -4244,7 +4359,7 @@ export default function App() {
                     title="Full Dashboard Layout"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5" />
-                    Full Dashboard
+                    Split View
                   </button>
                   <button
                     type="button"
@@ -4472,9 +4587,9 @@ export default function App() {
       )}
 
       {/* Main layout grids */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-             {/* Left Side: Input config panels (cols 1-5) */}
-        <section className={viewMode === "dashboard" && !isPrintFriendlyMode ? "lg:col-span-5 space-y-6" : "hidden"}>
+      <main className="flex-1 max-w-[1750px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Side: Input config panels (cols 1-4 on lg, 1-3 on xl) */}
+        <section className={viewMode === "dashboard" && !isPrintFriendlyMode && !isSidebarCollapsed ? "lg:col-span-4 xl:col-span-3 space-y-6" : "hidden"}>
           {showDiagnostics && (
             <DiagnosticConsole
               logs={networkLogs}
@@ -4916,9 +5031,9 @@ export default function App() {
           })}
         </section>
 
-        {/* Right Side: Generated Report & Visual Dashboard (cols 6-12) */}
-        <section className={(viewMode === "dashboard" && !isPrintFriendlyMode) ? "lg:col-span-7 space-y-6" : "lg:col-span-12 space-y-6"}>
-          <div className="w-full max-w-5xl mx-auto space-y-6">
+        {/* Right Side: Generated Report & Visual Dashboard (cols 5-12 on lg, 4-12 on xl, or 12 when sidebar collapsed) */}
+        <section className={(viewMode === "dashboard" && !isPrintFriendlyMode && !isSidebarCollapsed) ? "lg:col-span-8 xl:col-span-9 space-y-6" : "lg:col-span-12 space-y-6"}>
+          <div className="w-full space-y-6">
             {errorMsg && (
             <div className="p-5 rounded-xl bg-red-950/15 border border-red-900/40 flex gap-4 text-red-300 shadow-xl relative overflow-hidden backdrop-blur-sm">
               <div className="absolute top-0 left-0 w-1.5 h-full bg-red-600"></div>
@@ -4992,6 +5107,21 @@ export default function App() {
             summarySearchQuery={summarySearchQuery}
             customChartConfig={customChartConfig}
             onGenerateReport={() => handleGenerateReport()}
+            onLoadLayoutPreset={(presetName: string) => {
+              const allPresets = [...DEFAULT_LAYOUT_PRESETS];
+              try {
+                const saved = localStorage.getItem("jira_saved_layout_presets");
+                if (saved) {
+                  allPresets.push(...JSON.parse(saved));
+                }
+              } catch (e) {}
+              const match = allPresets.find(p => p.name.toLowerCase() === presetName.toLowerCase() || p.id === presetName);
+              if (match) {
+                handleLoadLayoutPreset(match);
+              } else {
+                addToast("Layout Preset Not Found", `Could not locate preset "${presetName}".`, "warning", 2500);
+              }
+            }}
           />
           </div>
         </section>
@@ -5056,6 +5186,16 @@ export default function App() {
             {/* List */}
             <div className="p-6 space-y-4">
               <div className="space-y-3">
+                {/* Ctrl + B */}
+                <div className="flex items-center justify-between py-2 border-b border-slate-900">
+                  <div className="text-xs font-bold text-slate-350">Toggle Config Sidebar</div>
+                  <div className="flex items-center gap-1">
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">Ctrl</kbd>
+                    <span className="text-[10px] text-slate-500 font-bold">+</span>
+                    <kbd className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[10px] font-mono font-bold text-slate-300 shadow-sm">B</kbd>
+                  </div>
+                </div>
+
                 {/* Ctrl + Enter */}
                 <div className="flex items-center justify-between py-2 border-b border-slate-900">
                   <div className="text-xs font-bold text-slate-350">Generate Report</div>

@@ -188,8 +188,20 @@ docker run -p 3000:3000 -e GEMINI_API_KEY="your_key" omnisync-suite
    - Interactive configuration panel enabling custom Jira metrics mapping against multi-series Bar, Line, and Area charts.
    - Supports dual-axis scaling, customizable chart titles, and metric combinations (e.g., Story Points vs. Issue Count by Assignee or Status).
 
-5. **Pre-Report Command Center**:
-   - Replaced empty viewport states with an interactive executive launchpad featuring 1-click report compilation, system readiness indicators, and feature capability cards.
+5. **AI Executive Summary & Anomaly Outlier Detection**:
+   - Integrated Gemini AI engine generating structured PMO insights, risk factors, and sprint health assessments.
+   - Algorithmic anomaly flagging identifying story point over-allocations and stale tickets (>14 days in progress).
+
+6. **Enterprise Authentication & Account Management**:
+   - Multi-provider single sign-on supporting Google OAuth 2.0, GitHub Enterprise, and Microsoft Azure AD.
+   - Self-service account management panel with secure 2-step account deletion and local data wipe (`DELETE` confirmation).
+   - Email password recovery flow with temporary verification link token dispatch.
+   - Shared computer safety: Automatic 30-minute inactivity auto-logout timer.
+
+7. **Global Export All Panels & Visual Legend**:
+   - Aggregate "Export All Panels" trigger producing a consolidated JSON data bundle of executive metrics, anomaly logs, and full issue datasets.
+   - Persistent status-to-color legend card providing clear Jira lifecycle mapping reference across all dashboard panels.
+   - Interactive keyboard shortcuts overlay (`Ctrl + Q`, `Ctrl + P`, `Ctrl + E`, `Ctrl + G`, `Ctrl + K`) with header quick-help popover.
 
 ---
 
@@ -204,12 +216,54 @@ docker run -p 3000:3000 -e GEMINI_API_KEY="your_key" omnisync-suite
 | **Bulk Actions & Checkboxes** | 🟢 **PASS** | Multi-issue transitions & bulk status update bar verified. |
 | **Column Sorting** | 🟢 **PASS** | Clickable sorting across all table headers verified. |
 | **Custom Chart Builder** | 🟢 **PASS** | Multi-metric dual-axis Recharts visualization verified. |
-| **Pre-Report Workspace** | 🟢 **PASS** | Command center with 1-click execution triggers verified. |
+| **Enterprise OAuth SSO** | 🟢 **PASS** | Google, GitHub Enterprise, and Microsoft Azure AD authentication flows verified. |
+| **Account Deletion & Data Wipe** | 🟢 **PASS** | 2-step `DELETE` confirmation purging credentials and session caches verified. |
+| **Inactivity Auto-Logout** | 🟢 **PASS** | Global 30-minute idle user session expiry hook verified. |
+| **Export All Panels Bundle** | 🟢 **PASS** | Consolidated JSON payload download across all metrics & issue logs verified. |
+| **Status Color Legend** | 🟢 **PASS** | Persistent status-to-color mapping card rendered in dashboard panel. |
 | **Bearer Token Security** | 🟢 **PASS** | Ephemeral `sessionId` bearer tokens enforced across proxy endpoints. |
 | **Console Sanitization** | 🟢 **PASS** | Automatic redaction of session tokens in diagnostic output. |
 | **Unit Test Suite** | 🟢 **PASS** | Vitest unit tests passing. |
 | **E2E Test Suite** | 🟢 **PASS** | Playwright test configuration and journey script ready. |
 | **Accessibility & Motion** | 🟢 **PASS** | Reduced motion toggle & `Ctrl+/` shortcut overlay enabled. |
+
+---
+
+## 🛡️ Professional Audit & Security Architecture
+
+An executive-level security and software architecture audit was performed across the OmniSync Suite codebase. Below is a detailed technical summary of the security controls, privacy mechanisms, and contributor standards implemented:
+
+### 1. Inactivity Session Expiry & Auto-Logout
+- **Mechanism**: The application registers global event listeners (`mousemove`, `keydown`, `click`, `scroll`, `touchstart`) bound to a debounce timer.
+- **Security Goal**: Protect sensitive Jira ticket datasets in shared workstation or corporate open-office environments.
+- **Behavior**: After 30 minutes (`30 * 60 * 1000` ms) of continuous inactivity, active credentials, session tokens, and local cache entries are purged, and the user is redirected to the login view with a notification banner.
+
+### 2. Zero-Trace Account Deletion & Data Wiping Procedure
+- **Mechanism**: Authenticated users can invoke self-service data purging via `UserAuthModal.tsx`.
+- **Confirmation Requirement**: Requires explicit manual entry of the confirmation string (`DELETE`) to prevent accidental invocation.
+- **Execution**:
+  - Clears `sessionToken`, `activeUser`, and saved server credentials.
+  - Purges all client-side `localStorage` keys (including preset views, filters, and history logs).
+  - Destroys active HTTP session headers and resets client state.
+
+### 3. OAuth 2.0 & Enterprise Identity Security
+- **Providers Supported**: Atlassian OAuth 2.0, Google Workspace, GitHub Enterprise, and Microsoft Azure AD.
+- **Token Storage**: Credentials and API access tokens are stored in memory or encrypted HTTP-only storage on the server-side proxy; raw client secret keys are **never** exposed to client JavaScript runtime.
+- **CSRF & State Verification**: OAuth callback redirects employ cryptographic state parameters (`state`) to prevent Cross-Site Request Forgery (CSRF).
+
+### 4. WCAG 2.1 AA Accessibility & Keyboard Controls
+- **ARIA Attributes**: Components enforce `role="region"`, `role="tablist"`, `role="tab"`, `aria-selected`, `aria-controls`, and `aria-live="polite"` for dynamic error and status updates.
+- **Keyboard Navigation**:
+  - Full tab traversal for modal dialogs and authentication tabs (`ArrowLeft` / `ArrowRight`).
+  - `Alt + ArrowUp` and `Alt + ArrowDown` for reordering dashboard card positions.
+  - `Ctrl + /` for toggling global keyboard shortcuts reference modal.
+  - Reduced motion mode setting honoring `prefers-reduced-motion` CSS rules.
+
+### 5. Contributor Onboarding & Quality Guidelines
+Contributors extending OmniSync Suite must adhere to the following standards:
+1. **Strict Type Safety**: All TypeScript code must compile clean under `tsc --noEmit` without `any` overrides in business logic.
+2. **Hook Order Invariance**: React hooks must always be executed unconditionally at top-level scope in accordance with React Rules of Hooks.
+3. **Automated Verification**: Run `npm run lint` and `npm run test:unit` prior to submitting pull requests.
 
 ---
 

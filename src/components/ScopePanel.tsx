@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders, Search, Terminal, Code } from "lucide-react";
+import { FolderGit2, Check, Sparkles, Calendar, User, Compass, BookOpen, MessageSquare, Hash, Sliders, Search, Terminal, Code, AlertTriangle, AlertCircle, ShieldCheck } from "lucide-react";
 import { JqlBuilder } from "./JqlBuilder";
+import { validateJqlSyntax } from "../utils/jqlValidator";
 
 interface ScopePanelProps {
   activePlatform: "Jira" | "Confluence" | "Discord";
@@ -298,6 +299,8 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
     }
   };
 
+  const jqlValidation = validateJqlSyntax(customJql);
+
   return (
     <div 
       id="project-scope-card" 
@@ -339,8 +342,21 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-indigo-400" />
               <div>
-                <h3 className="text-xs font-black text-white uppercase tracking-wider">Advanced JQL Query Builder</h3>
-                <p className="text-[10px] text-slate-400">Syntax highlighting, autocomplete, & manual query refinement</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider">Advanced JQL Query Builder</h3>
+                  {customJql && (
+                    jqlValidation.isValid ? (
+                      <span className="text-[8.5px] font-extrabold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="w-2.5 h-2.5" /> Valid Syntax
+                      </span>
+                    ) : (
+                      <span className="text-[8.5px] font-extrabold bg-rose-500/15 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                        <AlertCircle className="w-2.5 h-2.5 text-rose-400" /> Query Error
+                      </span>
+                    )
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400">Real-time syntax validation, autocomplete, & query refinement</p>
               </div>
             </div>
             <button
@@ -352,6 +368,29 @@ export const ScopePanel: React.FC<ScopePanelProps> = ({
               {isJqlBuilderExpanded ? "Collapse JQL Editor" : "Open JQL Editor"}
             </button>
           </div>
+
+          {/* Real-time Syntax Error Banner if Custom JQL Has Syntax Errors */}
+          {customJql && !jqlValidation.isValid && (
+            <div className="bg-rose-950/40 border border-rose-800/60 rounded-xl p-3 space-y-2 text-rose-200">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <h4 className="text-xs font-black uppercase tracking-wider text-rose-300">
+                  JQL Syntax Error Detected
+                </h4>
+              </div>
+              <ul className="list-disc list-inside text-[10.5px] space-y-1 font-mono text-rose-300/90 pl-1">
+                {jqlValidation.errors.map((err, idx) => (
+                  <li key={idx}>{err}</li>
+                ))}
+              </ul>
+              {jqlValidation.fixSuggestions.length > 0 && (
+                <div className="pt-1 text-[10px] text-rose-300/80 font-sans">
+                  <span className="font-bold text-amber-300">Suggested Fix: </span>
+                  {jqlValidation.fixSuggestions.join(" ")}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Advanced JQL Builder Component */}
           {isJqlBuilderExpanded && (

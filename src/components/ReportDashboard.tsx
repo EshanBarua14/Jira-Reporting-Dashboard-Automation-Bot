@@ -114,7 +114,7 @@ const cardVariants = {
     opacity: 1,
     y: 0,
     transition: {
-      type: "spring",
+      type: "spring" as const,
       stiffness: 110,
       damping: 15,
     },
@@ -4345,7 +4345,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         )}
 
         {/* 3.6. Custom Multi-Series Metric Chart Builder Widget */}
-        {(safeConfig.visualizations?.customChart || customChartConfig?.enabled) && (
+        {((safeConfig.visualizations as any)?.customChart || customChartConfig?.enabled) && (
           <CustomChartWidget issues={issues} config={customChartConfig} />
         )}
  
@@ -6055,7 +6055,8 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
                                     {(issue.comments && issue.comments.length > 0 ? issue.comments : [
                                       `${issue.reporter || "Sarah Connor"}: Scope initiated. Verified that backlog constraints and target milestones are aligned.`,
                                       `${issue.assignee && issue.assignee !== "Unassigned" ? issue.assignee : "John Connor"}: Currently investigating architecture bounds and setting up initial unit test suites.`
-                                    ]).map((comment: string, idx: number) => {
+                                    ]).map((commentItem: any, idx: number) => {
+                                      const comment = typeof commentItem === "string" ? commentItem : `${commentItem.author || "Team Member"}: ${commentItem.body || ""}`;
                                       const parts = comment.split(":");
                                       const author = parts[0] || "Team Member";
                                       const text = parts.slice(1).join(":") || "";

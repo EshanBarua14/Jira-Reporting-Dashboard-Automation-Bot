@@ -174,8 +174,8 @@ export const StatusDistributionWidget: React.FC<StatusDistributionWidgetProps> =
               data={chartData}
               margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
               onClick={(state) => {
-                if (state && state.activeLabel && onDrillDownFilter) {
-                  onDrillDownFilter("status", state.activeLabel);
+                if (state && state.activeLabel !== undefined && state.activeLabel !== null && onDrillDownFilter) {
+                  onDrillDownFilter("status", String(state.activeLabel));
                 }
               }}
               className="cursor-pointer"

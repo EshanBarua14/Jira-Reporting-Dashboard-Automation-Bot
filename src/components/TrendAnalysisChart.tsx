@@ -59,8 +59,9 @@ export const TrendAnalysisChart: React.FC<TrendAnalysisChartProps> = ({ issues }
       // Calculate active resolved/done issues up to that day
       const doneIssues = enrichedIssues.filter((iss) => {
         if (iss.mappedStatus === "Done") {
-          if (iss.updatedDate) {
-            return iss.updatedDate <= dateIso;
+          const uDate = (iss as any).updatedDate || iss.created;
+          if (uDate) {
+            return uDate <= dateIso;
           }
           return Math.random() < progressRatio;
         }

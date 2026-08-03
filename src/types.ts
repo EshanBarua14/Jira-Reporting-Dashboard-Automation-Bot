@@ -217,4 +217,15 @@ export interface AppAccountUser {
   lastLoginAt: string;
 }
 
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  user: string;
+  action: string;
+  category: "STATUS_MAPPING" | "PRESET_LOAD" | "SCOPE_FILTER" | "REPORT_GEN" | "EXPORT" | "AUTH" | "CONFIG";
+  details: string;
+  severity: "info" | "warning" | "success" | "critical";
+}
+
+
 

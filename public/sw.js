@@ -1,22 +1,16 @@
-const CACHE_NAME = "bulletproof-report-cache-v1";
-const ASSETS_TO_CACHE = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/icon.svg"
-];
+// OmniSync Service Worker for API & Dashboard Caching
+const CACHE_NAME = "omnisync-cache-v1";
+const STATIC_ASSETS = ["/", "/index.html", "/src/main.tsx"];
 
-// Install Event
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
+      return cache.addAll(STATIC_ASSETS);
     })
   );
   self.skipWaiting();
 });
 
-// Activate Event
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -32,12 +26,33 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Fetch Event
 self.addEventListener("fetch", (event) => {
-  // Let browser make standard request. Fallback to cache if network fails.
+  if (event.request.method !== "GET") return;
+
   event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+            }
+          })
+          .catch(() => {});
+        return cachedResponse;
+      }
+
+      return fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200 && event.request.url.startsWith("http")) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match("/");
+        });
     })
   );
 });

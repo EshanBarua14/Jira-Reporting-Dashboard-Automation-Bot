@@ -1215,7 +1215,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                         {otpCode.map((digit, idx) => (
                           <input
                             key={idx}
-                            ref={(el) => (otpInputRefs.current[idx] = el)}
+                            ref={(el) => { otpInputRefs.current[idx] = el; }}
                             type="text"
                             maxLength={1}
                             value={digit}
@@ -1685,7 +1685,7 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
                       {twoFACode.map((digit, idx) => (
                         <input
                           key={idx}
-                          ref={(el) => (mfaInputRefs.current[idx] = el)}
+                          ref={(el) => { mfaInputRefs.current[idx] = el; }}
                           type="text"
                           maxLength={1}
                           value={digit}

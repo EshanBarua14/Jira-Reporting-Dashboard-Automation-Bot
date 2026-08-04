@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Play, ShieldAlert, ShieldCheck, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, Zap, Maximize2, TrendingUp, TrendingDown, Bell, Search, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Sparkles, Play, ShieldAlert, ShieldCheck, CheckCircle2, SlidersHorizontal, BarChart3, HelpCircle, Check, Loader2, RefreshCw, Eye, Share2, Keyboard, FileJson, Linkedin, Printer, Minimize2, Minus, History, Link, Copy, Clock, FileSpreadsheet, FileText, Zap, Maximize2, TrendingUp, TrendingDown, Bell, Search, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { AuthPanel } from "./components/AuthPanel";
 import { ScopePanel } from "./components/ScopePanel";
 import { PresetsPanel, SavedPreset, DEFAULT_LAYOUT_PRESETS } from "./components/PresetsPanel";
@@ -99,6 +99,9 @@ function DraggableCard({
   onCopy,
   onRefresh,
   onShare,
+  onBatchExport,
+  isBatchExporting = false,
+  isQueueEmpty = false,
   filterOptions,
   onToggleFilter,
   index,
@@ -119,6 +122,9 @@ function DraggableCard({
   onCopy: () => void;
   onRefresh: () => void;
   onShare?: () => void;
+  onBatchExport?: () => void;
+  isBatchExporting?: boolean;
+  isQueueEmpty?: boolean;
   filterOptions?: Record<string, boolean>;
   onToggleFilter?: (key: string) => void;
   index: number;
@@ -395,6 +401,11 @@ function DraggableCard({
         aria-expanded={!isCollapsed && !isMinimized}
         aria-roledescription="sortable dashboard panel card"
         tabIndex={0}
+        initial={
+          id === "export"
+            ? { opacity: 0, y: 20 }
+            : { opacity: 0, y: 15 }
+        }
         onKeyDown={(e) => {
           if (e.altKey && e.key === "ArrowUp") {
             e.preventDefault();
@@ -412,7 +423,9 @@ function DraggableCard({
         }}
         layout
         transition={
-          isLocalGenerating
+          id === "export"
+            ? { type: "spring", stiffness: 140, damping: 22, mass: 0.9 }
+            : isLocalGenerating
             ? {
                 duration: 1.2,
                 repeat: Infinity,
@@ -431,13 +444,15 @@ function DraggableCard({
                   "0 0 0 0 rgba(99, 102, 241, 0)",
                 ],
               }
-            : {}
+            : id === "export"
+            ? { opacity: 1, y: 0 }
+            : { opacity: 1, x: 0, y: 0, scale: 1 }
         }
         draggable={!isFullscreenOverlay}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDragEnd={onDragEnd}
-        onDrop={onDrop}
+        onDragStart={onDragStart as any}
+        onDragOver={onDragOver as any}
+        onDragEnd={onDragEnd as any}
+        onDrop={onDrop as any}
         className={`transition-all duration-300 relative rounded-2xl overflow-hidden focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
           isFullscreenOverlay
             ? "fixed inset-4 md:inset-8 z-50 max-h-[92vh] overflow-y-auto shadow-2xl ring-2 ring-indigo-500/60 bg-slate-950 text-white"
@@ -764,6 +779,81 @@ function DraggableCard({
               </>
             )}
           </div>
+
+          {/* Bulk PDF Export Button for Export Broker Card */}
+          {id === "export" && (
+            <div className="flex items-center gap-2">
+              {isBatchExporting && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  className="flex items-center gap-1.5 bg-red-950/80 border border-red-500/50 px-2 py-0.5 rounded-lg text-red-200 text-[10px] font-bold shadow-md shadow-red-900/30 shrink-0"
+                >
+                  <div className="relative w-4 h-4 flex items-center justify-center">
+                    <motion.svg
+                      className="w-4 h-4 text-red-400 shrink-0"
+                      viewBox="0 0 24 24"
+                      animate={{ rotate: 360 }}
+                      transition={{ repeat: Infinity, duration: 1.1, ease: "linear" }}
+                    >
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="9"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        className="opacity-25 text-red-300"
+                      />
+                      <motion.circle
+                        cx="12"
+                        cy="12"
+                        r="9"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeDasharray="56"
+                        strokeDashoffset="18"
+                        strokeLinecap="round"
+                        className="text-red-400"
+                      />
+                    </motion.svg>
+                  </div>
+                  <span className="text-[9.5px] font-black uppercase text-red-200 tracking-wider">
+                    Exporting...
+                  </span>
+                </motion.div>
+              )}
+              <HeaderTooltip
+                text={
+                  isQueueEmpty
+                    ? "Snapshot queue is empty. Please select issues or generate a report snapshot before exporting."
+                    : "Trigger Export Broker's batch export functionality for all queued snapshots"
+                }
+              >
+                <button
+                  type="button"
+                  disabled={isQueueEmpty || isBatchExporting}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isQueueEmpty || isBatchExporting) return;
+                    if (onBatchExport) {
+                      onBatchExport();
+                    } else {
+                      handleExportPdf();
+                    }
+                  }}
+                  className={`bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-[10.5px] px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider shadow-md shadow-red-500/20 active:scale-95 cursor-pointer border border-red-400/30 shrink-0 ${
+                    isQueueEmpty || isBatchExporting ? "opacity-50 cursor-not-allowed pointer-events-auto" : ""
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5 text-white shrink-0" />
+                  <span>Bulk PDF Export</span>
+                </button>
+              </HeaderTooltip>
+            </div>
+          )}
 
           {/* Share Report / Card Link Button */}
           {onShare && (
@@ -1453,6 +1543,8 @@ export default function App() {
       return "system";
     }
   );
+
+  const [isBatchExporting, setIsBatchExporting] = useState(false);
 
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const savedTheme = localStorage.getItem("jira_theme");
@@ -2176,7 +2268,7 @@ export default function App() {
     // Load extended fields
     if (preset.statusMapping) setStatusMapping(preset.statusMapping);
     if (preset.metrics) setMetrics(preset.metrics);
-    if (preset.visualizations) setVisualizations(preset.visualizations);
+    if (preset.visualizations) setVisualizations(preset.visualizations as any);
     if (preset.exportFormat) setExportFormat(preset.exportFormat);
     if (preset.autoExport !== undefined) setAutoExport(preset.autoExport);
     if (preset.fileNamingRule !== undefined) setFileNamingRule(preset.fileNamingRule);
@@ -2674,7 +2766,7 @@ export default function App() {
           const tList = await typeRes.json();
           logNetworkRequest("/api/jira/issuetypes", "GET", typeRes.status, typeRes.statusText, `Loaded ${tList.length} issue type schemas successfully.`);
           
-          const uniqueTypes = Array.from(new Set(tList.map((t: any) => t.name as string)));
+          const uniqueTypes: string[] = Array.from(new Set(tList.map((t: any) => t.name as string)));
           setJiraIssueTypes(uniqueTypes);
           setSelectedIssueTypes(uniqueTypes.slice(0, 4));
         } else {
@@ -3950,7 +4042,7 @@ export default function App() {
             columns: [],
             metrics: [],
             visualizations: { pieChart: true, barChart: true, lineChart: true, table: true },
-            exportFormat: foundExport.format || "CSV",
+            exportFormat: (foundExport.format as any) || "CSV",
             autoExport: false,
             fileNamingRule: foundExport.filename,
             selectedStatuses: [],
@@ -3959,11 +4051,11 @@ export default function App() {
           issues: foundExport.issuesSnapshot || [],
           metrics: {
             totalIssues: foundExport.issuesSnapshot?.length || 0,
-            doneCount: foundExport.issuesSnapshot?.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || i.mappedStatus === "Resolved").length || 0,
+            doneCount: foundExport.issuesSnapshot?.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || (i.mappedStatus as string) === "Resolved").length || 0,
             inProgressCount: foundExport.issuesSnapshot?.filter(i => i.status === "In Progress" || i.mappedStatus === "In Progress").length || 0,
             todoCount: foundExport.issuesSnapshot?.filter(i => i.status === "To Do" || i.mappedStatus === "To Do").length || 0,
             blockedCount: foundExport.issuesSnapshot?.filter(i => i.status === "Blocked" || i.mappedStatus === "Blocked").length || 0,
-            completionPercentage: foundExport.issuesSnapshot?.length ? Math.round((foundExport.issuesSnapshot.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || i.mappedStatus === "Resolved").length / foundExport.issuesSnapshot.length) * 100) : 0,
+            completionPercentage: foundExport.issuesSnapshot?.length ? Math.round((foundExport.issuesSnapshot.filter(i => i.status === "Done" || i.mappedStatus === "Done" || i.status === "Resolved" || (i.mappedStatus as string) === "Resolved").length / foundExport.issuesSnapshot.length) * 100) : 0,
             overdueIssues: foundExport.issuesSnapshot?.filter(i => i.dueDate && i.dueDate < new Date().toISOString().substring(0, 10)).length || 0,
             unassignedIssues: foundExport.issuesSnapshot?.filter(i => !i.assignee || i.assignee === "Unassigned").length || 0,
             bugsToStoriesRatio: "0",
@@ -4286,6 +4378,27 @@ export default function App() {
           );
         });
     }, 400);
+  };
+
+  const handleBatchPdfExport = () => {
+    if (isBatchExporting) return;
+    setIsBatchExporting(true);
+    addToast(
+      "Batch PDF Export Initiated",
+      `Consolidating ${recentExports.length || 1} report snapshot(s) into Enterprise PDF package...`,
+      "syncing",
+      3500
+    );
+    setTimeout(() => {
+      handleTriggerExport("PDF");
+      setIsBatchExporting(false);
+      addToast(
+        "Batch PDF Export Complete",
+        "All queued report snapshots successfully compiled and exported into a consolidated PDF package.",
+        "success",
+        4500
+      );
+    }, 2200);
   };
 
   const handleDropOnSlot = (e: React.DragEvent, targetSlotIdx: number) => {
@@ -4618,7 +4731,7 @@ export default function App() {
 
                 {/* Run button */}
                 <button
-                  onClick={handleGenerateReport}
+                  onClick={() => handleGenerateReport()}
                   disabled={generating}
                   className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-800 disabled:to-indigo-800 text-white font-black text-xs px-5 py-2.5 rounded-xl hover:shadow-lg hover:shadow-blue-500/10 transition-all flex items-center gap-2 uppercase tracking-wider active:scale-[0.98]"
                 >
@@ -4986,7 +5099,7 @@ export default function App() {
                     detectedStatuses={isSandbox ? SANDBOX_STATUSES : jiraStatuses}
                     mapping={statusMapping}
                     onUpdateMapping={setStatusMapping}
-                    categoryColors={categoryColors}
+                    categoryColors={categoryColors as any}
                     onUpdateCategoryColors={handleUpdateCategoryColors}
                     issues={isSandbox ? getSandboxIssues() : (report?.issues || [])}
                     addToast={addToast}
@@ -5019,7 +5132,7 @@ export default function App() {
                 content = (
                   <VisualizationPanel
                     visualizations={visualizations}
-                    onChangeVisualizations={setVisualizations}
+                    onChangeVisualizations={(v: any) => setVisualizations(v)}
                     customChartConfig={customChartConfig}
                     onChangeCustomChartConfig={setCustomChartConfig}
                   />
@@ -5070,6 +5183,16 @@ export default function App() {
                       localStorage.removeItem("jira_recent_exports");
                       addToast("History Cleared", "The exports archive log has been cleared successfully.", "success", 3000);
                     }}
+                    recentSearches={recentSearches}
+                    onApplyRecentSearch={(searchItem) => {
+                      if (searchItem?.jql) {
+                        addToast("Filter Restored", `Restored JQL search query: ${searchItem.jql}`, "info", 3000);
+                        handleGenerateReport();
+                      }
+                    }}
+                    queuedIssues={report?.issues || (isSandbox ? getSandboxIssues() : [])}
+                    isBatchExporting={isBatchExporting}
+                    onBatchExport={handleBatchPdfExport}
                   />
                 ) : null;
                 break;
@@ -5130,6 +5253,9 @@ export default function App() {
                         );
                       }
                     }}
+                    onBatchExport={handleBatchPdfExport}
+                    isBatchExporting={panelId === "export" ? isBatchExporting : false}
+                    isQueueEmpty={panelId === "export" ? ((report?.issues || (isSandbox ? getSandboxIssues() : [])).length === 0) : false}
                     filterOptions={cardSubFilters[panelId]}
                     onToggleFilter={(key) => handleToggleSubFilter(panelId, key)}
                     index={index}

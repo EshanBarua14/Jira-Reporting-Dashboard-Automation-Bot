@@ -72,7 +72,7 @@ export const AiAnalystChat: React.FC<AiAnalystChatProps> = ({ report, addToast }
             metrics: report.metrics,
             config: report.config,
             issues: report.issues?.slice(0, 30),
-            summary: report.summary
+            summary: report.aiSummary
           } : null
         })
       });

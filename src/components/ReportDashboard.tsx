@@ -936,7 +936,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
     const dateStr = new Date().toISOString().split("T")[0];
     const exportBundle = {
       exportTimestamp: new Date().toISOString(),
-      reportTitle: report?.config?.title || "OmniSync PMO Aggregate Dashboard Export",
+      reportTitle: (report?.config as any)?.title || "OmniSync PMO Aggregate Dashboard Export",
       selectedProjects: report?.config?.selectedProjects || [],
       executiveMetrics: report?.metrics || {},
       totalFilteredIssues: filteredIssues.length,
@@ -2212,13 +2212,13 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
         report?.metrics,
         {
           projects: safeConfig.selectedProjects,
-          dateRange: safeConfig.dateRangeStart ? `${safeConfig.dateRangeStart} to ${safeConfig.dateRangeEnd || "Present"}` : "All Time Scope",
-          jqlFilter: safeConfig.jqlFilter,
-          issueTypes: safeConfig.issueTypes,
-          statuses: safeConfig.selectedStatuses,
+          dateRange: (safeConfig as any).dateRangeStart ? `${(safeConfig as any).dateRangeStart} to ${(safeConfig as any).dateRangeEnd || "Present"}` : "All Time Scope",
+          jqlFilter: (safeConfig as any).jqlFilter,
+          issueTypes: (safeConfig as any).issueTypes,
+          statuses: (safeConfig as any).selectedStatuses,
           summarySearchQuery: summarySearchQuery || searchQuery,
-          sprint: safeConfig.sprint,
-          assignee: safeConfig.assignee,
+          sprint: (safeConfig as any).sprint,
+          assignee: (safeConfig as any).assignee,
         }
       );
       if (onRecordExport) {
@@ -3054,7 +3054,7 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           >
             <div className="p-4 bg-slate-900/90 border border-indigo-500/40 rounded-2xl shadow-2xl backdrop-blur-md">
               <JqlVisualBuilder
-                isLight={theme === "light"}
+                theme={theme}
                 onApplyJql={(jql) => {
                   setSearchQuery(jql);
                   addToast?.("JQL Filter Applied", `Applied visual query filter: ${jql}`, "success", 3000);
@@ -3526,11 +3526,11 @@ ${aiSummary.recommendations.map((rec, idx) => `${idx + 1}. ${rec}`).join("\n")}
           >
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between gap-1">
               <span className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-orange-400" /> Bugs to Stories</span>
-              {getTrendUI("bugsToStoriesRatio", metrics.bugsCount || 0)}
+              {getTrendUI("bugsToStoriesRatio", (metrics as any).bugsCount || 0)}
             </div>
             <div className="text-xl font-black text-white mt-1">{metrics.bugsToStoriesRatio}</div>
             <div className="text-[9px] text-slate-400 mt-0.5">Quality vs feature scale</div>
-            {renderSparkline("bugsToStoriesRatio", metrics.bugsCount || 0)}
+            {renderSparkline("bugsToStoriesRatio", (metrics as any).bugsCount || 0)}
 
             {/* Tooltip */}
             <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2.5 w-64 p-3 bg-slate-950 border border-white/10 rounded-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-250 leading-normal text-left">

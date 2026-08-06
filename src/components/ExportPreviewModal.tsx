@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { JiraIssue, ColumnDefinition } from "../types";
-import { X, Download, FileSpreadsheet, FileJson, CheckSquare, Square, Edit3, Search, Filter, RefreshCw } from "lucide-react";
+import { X, Download, FileSpreadsheet, FileJson, CheckSquare, Square, Edit3, Search, Filter, RefreshCw, FileText } from "lucide-react";
+import { motion } from "motion/react";
 import { exportToCSV } from "../utils/export";
 
 interface ExportPreviewModalProps {
@@ -32,6 +33,8 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set((issues || []).map((i) => i.id)));
   // Search query within modal
   const [modalSearch, setModalSearch] = useState("");
+  // Custom Metadata Note
+  const [customNote, setCustomNote] = useState("");
 
   // Sync state whenever modal opens or issues prop updates
   React.useEffect(() => {
@@ -40,6 +43,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
       setEditableIssues([...currentIssues]);
       setSelectedIds(new Set(currentIssues.map((i) => i.id)));
       setModalSearch("");
+      setCustomNote("");
     }
   }, [isOpen, issues]);
 
@@ -93,7 +97,8 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
     const filename = `${defaultFilename}.csv`;
     exportToCSV(selectedIssuesList, columns, defaultFilename);
     onRecordExport?.("CSV", filename, selectedIssuesList);
-    addToast?.("CSV Export Complete", `Exported ${selectedIssuesList.length} customized records to ${filename}.`, "success");
+    const noteSuffix = customNote.trim() ? ` [Note: "${customNote.trim()}"]` : "";
+    addToast?.("CSV Export Complete", `Exported ${selectedIssuesList.length} customized records to ${filename}.${noteSuffix}`, "success");
     onClose();
   };
 
@@ -104,9 +109,10 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
     }
     const filename = `${defaultFilename}.json`;
     const exportData = {
-      issues: selectedIssuesList,
+      metadataNote: customNote.trim() || undefined,
       exportedAt: new Date().toISOString(),
       count: selectedIssuesList.length,
+      issues: selectedIssuesList,
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
     const anchor = document.createElement("a");
@@ -117,13 +123,18 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
     anchor.remove();
 
     onRecordExport?.("JSON", filename, selectedIssuesList);
-    addToast?.("JSON Export Complete", `Exported ${selectedIssuesList.length} customized records to ${filename}.`, "success");
+    const noteSuffix = customNote.trim() ? ` [Note: "${customNote.trim()}"]` : "";
+    addToast?.("JSON Export Complete", `Exported ${selectedIssuesList.length} customized records to ${filename}.${noteSuffix}`, "success");
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 transition-all duration-300">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 24 }}
+        transition={{ type: "spring", stiffness: 350, damping: 25 }}
         className={`w-full max-w-5xl max-h-[90vh] flex flex-col rounded-2xl border shadow-2xl overflow-hidden ${
           isLight
             ? "bg-white border-slate-200 text-slate-800"
@@ -187,6 +198,23 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
               value={modalSearch}
               onChange={(e) => setModalSearch(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-950 border border-white/10 text-white focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        {/* Custom Metadata Note Attachment Bar */}
+        <div className="px-6 py-2.5 bg-indigo-950/20 border-b border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 text-xs font-black text-indigo-300 shrink-0 uppercase tracking-wider">
+            <FileText className="w-4 h-4 text-indigo-400" />
+            <span>Custom Export Metadata Note:</span>
+          </div>
+          <div className="relative flex-1 w-full max-w-xl">
+            <input
+              type="text"
+              placeholder="Attach custom note to metadata (e.g. Q3 PMO Executive Audit - Board Review Draft)..."
+              value={customNote}
+              onChange={(e) => setCustomNote(e.target.value)}
+              className="w-full px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-950/90 border border-indigo-500/30 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/50 transition-all"
             />
           </div>
         </div>
@@ -317,7 +345,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
             </button>
           </div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };

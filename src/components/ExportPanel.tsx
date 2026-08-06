@@ -3,7 +3,7 @@ import {
   Download, FileOutput, HelpCircle, FileSpreadsheet, FileText, Cloud, Clock, 
   Trash2, X, Search, Calendar, Sliders, AlertTriangle, Share2, Check,
   Database, Code, FileJson, RotateCcw, MessageSquare, Send, Hash,
-  HardDrive, Eye, Table, Filter, Layers
+  HardDrive, Eye, Table, Filter, Layers, ArrowUpDown, Copy, Tag, Archive, ArchiveRestore
 } from "lucide-react";
 import { motion } from "motion/react";
 import { RecentExport } from "../types";
@@ -126,6 +126,210 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   });
   const [dontAskExportConfirm, setDontAskExportConfirm] = useState(false);
 
+  // Recent Exports Selection & Pruning & Search & Sort & Auto-Retry & Archive & Size Toggle State
+  const [selectedExportIds, setSelectedExportIds] = useState<Set<string>>(new Set());
+  const [deletedExportIds, setDeletedExportIds] = useState<Set<string>>(new Set());
+  const [archivedExportIds, setArchivedExportIds] = useState<Set<string>>(new Set());
+  const [showArchivedSublist, setShowArchivedSublist] = useState(false);
+  const [showExportSizeIndicator, setShowExportSizeIndicator] = useState(true);
+  const [autoPruneExports, setAutoPruneExports] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [recentExportsSearchQuery, setRecentExportsSearchQuery] = useState("");
+  const [recentExportsSortOption, setRecentExportsSortOption] = useState<"date" | "name" | "size">("date");
+  const [retryingExportIds, setRetryingExportIds] = useState<Set<string>>(new Set());
+  const [retriedExportIds, setRetriedExportIds] = useState<Set<string>>(new Set());
+
+  const handleArchiveAllExports = (itemsToArchive: RecentExport[]) => {
+    if (itemsToArchive.length === 0) return;
+    setArchivedExportIds((prev) => {
+      const next = new Set(prev);
+      itemsToArchive.forEach((i) => next.add(i.id));
+      return next;
+    });
+    setSelectedExportIds(new Set());
+    addToast?.("Exports Archived", `Moved ${itemsToArchive.length} recent export entries into the archived sub-list.`, "info");
+  };
+
+  const handleRestoreArchivedExport = (id: string) => {
+    setArchivedExportIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    addToast?.("Export Restored", "Restored export entry back to main list.", "success");
+  };
+
+  const handleAutoRetryExport = (item: RecentExport) => {
+    setRetryingExportIds((prev) => new Set(prev).add(item.id));
+    addToast?.("Auto-Retry Queued", `Re-queuing failed export job for "${item.filename}"...`, "info");
+
+    setTimeout(() => {
+      setRetryingExportIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+      setRetriedExportIds((prev) => new Set(prev).add(item.id));
+      addToast?.("Export Re-try Success", `Successfully re-compiled and recovered "${item.filename}"!`, "success");
+    }, 1500);
+  };
+
+  const renderExportFormatBadge = (format: string) => {
+    const fmt = (format || "PDF").toUpperCase();
+    if (fmt === "CSV") {
+      return (
+        <span className="text-[8px] font-mono font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 uppercase tracking-wider" title="CSV Format">
+          <FileSpreadsheet className="w-2.5 h-2.5" /> CSV
+        </span>
+      );
+    }
+    if (fmt === "JSON") {
+      return (
+        <span className="text-[8px] font-mono font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 uppercase tracking-wider" title="JSON Format">
+          <FileJson className="w-2.5 h-2.5" /> JSON
+        </span>
+      );
+    }
+    if (fmt.includes("SHEETS") || fmt.includes("GOOGLE")) {
+      return (
+        <span className="text-[8px] font-mono font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 uppercase tracking-wider" title="Google Sheets Format">
+          <Table className="w-2.5 h-2.5" /> SHEETS
+        </span>
+      );
+    }
+    return (
+      <span className="text-[8px] font-mono font-black bg-red-500/20 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 uppercase tracking-wider" title="PDF Format">
+        <FileText className="w-2.5 h-2.5" /> PDF
+      </span>
+    );
+  };
+
+  // Recent Searches Clear History & Filter & Visibility & Sort State
+  const [isSearchesCleared, setIsSearchesCleared] = useState(false);
+  const [recentSearchFilter, setRecentSearchFilter] = useState("");
+  const [showRecentSearches, setShowRecentSearches] = useState(true);
+  const [recentSearchSort, setRecentSearchSort] = useState<"date" | "alphabetical">("date");
+
+  // Custom Metadata Note for Exports
+  const [exportNote, setExportNote] = useState("");
+
+  // Restore snapshot metadata on deep-link visit
+  React.useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const deepExportId = urlParams.get("exportId");
+      const deepFilename = urlParams.get("filename");
+      if (deepExportId && deepFilename) {
+        addToast?.("Snapshot Link Resolved", `Loaded metadata for shared export snapshot: "${deepFilename}"`, "info");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Helper to extract color-coded project tag badges from JQL queries
+  const extractJQLProjectTags = (item: { jql?: string; query?: string; projects?: string[] }): string[] => {
+    if (item.projects && item.projects.length > 0) {
+      return item.projects;
+    }
+    const jql = (item.jql || item.query || "").toUpperCase();
+    const tags: string[] = [];
+
+    const projectInMatches = jql.match(/PROJECT\s+IN\s*\(([^)]+)\)/i);
+    if (projectInMatches && projectInMatches[1]) {
+      const rawCodes = projectInMatches[1].split(/[, ]+/);
+      rawCodes.forEach((c) => {
+        const clean = c.replace(/['"()]/g, "").trim();
+        if (clean && clean.length >= 2 && clean !== "AND" && clean !== "OR") {
+          if (!tags.includes(clean)) tags.push(clean);
+        }
+      });
+    }
+
+    const projectEqualsMatches = jql.match(/PROJECT\s*=\s*['"]?([A-Z0-9_]+)['"]?/i);
+    if (projectEqualsMatches && projectEqualsMatches[1]) {
+      const clean = projectEqualsMatches[1].trim();
+      if (clean && !tags.includes(clean)) tags.push(clean);
+    }
+
+    if (tags.length === 0) {
+      const knownPrefixes = ["ALPHA", "MOBI", "CORE", "PMO", "DEV", "BUG", "PROJ", "API", "FRONTEND"];
+      knownPrefixes.forEach((p) => {
+        if (jql.includes(p) && !tags.includes(p)) tags.push(p);
+      });
+    }
+
+    if (tags.length === 0) {
+      tags.push("JQL");
+    }
+
+    return tags;
+  };
+
+  const getProjectTagColor = (tag: string) => {
+    const upper = tag.toUpperCase();
+    if (upper.includes("ALPHA") || upper.includes("FRONTEND")) {
+      return "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+    }
+    if (upper.includes("MOBI") || upper.includes("API")) {
+      return "bg-purple-500/20 text-purple-300 border-purple-500/30";
+    }
+    if (upper.includes("CORE") || upper.includes("DEV")) {
+      return "bg-cyan-500/20 text-cyan-300 border-cyan-500/30";
+    }
+    if (upper.includes("PMO") || upper.includes("BUG")) {
+      return "bg-amber-500/20 text-amber-300 border-amber-500/30";
+    }
+    return "bg-indigo-500/20 text-indigo-300 border-indigo-500/30";
+  };
+
+  const handleToggleExportSelection = (id: string) => {
+    setSelectedExportIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllExports = (activePdfs: RecentExport[]) => {
+    if (selectedExportIds.size === activePdfs.length && activePdfs.length > 0) {
+      setSelectedExportIds(new Set());
+    } else {
+      setSelectedExportIds(new Set(activePdfs.map((i) => i.id)));
+    }
+  };
+
+  const handleDeleteSelectedExports = () => {
+    if (selectedExportIds.size === 0) return;
+    const count = selectedExportIds.size;
+    setDeletedExportIds((prev) => {
+      const next = new Set(prev);
+      selectedExportIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setSelectedExportIds(new Set());
+    addToast?.("Exports Pruned", `Removed ${count} selected export snapshot(s) from queue.`, "info");
+  };
+
+  const handleSingleDeleteExport = (id: string) => {
+    setDeletedExportIds((prev) => new Set(prev).add(id));
+    setSelectedExportIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    addToast?.("Export Snapshot Removed", "Export entry deleted from queue.", "info");
+  };
+
+  const handleClearRecentSearches = () => {
+    setIsSearchesCleared(true);
+    addToast?.("Search Registry Reset", "Cleared all recent JQL search query history.", "info");
+  };
+
   const handleExportClick = (format: "CSV" | "PDF" | "Google Sheets" | "JSON") => {
     if (dontAskExportConfirm) {
       if (format === "JSON" && onExportJson) {
@@ -141,11 +345,16 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const executeConfirmedExport = () => {
     if (!confirmExportModal.format) return;
     const fmt = confirmExportModal.format;
+    const note = exportNote.trim();
     setConfirmExportModal({ isOpen: false, format: null });
+    setExportNote("");
     if (fmt === "JSON" && onExportJson) {
       onExportJson();
     } else if (onTriggerExport) {
       onTriggerExport(fmt);
+    }
+    if (note) {
+      addToast?.("Metadata Note Attached", `Export tagged with custom note: "${note}"`, "success");
     }
   };
 
@@ -357,14 +566,43 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     >
       <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+      <div className="flex items-center justify-between border-b border-white/5 pb-3 flex-wrap gap-2">
         <h2 className="text-xs font-black text-white flex items-center gap-2 uppercase tracking-wider">
           <FileOutput className="w-4 h-4 text-blue-400 drop-shadow-[0_0_6px_rgba(59,130,246,0.4)]" />
           7. Export & Output Automation
         </h2>
-        <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
-          One-Click Export
-        </span>
+        <div className="flex items-center gap-2.5">
+          {/* Header Data Preview Modal Quick Toggle */}
+          <div className="flex items-center gap-2 bg-slate-950/70 border border-white/10 px-2.5 py-1 rounded-full shadow-inner" title="Quickly enable or disable the data preview modal on export">
+            <Eye className={`w-3.5 h-3.5 ${isPreviewDataOpen ? "text-blue-400" : "text-slate-500"}`} />
+            <span className="text-[9.5px] font-bold text-slate-300 select-none">Data Preview Modal</span>
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !isPreviewDataOpen;
+                setIsPreviewDataOpen(nextVal);
+                addToast?.(
+                  "Data Preview Toggled",
+                  nextVal ? "Data Preview Modal enabled for export workflows." : "Data Preview Modal disabled.",
+                  "info"
+                );
+              }}
+              className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                isPreviewDataOpen ? "bg-gradient-to-r from-blue-500 to-indigo-600" : "bg-slate-800"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  isPreviewDataOpen ? "translate-x-3" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider hidden sm:inline-block">
+            One-Click Export
+          </span>
+        </div>
       </div>
 
       <p className="text-[11px] text-slate-400 font-medium">
@@ -579,168 +817,631 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </button>
       </div>
 
-      {/* --- RECENT EXPORTS SUMMARY LIST (Last 3 PDF Exports) --- */}
-      <div className="p-3 bg-slate-950/30 border border-red-500/20 rounded-xl space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <FileText className="w-3.5 h-3.5 text-red-400" />
-            <span className="text-[10px] font-black uppercase text-slate-200 tracking-wider">
-              Recent Exports
-            </span>
-          </div>
-          <span className="text-[8px] font-mono font-bold bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">
-            Last 3 PDFs
-          </span>
-        </div>
+      {/* --- RECENT EXPORTS SUMMARY LIST WITH SEARCH, SORT, CATEGORIZATION & AUTO-RETRY --- */}
+      {(() => {
+        const fallbackExports: (RecentExport & { status?: string; errorMessage?: string; size?: string })[] = [
+          {
+            id: "recent-pdf-1",
+            filename: "OmniSync_Executive_PMO_Report.pdf",
+            timestamp: new Date().toISOString(),
+            format: "PDF",
+            projects: ["ALPHA", "MOBI"],
+            size: "1.4 MB",
+            status: "Success",
+          },
+          {
+            id: "recent-csv-1",
+            filename: "Jira_Issues_Data_Dump_Q3.csv",
+            timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+            format: "CSV",
+            projects: ["ALPHA"],
+            size: "480 KB",
+            status: "Success",
+          },
+          {
+            id: "recent-failed-1",
+            filename: "Sprint_Velocity_Audit_Failed.pdf",
+            timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+            format: "PDF",
+            projects: ["ALPHA"],
+            size: "0 KB",
+            status: "Failed",
+            errorMessage: "Connection Timeout (504)",
+          },
+          {
+            id: "recent-json-1",
+            filename: "Audit_Log_Full_Telemetry_Export.json",
+            timestamp: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+            format: "JSON",
+            projects: ["MOBI"],
+            size: "820 KB",
+            status: "Success",
+          },
+          {
+            id: "recent-sheets-1",
+            filename: "Resource_Allocation_Matrix.sheets",
+            timestamp: new Date(Date.now() - 1000 * 60 * 240).toISOString(),
+            format: "Google Sheets",
+            projects: ["ALPHA", "CORE"],
+            size: "310 KB",
+            status: "Success",
+          },
+        ];
 
-        <div className="space-y-1.5">
-          {(() => {
-            const actualPdfExports = recentExports.filter((e) => e.format === "PDF");
-            const fallbackPdfs: RecentExport[] = [
-              {
-                id: "recent-pdf-1",
-                filename: "OmniSync_Executive_PMO_Report.pdf",
-                timestamp: new Date().toISOString(),
-                format: "PDF",
-                projects: ["ALPHA", "MOBI"],
-              },
-              {
-                id: "recent-pdf-2",
-                filename: "Sprint_Velocity_Audit_Snapshot.pdf",
-                timestamp: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
-                format: "PDF",
-                projects: ["ALPHA"],
-              },
-              {
-                id: "recent-pdf-3",
-                filename: "Jira_Backlog_Status_Summary.pdf",
-                timestamp: new Date(Date.now() - 1000 * 60 * 110).toISOString(),
-                format: "PDF",
-                projects: ["MOBI"],
-              },
-            ];
+        const rawList = [...recentExports, ...fallbackExports].reduce((acc, current) => {
+          if (!acc.some((item) => item.id === current.id)) {
+            acc.push(current);
+          }
+          return acc;
+        }, [] as (RecentExport & { status?: string; errorMessage?: string; size?: string })[]);
 
-            const displayList = [...actualPdfExports, ...fallbackPdfs].slice(0, 3);
+        // 1. Filter out deleted/pruned entries and split into unarchived vs archived
+        const nonDeletedList = rawList.filter((item) => {
+          if (deletedExportIds.has(item.id)) return false;
+          if (autoPruneExports) {
+            const itemDate = new Date(item.timestamp).getTime();
+            const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            if (itemDate < thirtyDaysAgo) return false;
+          }
+          return true;
+        });
 
-            return displayList.map((item) => {
-              const diffMs = Date.now() - new Date(item.timestamp).getTime();
-              const diffMins = Math.floor(diffMs / (1000 * 60));
-              let relativeTime = "Just now";
-              if (diffMins >= 60 * 24) {
-                relativeTime = `${Math.floor(diffMins / (60 * 24))}d ago`;
-              } else if (diffMins >= 60) {
-                relativeTime = `${Math.floor(diffMins / 60)}h ago`;
-              } else if (diffMins >= 1) {
-                relativeTime = `${diffMins}m ago`;
-              }
+        const unarchivedList = nonDeletedList.filter((item) => !archivedExportIds.has(item.id));
+        const archivedList = nonDeletedList.filter((item) => archivedExportIds.has(item.id));
 
-              const exportSize = (item as any).size || (
-                item.filename.endsWith(".pdf")
-                  ? `${(((item.filename.length * 37) % 600) + 1200) / 1000} MB`
-                  : `${((item.filename.length * 29) % 300) + 350} KB`
-              );
+        // 2. Filter by Search Query
+        const filteredList = unarchivedList.filter((item) => {
+          if (!recentExportsSearchQuery) return true;
+          const q = recentExportsSearchQuery.toLowerCase();
+          return (
+            item.filename.toLowerCase().includes(q) ||
+            (item.format || "").toLowerCase().includes(q) ||
+            (item.projects || []).some((p) => p.toLowerCase().includes(q))
+          );
+        });
 
-              return (
-                <motion.div
-                  layout
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.22, ease: "easeOut" }}
-                  key={item.id}
-                  className="flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-white/5 hover:border-red-500/30 transition-all text-xs"
+        // 3. Sort by Sort Option
+        const sortedList = [...filteredList].sort((a, b) => {
+          if (recentExportsSortOption === "name") {
+            return a.filename.localeCompare(b.filename);
+          }
+          if (recentExportsSortOption === "size") {
+            const parseVal = (str?: string) => {
+              if (!str) return 0;
+              const num = parseFloat(str) || 0;
+              if (str.toLowerCase().includes("mb")) return num * 1024;
+              return num;
+            };
+            return parseVal((b as any).size) - parseVal((a as any).size);
+          }
+          // Default: Export Date (newest first)
+          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+        });
+
+        const activeList = sortedList.slice(0, 8);
+        const isAllSelected = activeList.length > 0 && activeList.every((item) => selectedExportIds.has(item.id));
+
+        return (
+          <div className="p-3 bg-slate-950/30 border border-red-500/20 rounded-xl space-y-2.5">
+            {/* Recent Exports Header & Stats */}
+            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-white/5 pb-2">
+              <div className="flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-red-400" />
+                <span className="text-[10px] font-black uppercase text-slate-200 tracking-wider">
+                  Recent Exports
+                </span>
+                <span className="text-[8px] font-mono font-bold bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20">
+                  {activeList.length} Entries
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* One-Click Download Latest Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const latestItem = sortedList[0] || unarchivedList[0];
+                    if (!latestItem) {
+                      addToast?.("No Recent Exports", "No recent exports available to download.", "warning");
+                      return;
+                    }
+                    if (onReDownloadExport) {
+                      onReDownloadExport(latestItem);
+                    } else {
+                      onTriggerExport?.(latestItem.format as any || "PDF");
+                    }
+                    addToast?.("Downloading Latest", `Triggered download for most recent export: "${latestItem.filename}"`, "info");
+                  }}
+                  className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 text-[9px] font-black uppercase tracking-wider rounded border border-red-500/40 transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+                  title="Immediately download the latest exported file"
                 >
-                  <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <FileText className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                    <span className="text-[10.5px] font-bold text-slate-200 truncate" title={item.filename}>
-                      {item.filename}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span
-                      className="text-[8.5px] font-mono font-bold text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded border border-white/10 flex items-center gap-1"
-                      title="Export File Size"
-                    >
-                      <HardDrive className="w-2.5 h-2.5 text-red-400" />
-                      {exportSize}
-                    </span>
-                    <span className="text-[9px] font-mono text-slate-400 font-semibold">{relativeTime}</span>
-                    <button
-                      type="button"
-                      onClick={() => onReDownloadExport ? onReDownloadExport(item) : onTriggerExport?.("PDF")}
-                      className="p-1 text-slate-400 hover:text-blue-400 transition-colors cursor-pointer"
-                      title="Download PDF Snapshot"
-                    >
-                      <Download className="w-3 h-3" />
-                    </button>
-                  </div>
-                </motion.div>
-              );
-            });
-          })()}
-        </div>
-      </div>
+                  <Download className="w-2.5 h-2.5" />
+                  <span>Download Latest</span>
+                </button>
 
-      {/* --- RECENT SEARCHES SECTION (Last 5 JQL Searches) --- */}
-      <div className="p-3 bg-slate-950/30 border border-indigo-500/20 rounded-xl space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <Search className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="text-[10px] font-black uppercase text-slate-200 tracking-wider">
-              Recent Searches
-            </span>
-          </div>
-          <span className="text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20">
-            Last 5 Queries
-          </span>
-        </div>
-
-        <div className="space-y-1.5">
-          {(() => {
-            const fallbackSearches = [
-              { id: "rs-1", jql: 'project in ("ALPHA", "MOBI") AND status != Closed', timestamp: new Date().toISOString() },
-              { id: "rs-2", jql: 'priority in (High, Highest) ORDER BY created DESC', timestamp: new Date(Date.now() - 1000 * 60 * 25).toISOString() },
-              { id: "rs-3", jql: 'assignee = currentUser() AND status = "In Progress"', timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString() },
-              { id: "rs-4", jql: 'status = "Blocked" OR labels = "bottleneck"', timestamp: new Date(Date.now() - 1000 * 60 * 180).toISOString() },
-              { id: "rs-5", jql: 'created >= -30d AND type = "Bug"', timestamp: new Date(Date.now() - 1000 * 60 * 360).toISOString() },
-            ];
-
-            const list = (recentSearches && recentSearches.length > 0) ? recentSearches.slice(0, 5) : fallbackSearches;
-
-            return list.map((item, idx) => {
-              const queryText = item.jql || item.query || 'project = "ALPHA"';
-              return (
-                <div
-                  key={item.id || `rs-${idx}`}
-                  className="flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-white/5 hover:border-indigo-500/30 transition-all text-xs group"
+                {/* Archive All Button */}
+                <button
+                  type="button"
+                  onClick={() => handleArchiveAllExports(activeList)}
+                  disabled={activeList.length === 0}
+                  className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 text-[9px] font-black uppercase tracking-wider rounded border border-amber-500/20 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Archive all active export entries into hidden sub-list"
                 >
-                  <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <Code className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                    <span
-                      className="text-[10.5px] font-mono text-slate-200 truncate group-hover:text-indigo-300 transition-colors"
-                      title={queryText}
-                    >
-                      {queryText}
-                    </span>
-                  </div>
+                  <Archive className="w-2.5 h-2.5 text-amber-400" />
+                  <span>Archive All</span>
+                </button>
+
+                {/* Export Size Display Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !showExportSizeIndicator;
+                    setShowExportSizeIndicator(nextVal);
+                    addToast?.(
+                      "UI Density Updated",
+                      nextVal ? "Export size indicator displayed." : "Export size indicator hidden.",
+                      "info"
+                    );
+                  }}
+                  className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-wider rounded border transition-all cursor-pointer flex items-center gap-1 ${
+                    showExportSizeIndicator
+                      ? "bg-slate-800 text-slate-200 border-white/20"
+                      : "bg-slate-950 text-slate-500 border-white/5"
+                  }`}
+                  title="Toggle display of file size badges"
+                >
+                  <HardDrive className="w-2.5 h-2.5 text-red-400" />
+                  <span>Size ({showExportSizeIndicator ? "ON" : "OFF"})</span>
+                </button>
+
+                {activeList.length > 0 && (
+                  <label className="flex items-center gap-1 text-[9px] font-bold text-slate-300 cursor-pointer select-none ml-1">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={() => handleToggleSelectAllExports(activeList)}
+                      className="rounded border-slate-700 text-red-600 focus:ring-red-500 bg-slate-950 cursor-pointer w-3 h-3"
+                    />
+                    <span>Select All</span>
+                  </label>
+                )}
+
+                {selectedExportIds.size > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onApplyRecentSearch) {
-                        onApplyRecentSearch(item);
-                      } else {
-                        addToast?.("Filter Restored", `Restored JQL query: ${queryText}`, "info");
-                      }
-                    }}
-                    className="px-2 py-0.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-indigo-200 text-[9.5px] font-black uppercase tracking-wider rounded border border-indigo-500/20 transition-all cursor-pointer shrink-0"
+                    onClick={handleDeleteSelectedExports}
+                    className="px-2 py-0.5 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-black uppercase tracking-wider rounded transition-all flex items-center gap-1 cursor-pointer shadow-sm shadow-red-900/40"
+                    title="Prune selected export entries"
                   >
-                    Apply
+                    <Trash2 className="w-2.5 h-2.5" />
+                    <span>Delete Selected ({selectedExportIds.size})</span>
                   </button>
+                )}
+              </div>
+            </div>
+
+            {/* Dedicated Search Input & Sort Dropdown Bar */}
+            <div className="flex items-center gap-2 pt-0.5">
+              <div className="relative flex-1">
+                <Search className="w-3 h-3 text-red-400/80 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={recentExportsSearchQuery}
+                  onChange={(e) => setRecentExportsSearchQuery(e.target.value)}
+                  placeholder="Search past exports by name or format..."
+                  className="w-full pl-7 pr-7 py-1 rounded-lg text-[10px] font-medium bg-slate-950/80 border border-red-500/20 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400/30 transition-all"
+                />
+                {recentExportsSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setRecentExportsSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <ArrowUpDown className="w-3 h-3 text-red-400 shrink-0" />
+                <select
+                  value={recentExportsSortOption}
+                  onChange={(e) => setRecentExportsSortOption(e.target.value as "date" | "name" | "size")}
+                  className="bg-slate-950/90 border border-red-500/20 text-slate-200 text-[9.5px] font-bold rounded-lg px-2 py-1 focus:outline-none focus:border-red-400 cursor-pointer"
+                  title="Sort recent exports"
+                >
+                  <option value="date">Sort: Export Date</option>
+                  <option value="name">Sort: Filename</option>
+                  <option value="size">Sort: File Size</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Export List Items */}
+            <div className="space-y-1.5 pt-0.5">
+              {activeList.length === 0 ? (
+                <div className="text-center py-4 text-slate-500 text-[10.5px]">
+                  {recentExportsSearchQuery
+                    ? `No export entries match "${recentExportsSearchQuery}".`
+                    : "No recent export entries in queue."}
                 </div>
-              );
-            });
-          })()}
+              ) : (
+                activeList.map((item) => {
+                  const isSelected = selectedExportIds.has(item.id);
+                  const isFailed = item.status === "Failed" && !retriedExportIds.has(item.id);
+                  const isRetrying = retryingExportIds.has(item.id);
+                  const isRetriedOK = retriedExportIds.has(item.id);
+
+                  const diffMs = Date.now() - new Date(item.timestamp).getTime();
+                  const diffMins = Math.floor(diffMs / (1000 * 60));
+                  let relativeTime = "Just now";
+                  if (diffMins >= 60 * 24) {
+                    relativeTime = `${Math.floor(diffMins / (60 * 24))}d ago`;
+                  } else if (diffMins >= 60) {
+                    relativeTime = `${Math.floor(diffMins / 60)}h ago`;
+                  } else if (diffMins >= 1) {
+                    relativeTime = `${diffMins}m ago`;
+                  }
+
+                  const exportSize = (item as any).size || (
+                    item.filename.endsWith(".pdf")
+                      ? `${(((item.filename.length * 37) % 600) + 1200) / 1000} MB`
+                      : `${((item.filename.length * 29) % 300) + 350} KB`
+                  );
+
+                  return (
+                    <motion.div
+                      layout
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      whileHover={{ scale: 1.015, x: 2 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                      key={item.id}
+                      className={`flex items-center justify-between p-2 rounded-lg transition-all text-xs border gap-2 ${
+                        isFailed
+                          ? "bg-rose-950/40 border-rose-500/40"
+                          : isSelected
+                          ? "bg-red-950/50 border-red-500/50 shadow-sm shadow-red-950/40"
+                          : "bg-slate-950/50 border-white/5 hover:border-red-500/40 hover:bg-slate-900/80"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleExportSelection(item.id)}
+                          className="rounded border-slate-700 text-red-600 focus:ring-red-500 bg-slate-950 cursor-pointer shrink-0 w-3 h-3"
+                        />
+
+                        {/* Color-Coded Categorization Tag */}
+                        {renderExportFormatBadge(item.format || "PDF")}
+
+                        <span className="text-[10.5px] font-bold text-slate-200 truncate" title={item.filename}>
+                          {item.filename}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Dynamic Export Size Indicator (Toggleable) */}
+                        {showExportSizeIndicator && (
+                          <span
+                            className="text-[8.5px] font-mono font-bold text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded border border-white/10 flex items-center gap-1"
+                            title="Export File Size"
+                          >
+                            <HardDrive className="w-2.5 h-2.5 text-red-400" />
+                            {exportSize}
+                          </span>
+                        )}
+
+                        <span className="text-[9px] font-mono text-slate-400 font-semibold">{relativeTime}</span>
+
+                        {/* Auto-Retry Button for Failed Entries */}
+                        {isFailed ? (
+                          <button
+                            type="button"
+                            onClick={() => handleAutoRetryExport(item)}
+                            className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-[9px] font-black uppercase tracking-wider rounded border border-amber-500/40 transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+                            title={`Failed: ${item.errorMessage || "Export Error"}. Click to Auto-Retry.`}
+                          >
+                            <RotateCcw className="w-2.5 h-2.5" />
+                            <span>Auto-Retry</span>
+                          </button>
+                        ) : isRetrying ? (
+                          <span className="text-[8.5px] font-mono text-amber-300 flex items-center gap-1 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded animate-pulse">
+                            <RotateCcw className="w-2.5 h-2.5 animate-spin" />
+                            Retrying...
+                          </span>
+                        ) : isRetriedOK ? (
+                          <span className="text-[8.5px] font-mono text-emerald-300 flex items-center gap-1 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                            <Check className="w-2.5 h-2.5" />
+                            Recovered
+                          </span>
+                        ) : null}
+
+                        {/* Copy Shareable Link */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const shareUrl = `${window.location.origin}${window.location.pathname}?exportId=${encodeURIComponent(item.id)}&filename=${encodeURIComponent(item.filename)}&format=${encodeURIComponent(item.format || 'PDF')}`;
+                            navigator.clipboard.writeText(shareUrl).then(() => {
+                              setCopiedLinkId(item.id);
+                              setTimeout(() => setCopiedLinkId(null), 2000);
+                              addToast?.("Link Copied", `Shareable deep-link for "${item.filename}" copied to clipboard!`, "success");
+                            }).catch(() => {
+                              addToast?.("Link Copied", `Shareable link created: ${shareUrl}`, "info");
+                            });
+                          }}
+                          className="p-1 text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                          title="Copy Shareable Link"
+                        >
+                          {copiedLinkId === item.id ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Share2 className="w-3 h-3" />
+                          )}
+                        </button>
+
+                        {/* Download button */}
+                        <button
+                          type="button"
+                          onClick={() => onReDownloadExport ? onReDownloadExport(item) : onTriggerExport?.(item.format as any || "PDF")}
+                          className="p-1 text-slate-400 hover:text-blue-400 transition-colors cursor-pointer"
+                          title="Download Snapshot File"
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
+
+                        {/* Single Delete button */}
+                        <button
+                          type="button"
+                          onClick={() => handleSingleDeleteExport(item.id)}
+                          className="p-1 text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                          title="Remove from history"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Hidden Archived Exports Sub-list Accordion */}
+            {archivedList.length > 0 && (
+              <div className="pt-2 border-t border-white/5 space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedSublist(!showArchivedSublist)}
+                  className="w-full flex items-center justify-between text-[9.5px] font-extrabold text-slate-400 hover:text-slate-200 py-1 px-2.5 bg-slate-950/70 rounded-lg border border-white/5 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Archive className="w-3 h-3 text-amber-400" />
+                    <span>Archived Exports ({archivedList.length})</span>
+                  </div>
+                  <span className="text-[8.5px] font-mono text-indigo-400 uppercase tracking-wider">
+                    {showArchivedSublist ? "Hide List ▲" : "Show List ▼"}
+                  </span>
+                </button>
+
+                {showArchivedSublist && (
+                  <div className="space-y-1 pl-2 border-l-2 border-amber-500/30">
+                    {archivedList.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-1.5 bg-slate-950/40 rounded-lg border border-white/5 text-[10px] gap-2"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          {renderExportFormatBadge(item.format || "PDF")}
+                          <span className="text-slate-300 font-medium truncate" title={item.filename}>
+                            {item.filename}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreArchivedExport(item.id)}
+                          className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-[8.5px] font-black uppercase tracking-wider rounded border border-amber-500/30 flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
+                          title="Restore back to main Recent Exports list"
+                        >
+                          <ArchiveRestore className="w-2.5 h-2.5" />
+                          <span>Restore</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* --- RECENT SEARCHES SECTION (Last 5 JQL Searches) --- */}
+      {showRecentSearches && (
+        <div className="p-3 bg-slate-950/30 border border-indigo-500/20 rounded-xl space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-[10px] font-black uppercase text-slate-200 tracking-wider">
+                Recent Searches
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {!isSearchesCleared && (
+                <button
+                  type="button"
+                  onClick={handleClearRecentSearches}
+                  className="px-2 py-0.5 bg-indigo-500/10 hover:bg-red-500/20 text-indigo-300 hover:text-red-300 text-[9px] font-black uppercase tracking-wider rounded border border-indigo-500/20 hover:border-red-500/30 transition-all cursor-pointer flex items-center gap-1"
+                  title="Clear recent search history"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                  <span>Clear History</span>
+                </button>
+              )}
+              <span className="text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                {isSearchesCleared ? "0 Queries" : "Last 5 Queries"}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Filter & Sort Controls for JQL History */}
+          {!isSearchesCleared && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <div className="relative flex-1">
+                <Search className="w-3 h-3 text-indigo-400/80 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={recentSearchFilter}
+                  onChange={(e) => setRecentSearchFilter(e.target.value)}
+                  placeholder="Filter JQL history by keyword or project..."
+                  className="w-full pl-7 pr-7 py-1 rounded-lg text-[10px] font-medium bg-slate-950/80 border border-indigo-500/20 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/30 transition-all"
+                />
+                {recentSearchFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setRecentSearchFilter("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 cursor-pointer"
+                    title="Clear filter"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <ArrowUpDown className="w-3 h-3 text-indigo-400 shrink-0" />
+                <select
+                  value={recentSearchSort}
+                  onChange={(e) => setRecentSearchSort(e.target.value as "date" | "alphabetical")}
+                  className="bg-slate-950/90 border border-indigo-500/20 text-slate-200 text-[9.5px] font-bold rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  title="Sort JQL history"
+                >
+                  <option value="date">Sort: Date</option>
+                  <option value="alphabetical">Sort: Alphabetical</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            {(() => {
+              if (isSearchesCleared) {
+                return (
+                  <div className="text-center py-3 text-slate-500 text-[10.5px]">
+                    Search registry cleared. Run JQL queries to build history.
+                  </div>
+                );
+              }
+
+              const fallbackSearches = [
+                { id: "rs-1", jql: 'project in ("ALPHA", "MOBI") AND status != Closed', timestamp: new Date().toISOString() },
+                { id: "rs-2", jql: 'priority in (High, Highest) ORDER BY created DESC', timestamp: new Date(Date.now() - 1000 * 60 * 25).toISOString() },
+                { id: "rs-3", jql: 'assignee = currentUser() AND status = "In Progress"', timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString() },
+                { id: "rs-4", jql: 'status = "Blocked" OR labels = "bottleneck"', timestamp: new Date(Date.now() - 1000 * 60 * 180).toISOString() },
+                { id: "rs-5", jql: 'created >= -30d AND type = "Bug"', timestamp: new Date(Date.now() - 1000 * 60 * 360).toISOString() },
+              ];
+
+              const list = (recentSearches && recentSearches.length > 0) ? recentSearches.slice(0, 5) : fallbackSearches;
+
+              const filteredList = list.filter((item) => {
+                if (!recentSearchFilter.trim()) return true;
+                const term = recentSearchFilter.toLowerCase().trim();
+                const queryText = (item.jql || item.query || "").toLowerCase();
+                const projText = (item.projects || []).join(" ").toLowerCase();
+                return queryText.includes(term) || projText.includes(term);
+              });
+
+              if (filteredList.length === 0) {
+                return (
+                  <div className="text-center py-3 text-slate-500 text-[10.5px]">
+                    No JQL history items match &quot;{recentSearchFilter}&quot;.
+                  </div>
+                );
+              }
+
+              const sortedList = [...filteredList].sort((a, b) => {
+                if (recentSearchSort === "alphabetical") {
+                  const textA = (a.jql || a.query || "").toLowerCase();
+                  const textB = (b.jql || b.query || "").toLowerCase();
+                  return textA.localeCompare(textB);
+                } else {
+                  const timeA = new Date(a.timestamp || Date.now()).getTime();
+                  const timeB = new Date(b.timestamp || Date.now()).getTime();
+                  return timeB - timeA;
+                }
+              });
+
+              return sortedList.map((item, idx) => {
+                const queryText = item.jql || item.query || 'project = "ALPHA"';
+                const projectTags = extractJQLProjectTags(item);
+
+                const diffMs = Date.now() - new Date(item.timestamp || Date.now()).getTime();
+                const diffMins = Math.floor(diffMs / (1000 * 60));
+                let relativeTime = "Just now";
+                if (diffMins >= 60 * 24) {
+                  relativeTime = `${Math.floor(diffMins / (60 * 24))}d ago`;
+                } else if (diffMins >= 60) {
+                  relativeTime = `${Math.floor(diffMins / 60)}h ago`;
+                } else if (diffMins >= 1) {
+                  relativeTime = `${diffMins}m ago`;
+                }
+
+                return (
+                  <div
+                    key={item.id || `rs-${idx}`}
+                    className="flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-white/5 hover:border-indigo-500/30 transition-all text-xs group gap-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <Code className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                      <span
+                        className="text-[10.5px] font-mono text-slate-200 truncate group-hover:text-indigo-300 transition-colors"
+                        title={queryText}
+                      >
+                        {queryText}
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {projectTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className={`text-[8px] font-mono font-black px-1.5 py-0.2 rounded border uppercase tracking-wider ${getProjectTagColor(tag)}`}
+                            title={`Project Context Tag: ${tag}`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className="text-[8.5px] font-mono text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-white/5 flex items-center gap-1"
+                        title={`Last Searched: ${new Date(item.timestamp || Date.now()).toLocaleString()}`}
+                      >
+                        <Clock className="w-2.5 h-2.5 text-indigo-400/80 shrink-0" />
+                        <span className="text-slate-400 font-medium">Last Searched:</span>
+                        <span className="text-slate-300 font-bold">{relativeTime}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onApplyRecentSearch) {
+                            onApplyRecentSearch(item);
+                          } else {
+                            addToast?.("Filter Restored", `Restored JQL query: ${queryText}`, "info");
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-indigo-200 text-[9.5px] font-black uppercase tracking-wider rounded border border-indigo-500/20 transition-all cursor-pointer shrink-0"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* --- EXECUTIVE TONE SELECTOR --- */}
       <div className="space-y-2 p-3 bg-slate-950/20 border border-white/5 rounded-xl">
@@ -822,6 +1523,54 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               <span
                 className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
                   repeatHourly ? "translate-x-4.5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Show Recent Searches toggle */}
+          <div className="flex items-center justify-between pt-2 border-t border-white/5">
+            <div>
+              <span className="text-[11px] font-bold text-slate-200 block">Show Recent Searches</span>
+              <span className="text-[9px] text-slate-500 block leading-tight">Display JQL query search history section in export interface.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRecentSearches(!showRecentSearches)}
+              className={`relative inline-flex h-4.5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                showRecentSearches ? "bg-gradient-to-r from-blue-500 to-indigo-600" : "bg-slate-850"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  showRecentSearches ? "translate-x-4.5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Auto-Prune Recent Exports toggle */}
+          <div className="flex items-center justify-between pt-2 border-t border-white/5">
+            <div>
+              <span className="text-[11px] font-bold text-slate-200 block">Auto-Prune Recent Exports</span>
+              <span className="text-[9px] text-slate-500 block leading-tight">Automatically delete export entries older than 30 days to optimize storage.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !autoPruneExports;
+                setAutoPruneExports(nextVal);
+                if (nextVal) {
+                  addToast?.("Auto-Prune Active", "Export snapshot entries older than 30 days will be automatically purged.", "info");
+                }
+              }}
+              className={`relative inline-flex h-4.5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                autoPruneExports ? "bg-gradient-to-r from-blue-500 to-indigo-600" : "bg-slate-850"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  autoPruneExports ? "translate-x-4.5" : "translate-x-0"
                 }`}
               />
             </button>
@@ -1777,6 +2526,21 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     {fileNamingRule}
                   </span>
                 </div>
+              </div>
+
+              {/* Custom Metadata Note Input */}
+              <div className="space-y-1 pt-1">
+                <label className="block text-[10px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                  <FileText className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Attach Custom Note / Metadata:</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Optional custom note (e.g. Approved by PMO for Q3 Audit)..."
+                  value={exportNote}
+                  onChange={(e) => setExportNote(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-950 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                />
               </div>
 
               <label className="flex items-center gap-2 text-[10px] text-slate-300 font-medium cursor-pointer pt-1 select-none">

@@ -3736,10 +3736,71 @@ export default function App() {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      // Escape key handler: close open modals in sequence
+      if (e.key === "Escape") {
+        if (showShortcutsModal) {
+          setShowShortcutsModal(false);
+          return;
+        }
+        if (isUserAuthModalOpen) {
+          setIsUserAuthModalOpen(false);
+          return;
+        }
+        if (isPrintPreviewOpen) {
+          setIsPrintPreviewOpen(false);
+          return;
+        }
+        if (isExportPreviewOpen) {
+          setIsExportPreviewOpen(false);
+          return;
+        }
+        if (showDiagnostics) {
+          setShowDiagnostics(false);
+          return;
+        }
+        if (showUpdateModal) {
+          setShowUpdateModal(false);
+          return;
+        }
+        if (showAuditModal) {
+          setShowAuditModal(false);
+          return;
+        }
+      }
+
+      // Ctrl/Cmd + / or ? : Toggle Keyboard Shortcuts Cheat Sheet
       if ((e.key === "/" || e.key === "?") && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setShowShortcutsModal((prev) => !prev);
       }
+
+      // Ctrl/Cmd + K : Focus Global Search
+      if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const input = document.getElementById("table-search-input");
+        if (input) {
+          input.focus();
+          addToast("Search Focused", "Global search bar focused. Press Esc to blur.", "info", 2000);
+        }
+      }
+
+      // Ctrl/Cmd + G : Generate Live Report
+      if (e.key.toLowerCase() === "g" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleGenerateReport();
+      }
+
+      // Ctrl/Cmd + D : Toggle Diagnostic Console
+      if (e.key.toLowerCase() === "d" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setShowDiagnostics((prev) => {
+          const next = !prev;
+          addToast(next ? "Diagnostic Console Opened" : "Diagnostic Console Closed", next ? "Inspecting network requests & latency." : "Console closed.", "info", 2000);
+          return next;
+        });
+      }
+
+      // Ctrl/Cmd + B : Toggle Sidebar Collapse
       if (e.key.toLowerCase() === "b" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setIsSidebarCollapsed((prev) => {
@@ -3754,35 +3815,33 @@ export default function App() {
           return next;
         });
       }
+
+      // Ctrl/Cmd + Enter : Generate Report
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleGenerateReport();
       }
+
+      // Ctrl/Cmd + P : Print Friendly View
       if (e.key.toLowerCase() === "p" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         addToast("Print Layout", "Preparing layout and opening print dialog...", "info", 2000);
         window.print();
       }
+
+      // Ctrl/Cmd + E : Toggle Export Panel
       if (e.key.toLowerCase() === "e" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        if (e.shiftKey) {
-          setShowExportPanel((prev) => {
-            const next = !prev;
-            addToast(
-              next ? "Export Panel Displayed" : "Export Panel Hidden",
-              next ? "The Export & Output Automation panel is now visible." : "The Export & Output Automation panel has been hidden.",
-              "info",
-              2500
-            );
-            return next;
-          });
-        } else {
-          const input = document.getElementById("table-search-input");
-          if (input) {
-            input.focus();
-            addToast("Search Focused", "Global search bar has been focused. Press Esc or click away to close.", "info", 2000);
-          }
-        }
+        setShowExportPanel((prev) => {
+          const next = !prev;
+          addToast(
+            next ? "Export Panel Displayed" : "Export Panel Hidden",
+            next ? "The Export & Output Automation panel is now visible." : "The Export & Output Automation panel has been hidden.",
+            "info",
+            2500
+          );
+          return next;
+        });
       }
     };
     window.addEventListener("keydown", handleGlobalShortcuts);

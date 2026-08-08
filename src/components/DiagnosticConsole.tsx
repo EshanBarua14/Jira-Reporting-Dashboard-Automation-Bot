@@ -25,6 +25,17 @@ export const DiagnosticConsole: React.FC<DiagnosticConsoleProps> = ({
 }) => {
   const [expandedLogIdx, setExpandedLogIdx] = useState<number | null>(null);
 
+  // Handle Escape key to close console
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   // Derive latency and rate limiting statistics from network logs
   const calculateLatencyStats = () => {
     // Generate realistic or parsed latency readings for captured requests

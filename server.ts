@@ -878,14 +878,16 @@ app.post("/api/pmo/summarize", async (req, res) => {
 
       let speedRating = "moderate throughput";
       if (cycleTime > 0 && cycleTime <= 4) speedRating = "exceptional hyper-velocity pace";
-      else if (cycleTime > 8) speedRating = "extended delivery cycles";
+      else if (cycleTime > 8) speedRating = "extended delivery cycle pace";
+
+      const article = speedRating.startsWith("e") ? "an" : "a";
 
       if (tone === "Optimistic") {
-        summaryText = `The team is making incredible headway across ${projectsStr}! We are operating in the ${stage} with a brilliant ${completion}% completion rate. Average cycle time is at a highly competitive ${cycleTime} days. Let's keep this spectacular momentum up as we tackle the remaining ${blocked} blockers and ${overdue} overdue items!`;
+        summaryText = `The team is making incredible headway across ${projectsStr}! We are operating in the ${stage} with a brilliant ${completion}% completion rate. Average cycle time is at a highly competitive ${cycleTime} days. Let's keep this momentum up as we tackle the remaining ${blocked} blocker${blocked === 1 ? '' : 's'} and ${overdue} overdue item${overdue === 1 ? '' : 's'}!`;
       } else if (tone === "Conservative") {
-        summaryText = `Warning: Project delivery for ${projectsStr} is currently tracking in the ${stage} with only ${completion}% of issues resolved. There are significant concerns with ${blocked} active blocks and ${overdue} overdue tickets that threaten scheduled releases. Average delivery time stands at ${cycleTime} days. Caution is highly advised.`;
+        summaryText = `Warning: Project delivery for ${projectsStr} is currently tracking in the ${stage} with only ${completion}% of issues resolved. There are significant concerns with ${blocked} active block${blocked === 1 ? '' : 's'} and ${overdue} overdue ticket${overdue === 1 ? '' : 's'} that threaten scheduled releases. Average delivery time stands at ${cycleTime} days. Caution is highly advised.`;
       } else {
-        summaryText = `Project scope is operating within the ${stage} with a ${completion}% complete-to-commit ratio across ${projectsStr}. The team is exhibiting an ${speedRating} with an average cycle time of ${cycleTime} days per task. Attention is advised on resolving ${blocked} blocked tracks and ${overdue} overdue items to maintain the committed delivery timeline.`;
+        summaryText = `Project scope is operating within the ${stage} with a ${completion}% complete-to-commit ratio across ${projectsStr}. The team is exhibiting ${article} ${speedRating} with an average cycle time of ${cycleTime} days per task. Attention is advised on resolving ${blocked} blocked track${blocked === 1 ? '' : 's'} and ${overdue} overdue item${overdue === 1 ? '' : 's'} to maintain the committed delivery timeline.`;
       }
     }
 
@@ -893,7 +895,7 @@ app.post("/api/pmo/summarize", async (req, res) => {
     const keyInsights = [
       `Completed delivery velocity stands at ${velocity} story points, proving a robust engineering cadence.`,
       total > 0 
-        ? `Task distribution contains ${metrics.inProgressCount || 0} active tickets in development, indicating balanced WIP limits.` 
+        ? `Task distribution contains ${metrics.inProgressCount || 0} active ticket${(metrics.inProgressCount || 0) === 1 ? '' : 's'} in development, indicating balanced WIP limits.` 
         : "Backlog refinement is complete, with tasks fully normalized across all standard issue fields.",
       `Average cycle time of ${cycleTime} days indicates stable pull-request review and deployment throughput.`
     ];
@@ -901,22 +903,22 @@ app.post("/api/pmo/summarize", async (req, res) => {
     // 3. Dynamic Bottlenecks (EXACTLY 2)
     const bottlenecks = [
       overdue > 0 
-        ? `${overdue} committed deliverables have missed scheduled deadlines, creating downstream sprint risk.` 
+        ? `${overdue} committed deliverable${overdue === 1 ? '' : 's'} ${overdue === 1 ? 'has' : 'have'} missed scheduled deadlines, creating downstream sprint risk.` 
         : `Timeline risks are low, with 100% of active deliverables tracking securely within scheduled deadlines.`,
       unassigned > 0 
-        ? `${unassigned} tickets are currently unassigned, representing raw backlog leak and developer bandwidth drift.` 
+        ? `${unassigned} ticket${unassigned === 1 ? ' is' : 's are'} currently unassigned, representing raw backlog leak and developer bandwidth drift.` 
         : blocked > 0 
-          ? `${blocked} tracks are blocked by external dependencies, requiring immediate cross-functional alignment.` 
+          ? `${blocked} track${blocked === 1 ? ' is' : 's are'} blocked by external dependencies, requiring immediate cross-functional alignment.` 
           : `WIP allocation is solid, with 100% of high-priority tickets actively owned by a team member.`
     ];
 
     // 4. Dynamic Recommendations (EXACTLY 3)
     const recommendations = [
       unassigned > 0 
-        ? `Triage the ${unassigned} unassigned issues immediately in tomorrow's standup to restore clean resource ownership.` 
+        ? `Triage the ${unassigned} unassigned issue${unassigned === 1 ? '' : 's'} immediately in tomorrow's standup to restore clean resource ownership.` 
         : `Run a mini backlog refinement session to ensure task readiness for upcoming milestones.`,
       blocked > 0 
-        ? `Escalate the ${blocked} blocked tickets to senior engineering leads to clear team blockages.` 
+        ? `Escalate the ${blocked} blocked ticket${blocked === 1 ? '' : 's'} to senior engineering leads to clear team blockages.` 
         : overdue > 0 
           ? `Reprioritize overdue tasks into the active sprint container with clear 24-hour delivery expectations.` 
           : `Audit high-priority backlog issues to prepopulate upcoming sprint candidates.`,
@@ -968,7 +970,7 @@ Rules:
 Do NOT include markdown headings or bullet points. Just raw text of 3 concise sentences.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are an elite Agile PMO Lead. Provide concise, impactful 3-sentence report summaries.",
@@ -1045,7 +1047,7 @@ ${sampleIssues || "No individual ticket data available."}
 User Question: ${question}`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction,
@@ -1227,7 +1229,7 @@ Identify overloaded developers and suggest re-assigning specific issues to under
 Provide your analysis and concrete, granular re-assignment proposals in the requested structured JSON format. Make sure proposed suggestAssignees are actual team members found in the workload list or "Unassigned".`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an elite scrum master and agile team coach. Analyze workload data, identify resource imbalances, and propose optimal task re-assignments to balance sprint velocity. Always return a structured JSON response.",
@@ -1340,7 +1342,7 @@ ${formattedList}
 Provide your mappings in the requested structured JSON format, including a brief, clear reasoning of why that status fits the category.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         systemInstruction: "You are an elite agile project manager. Analyze Jira statuses and categorize them strictly into 'To Do', 'In Progress', 'Done', or 'Blocked'. For each status, provide a highly professional, short explanation.",

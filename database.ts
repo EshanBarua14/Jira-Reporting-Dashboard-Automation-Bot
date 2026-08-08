@@ -22,6 +22,11 @@ export function initDatabase() {
   console.log(`[OmniSync DB] Initialising SQLite database at: ${dbPath}`);
   
   db = new Database(dbPath, { verbose: console.log });
+  try {
+    db.pragma("journal_mode = WAL");
+  } catch (e) {
+    console.warn("[OmniSync DB] WAL mode pragma warning:", e);
+  }
 
   // Create robust schema for key-value settings and detailed report history
   db.exec(`

@@ -171,6 +171,18 @@ export const UserAuthModal: React.FC<UserAuthModalProps> = ({
     return { label: "Strong & Secure", color: "bg-emerald-500", text: "text-emerald-400" };
   };
 
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   // 1. Handle Email Login
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();

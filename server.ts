@@ -4,6 +4,10 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
 import os from "os";
+import net from "net";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { z } from "zod";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import {
@@ -20,29 +24,185 @@ import {
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = 3000;
 
-app.use(express.json());
+// Security Headers (Helmet)
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'", "https:", "wss:", "ws:"],
+        frameAncestors: ["'self'"],
+        objectSrc: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// Strict payload size constraints (1MB max body)
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ limit: "1mb", extended: true }));
 
 // Initialize SQLite Database
 initDatabase();
 
-// --- SECURE DESKTOP-OPTIMIZED STORAGE ENGINE ---
+// --- RATE LIMITERS ---
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 attempts per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many authentication attempts. Please try again in 1 minute." }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "AI rate limit exceeded. Please wait before generating more summaries." }
+});
+
+const discordLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Discord API rate limit exceeded. Please wait before making more requests." }
+});
+
+const mutationLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 mutations per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Mutation rate limit exceeded. Please wait before performing more bulk updates." }
+});
+
+const generalApiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 150, // 150 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down." }
+});
+
+// Apply general API rate limiter to all /api routes
+app.use("/api/", generalApiLimiter);
+
+// --- SECURE DESKTOP-OPTIMIZED STORAGE ENGINE SCHEMAS ---
+const StoreSetSchema = z.object({
+  key: z.string().min(1, "Key is required").max(255),
+  value: z.any()
+});
+
+const StoreSetMultipleSchema = z.object({
+  data: z.record(z.string().min(1).max(255), z.any())
+});
+
+const StoreDeleteSchema = z.object({
+  key: z.string().min(1, "Key is required").max(255)
+});
+
+const SaveReportSchema = z.object({
+  id: z.string().min(1, "Report ID is required").max(255),
+  timestamp: z.string().min(1, "Timestamp is required").max(100),
+  config: z.any().optional(),
+  summary: z.any().optional(),
+  issues: z.any().optional()
+});
+
+const DeleteReportSchema = z.object({
+  id: z.string().min(1, "Report ID is required").max(255)
+});
+
+const DiscordChannelsSchema = z.object({
+  token: z.string().min(1, "Discord Bot Token is required").max(512),
+  guildId: z.string().min(1, "Guild ID is required").max(128)
+});
+
+const DiscordMessagesSchema = z.object({
+  token: z.string().min(1, "Discord Bot Token is required").max(512),
+  channelId: z.string().min(1, "Channel ID is required").max(128)
+});
+
+const JiraSearchSchema = z.object({
+  jql: z.string().min(1, "JQL is required").max(4096, "JQL query exceeds maximum length of 4096 characters")
+});
+
+const BulkTransitionSchema = z.object({
+  issueKeys: z.array(z.string().min(1).max(255)).min(1, "At least one issue key is required").max(100, "Maximum 100 issues allowed per bulk transition"),
+  targetStatus: z.string().min(1, "Target status is required").max(255)
+});
+
+const PmoSummarizeSchema = z.object({
+  metrics: z.object({
+    totalIssues: z.number().optional(),
+    completionPercentage: z.number().optional(),
+    overdueIssues: z.number().optional(),
+    unassignedIssues: z.number().optional(),
+    blockedCount: z.number().optional(),
+    sprintVelocity: z.number().optional(),
+    averageCycleTime: z.number().optional(),
+    inProgressCount: z.number().optional()
+  }).optional(),
+  projectScope: z.array(z.string().max(255)).max(50).optional(),
+  summaryTone: z.enum(["Neutral", "Optimistic", "Conservative"]).optional()
+});
+
+const PmoQuickSummarySchema = z.object({
+  metrics: z.any().optional(),
+  issues: z.array(z.any()).max(1000).optional(),
+  projectsScope: z.array(z.string().max(255)).max(50).optional()
+});
+
+const AiChatSchema = z.object({
+  question: z.string().min(1, "Question is required").max(2048, "Question exceeds 2048 character limit"),
+  reportContext: z.any().optional()
+});
+
+const SuggestFiltersSchema = z.object({
+  metrics: z.any().optional(),
+  config: z.any().optional()
+});
+
+const SuggestBulkUpdatesSchema = z.object({
+  issues: z.array(z.any()).min(1, "No issues provided").max(500)
+});
+
+const AutoTriageSchema = z.object({
+  issues: z.array(z.any()).min(1, "No issues provided").max(500),
+  issuesPerAssignee: z.record(z.string(), z.number()).optional()
+});
+
+const AutoMapSchema = z.object({
+  statuses: z.array(z.any()).min(1, "No statuses provided").max(200)
+});
+
 // Storage APIs
 app.post("/api/store/set", (req, res) => {
-  const { key, value } = req.body;
-  if (!key) {
-    return res.status(400).json({ error: "Key is required" });
+  const parseResult = StoreSetSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parseResult.error.format() });
   }
+  const { key, value } = parseResult.data;
   setSetting(key, value);
   res.json({ success: true });
 });
 
 app.post("/api/store/set-multiple", (req, res) => {
-  const { data } = req.body;
-  if (!data || typeof data !== "object") {
-    return res.status(400).json({ error: "Invalid data" });
+  const parseResult = StoreSetMultipleSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parseResult.error.format() });
   }
+  const { data } = parseResult.data;
   for (const [key, value] of Object.entries(data)) {
     setSetting(key, value);
   }
@@ -51,27 +211,30 @@ app.post("/api/store/set-multiple", (req, res) => {
 
 app.get("/api/store/get", (req, res) => {
   const { key } = req.query;
-  if (key) {
-    res.json({ value: getSetting(key as string) });
+  if (key && typeof key === "string") {
+    res.json({ value: getSetting(key) });
   } else {
     res.json({ data: getAllSettings() });
   }
 });
 
 app.post("/api/store/delete", (req, res) => {
-  const { key } = req.body;
-  if (key) {
-    deleteSetting(key);
+  const parseResult = StoreDeleteSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid key parameter", details: parseResult.error.format() });
   }
+  const { key } = parseResult.data;
+  deleteSetting(key);
   res.json({ success: true });
 });
 
 // Structured Reports DB APIs
 app.post("/api/reports/save", (req, res) => {
-  const { id, timestamp, config, summary, issues } = req.body;
-  if (!id || !timestamp) {
-    return res.status(400).json({ error: "id and timestamp are required" });
+  const parseResult = SaveReportSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid report payload", details: parseResult.error.format() });
   }
+  const { id, timestamp, config, summary, issues } = parseResult.data;
   saveReport(id, timestamp, config, summary, issues);
   res.json({ success: true });
 });
@@ -81,15 +244,17 @@ app.get("/api/reports/get", (req, res) => {
     const reports = getAllReports();
     res.json({ reports });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to retrieve saved reports." });
   }
 });
 
 app.post("/api/reports/delete", (req, res) => {
-  const { id } = req.body;
-  if (id) {
-    deleteReport(id);
+  const parseResult = DeleteReportSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid report ID parameter", details: parseResult.error.format() });
   }
+  const { id } = parseResult.data;
+  deleteReport(id);
   res.json({ success: true });
 });
 
@@ -186,20 +351,87 @@ const getAuthHeader = (email: string, token: string) => {
 
 // --- JIRA API PROXY ROUTES ---
 
-// 1. Authenticate & Create Session
-app.post("/api/jira/test-connection", async (req, res) => {
+const JiraConnectionSchema = z.object({
+  jiraUrl: z.string().min(1, "Jira Base URL is required"),
+  email: z.string().email("Valid email address is required"),
+  token: z.string().min(1, "API Token is required")
+});
+
+// Helper to validate target Jira URL against SSRF and internal address space
+function validateTargetUrl(jiraUrl: string): { isValid: boolean; error?: string; formattedUrl: string } {
+  let formattedUrl = jiraUrl.trim().replace(/\/+$/, "");
+  if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
+    formattedUrl = `https://${formattedUrl}`;
+  }
+
   try {
-    const { jiraUrl, email, token } = req.body;
-
-    if (!jiraUrl || !email || !token) {
-      return res.status(400).json({ error: "Missing required Jira Base URL, Email, or Password/Token." });
+    const parsed = new URL(formattedUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { isValid: false, error: "Invalid protocol. Only HTTP and HTTPS Jira URLs are supported.", formattedUrl };
     }
 
-    // Clean URL
-    let formattedUrl = jiraUrl.trim().replace(/\/+$/, "");
-    if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
-      formattedUrl = `https://${formattedUrl}`;
+    const hostname = parsed.hostname.toLowerCase();
+    
+    // Check hostname blocklist
+    if (
+      hostname === "localhost" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1" ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal") ||
+      hostname === "metadata.google.internal"
+    ) {
+      return { isValid: false, error: "Loopback and internal metadata addresses are not permitted for Jira connections.", formattedUrl };
     }
+
+    // Check IP address directly (IPv4 private ranges & loopback & link-local)
+    if (net.isIP(hostname)) {
+      if (
+        hostname.startsWith("127.") ||
+        hostname.startsWith("10.") ||
+        hostname.startsWith("169.254.") ||
+        hostname.startsWith("0.") ||
+        hostname === "255.255.255.255"
+      ) {
+        return { isValid: false, error: "Loopback and internal IP addresses are not permitted for Jira connections.", formattedUrl };
+      }
+      if (hostname.startsWith("172.")) {
+        const parts = hostname.split(".");
+        const second = parseInt(parts[1], 10);
+        if (second >= 16 && second <= 31) {
+          return { isValid: false, error: "Private network IP addresses are not permitted for Jira connections.", formattedUrl };
+        }
+      }
+      if (hostname.startsWith("192.168.")) {
+        return { isValid: false, error: "Private network IP addresses are not permitted for Jira connections.", formattedUrl };
+      }
+    }
+
+    return { isValid: true, formattedUrl };
+  } catch (e) {
+    return { isValid: false, error: "Invalid Jira URL format.", formattedUrl };
+  }
+}
+
+// 1. Authenticate & Create Session
+app.post("/api/jira/test-connection", authLimiter, async (req, res) => {
+  try {
+    const parseResult = JiraConnectionSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation error: Please verify your Jira URL, Email, and API Token.",
+        details: parseResult.error.format()
+      });
+    }
+
+    const { jiraUrl, email, token } = parseResult.data;
+
+    // Clean and validate URL against SSRF / malicious protocols
+    const urlValidation = validateTargetUrl(jiraUrl);
+    if (!urlValidation.isValid) {
+      return res.status(400).json({ error: urlValidation.error });
+    }
+    const formattedUrl = urlValidation.formattedUrl;
 
     let apiVersion: "3" | "2" = "3";
     let userData: any = null;
@@ -292,19 +524,23 @@ app.post("/api/jira/test-connection", async (req, res) => {
 });
 
 // Lightweight connection check against Jira serverInfo (Heartbeat)
-app.post("/api/jira/heartbeat", async (req, res) => {
+app.post("/api/jira/heartbeat", authLimiter, async (req, res) => {
   try {
-    const { jiraUrl, email, token } = req.body;
-
-    if (!jiraUrl || !email || !token) {
-      return res.status(400).json({ error: "Missing required Jira Base URL, Email, or API Token." });
+    const parseResult = JiraConnectionSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation error: Invalid heartbeat payload.",
+        details: parseResult.error.format()
+      });
     }
 
-    // Clean URL
-    let formattedUrl = jiraUrl.trim().replace(/\/+$/, "");
-    if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
-      formattedUrl = `https://${formattedUrl}`;
+    const { jiraUrl, email, token } = parseResult.data;
+
+    const urlValidation = validateTargetUrl(jiraUrl);
+    if (!urlValidation.isValid) {
+      return res.status(400).json({ error: urlValidation.error });
     }
+    const formattedUrl = urlValidation.formattedUrl;
 
     let apiVersion: "3" | "2" = "3";
     let serverData: any = null;
@@ -406,6 +642,16 @@ const requireJiraSession = (req: express.Request, res: express.Response, next: e
   (req as any).jiraSession = session;
   next();
 };
+
+// Logout and Invalidate Session
+app.post("/api/jira/logout", requireJiraSession, (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const sessionId = authHeader.split(" ")[1];
+    sessions.delete(sessionId);
+  }
+  return res.json({ success: true, message: "Jira session invalidated successfully." });
+});
 
 // 2. Fetch Projects (Auto-Fetched from Jira)
 app.get("/api/jira/projects", requireJiraSession, async (req, res) => {
@@ -520,10 +766,11 @@ function getCommentBody(body: any): string {
 app.post("/api/jira/search", requireJiraSession, async (req, res) => {
   const { jiraUrl, email, token, apiVersion } = (req as any).jiraSession;
   try {
-    const { jql } = req.body;
-    if (!jql) {
-      return res.status(400).json({ error: "No query JQL provided." });
+    const parseResult = JiraSearchSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid JQL query payload", details: parseResult.error.format() });
     }
+    const { jql } = parseResult.data;
 
     let allIssues: any[] = [];
     let startAt = 0;
@@ -654,13 +901,14 @@ app.post("/api/jira/search", requireJiraSession, async (req, res) => {
 });
 
 // 6. Bulk Issue Transitions / Status Updates
-app.post("/api/jira/bulk-transition", requireJiraSession, async (req, res) => {
+app.post("/api/jira/bulk-transition", mutationLimiter, requireJiraSession, async (req, res) => {
   const { jiraUrl, email, token, apiVersion } = (req as any).jiraSession;
   try {
-    const { issueKeys, targetStatus } = req.body;
-    if (!issueKeys || !Array.isArray(issueKeys) || issueKeys.length === 0 || !targetStatus) {
-      return res.status(400).json({ error: "Missing issueKeys or targetStatus." });
+    const parseResult = BulkTransitionSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid bulk transition payload", details: parseResult.error.format() });
     }
+    const { issueKeys, targetStatus } = parseResult.data;
 
     const version = apiVersion || "3";
     const auth = getAuthHeader(email, token);
@@ -786,11 +1034,12 @@ app.get("/api/confluence/search", requireJiraSession, async (req, res) => {
 });
 
 // --- DISCORD API PROXY ROUTES ---
-app.post("/api/discord/channels", async (req, res) => {
-  const { token, guildId } = req.body;
-  if (!token || !guildId) {
-    return res.status(400).json({ error: "Missing Discord Bot Token or Guild ID." });
+app.post("/api/discord/channels", discordLimiter, async (req, res) => {
+  const parseResult = DiscordChannelsSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid Discord channels payload", details: parseResult.error.format() });
   }
+  const { token, guildId } = parseResult.data;
   try {
     const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
       headers: {
@@ -818,11 +1067,12 @@ app.post("/api/discord/channels", async (req, res) => {
   }
 });
 
-app.post("/api/discord/messages", async (req, res) => {
-  const { token, channelId } = req.body;
-  if (!token || !channelId) {
-    return res.status(400).json({ error: "Missing Discord Bot Token or Channel ID." });
+app.post("/api/discord/messages", discordLimiter, async (req, res) => {
+  const parseResult = DiscordMessagesSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid Discord messages payload", details: parseResult.error.format() });
   }
+  const { token, channelId } = parseResult.data;
   try {
     const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages?limit=100`, {
       headers: {
@@ -853,9 +1103,13 @@ app.post("/api/discord/messages", async (req, res) => {
 });
 
 // --- ZERO-DEPENDENCY INTELLIGENT EXECUTIVE SUMMARIES ---
-app.post("/api/pmo/summarize", async (req, res) => {
+app.post("/api/pmo/summarize", aiLimiter, async (req, res) => {
   try {
-    const { metrics, projectScope, summaryTone } = req.body;
+    const parseResult = PmoSummarizeSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid PMO summarize payload", details: parseResult.error.format() });
+    }
+    const { metrics = {}, projectScope, summaryTone } = parseResult.data;
 
     const total = metrics.totalIssues || 0;
     const completion = metrics.completionPercentage || 0;
@@ -939,9 +1193,13 @@ app.post("/api/pmo/summarize", async (req, res) => {
 });
 
 // --- QUICK 3-SENTENCE AI SUMMARY ENDPOINT ---
-app.post("/api/pmo/quick-summary", async (req, res) => {
+app.post("/api/pmo/quick-summary", aiLimiter, async (req, res) => {
   try {
-    const { metrics, issues, projectsScope } = req.body;
+    const parseResult = PmoQuickSummarySchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid quick summary payload", details: parseResult.error.format() });
+    }
+    const { metrics, issues, projectsScope } = parseResult.data;
     const total = metrics?.totalIssues || (issues ? issues.length : 0);
     const completion = metrics?.completionPercentage || 0;
     const overdue = metrics?.overdueIssues || 0;
@@ -1004,12 +1262,13 @@ Do NOT include markdown headings or bullet points. Just raw text of 3 concise se
 });
 
 // --- AI ANALYST CHAT ENDPOINT ---
-app.post("/api/pmo/ai-chat", async (req, res) => {
+app.post("/api/pmo/ai-chat", aiLimiter, async (req, res) => {
   try {
-    const { question, reportContext } = req.body;
-    if (!question) {
-      return res.status(400).json({ error: "No question provided for AI analyst." });
+    const parseResult = AiChatSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid AI chat payload", details: parseResult.error.format() });
     }
+    const { question, reportContext } = parseResult.data;
 
     const metrics = reportContext?.metrics || {};
     const config = reportContext?.config || {};
@@ -1083,9 +1342,13 @@ User Question: ${question}`;
 });
 
 // --- SMART FILTER JQL SUGGESTIONS ---
-app.post("/api/pmo/suggest-filters", async (req, res) => {
+app.post("/api/pmo/suggest-filters", aiLimiter, async (req, res) => {
   try {
-    const { metrics, config } = req.body;
+    const parseResult = SuggestFiltersSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid suggest-filters payload", details: parseResult.error.format() });
+    }
+    const { metrics, config } = parseResult.data;
     
     const total = metrics?.totalIssues || 0;
     const overdue = metrics?.overdueIssues || 0;
@@ -1135,12 +1398,13 @@ app.post("/api/pmo/suggest-filters", async (req, res) => {
 });
 
 // --- SMART AUTOMATION FOR BULK ISSUES ---
-app.post("/api/pmo/suggest-bulk-updates", async (req, res) => {
+app.post("/api/pmo/suggest-bulk-updates", aiLimiter, async (req, res) => {
   try {
-    const { issues } = req.body;
-    if (!issues || !Array.isArray(issues) || issues.length === 0) {
-      return res.status(400).json({ error: "No issues provided for smart automation suggestion." });
+    const parseResult = SuggestBulkUpdatesSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid suggest-bulk-updates payload", details: parseResult.error.format() });
     }
+    const { issues } = parseResult.data;
 
     // High fidelity local rules engine
     const suggestions = issues.map((i: any) => {
@@ -1191,12 +1455,13 @@ app.post("/api/pmo/suggest-bulk-updates", async (req, res) => {
 });
 
 // AI Auto-Triage endpoint using Gemini to analyze resource imbalance
-app.post("/api/pmo/auto-triage", async (req, res) => {
+app.post("/api/pmo/auto-triage", aiLimiter, async (req, res) => {
   try {
-    const { issues, issuesPerAssignee } = req.body;
-    if (!issues || !Array.isArray(issues) || issues.length === 0) {
-      return res.status(400).json({ error: "No issues provided for auto-triage analysis." });
+    const parseResult = AutoTriageSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid auto-triage payload", details: parseResult.error.format() });
     }
+    const { issues, issuesPerAssignee } = parseResult.data;
 
     const ai = getGeminiClient();
 
@@ -1316,12 +1581,13 @@ function getGeminiClient() {
 }
 
 // AI Auto-Map Suggestions endpoint using Gemini 3.5 Flash and Structured JSON Output
-app.post("/api/gemini/auto-map", async (req, res) => {
+app.post("/api/gemini/auto-map", aiLimiter, async (req, res) => {
   try {
-    const { statuses } = req.body;
-    if (!statuses || !Array.isArray(statuses) || statuses.length === 0) {
-      return res.status(400).json({ error: "No statuses provided for suggestions." });
+    const parseResult = AutoMapSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid auto-map payload", details: parseResult.error.format() });
     }
+    const { statuses } = parseResult.data;
 
     const ai = getGeminiClient();
 
@@ -1410,7 +1676,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "127.0.0.1", () => {
     console.log(`Server running on port ${PORT}`);
   });
 }

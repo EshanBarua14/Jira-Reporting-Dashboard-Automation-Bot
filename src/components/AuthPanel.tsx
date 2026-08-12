@@ -78,15 +78,20 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   const [email, setEmail] = useState(() => {
     return localStorage.getItem("jira_email") || "";
   });
-  const [token, setToken] = useState(() => {
-    return localStorage.getItem("jira_token") || "";
-  });
+  // Tokens are kept strictly in React memory state and never saved to localStorage
+  const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [showDiscordToken, setShowDiscordToken] = useState(false);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Clean up legacy tokens from localStorage if present
+  React.useEffect(() => {
+    localStorage.removeItem("jira_token");
+    localStorage.removeItem("discord_token");
+  }, []);
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -157,7 +162,6 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
       });
       localStorage.setItem("jira_url", jiraUrl);
       localStorage.setItem("jira_email", email);
-      localStorage.setItem("jira_token", token);
     } catch (err: any) {
       setTestResult({
         success: false,
@@ -179,7 +183,6 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
       await onConnect({ jiraUrl, email, token });
       localStorage.setItem("jira_url", jiraUrl);
       localStorage.setItem("jira_email", email);
-      localStorage.setItem("jira_token", token);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to establish a connection to Jira.");
     } finally {

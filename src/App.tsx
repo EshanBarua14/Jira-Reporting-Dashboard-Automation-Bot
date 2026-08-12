@@ -1612,7 +1612,7 @@ export default function App() {
     return localStorage.getItem("jira_is_connected") === "true";
   });
   const [sessionId, setSessionId] = useState<string | null>(() => {
-    return localStorage.getItem("jira_session_id");
+    return sessionStorage.getItem("jira_session_id");
   });
   const [activeUser, setActiveUser] = useState<{ displayName: string; emailAddress: string; avatarUrl: string } | null>(() => {
     const saved = localStorage.getItem("jira_active_user");
@@ -2878,14 +2878,16 @@ export default function App() {
     }
     setIsDiscordConnected(true);
     localStorage.setItem("discord_connected", "true");
-    localStorage.setItem("discord_token", discordToken);
     localStorage.setItem("discord_guild_id", discordGuildId);
+    // Token is maintained strictly in memory state, not saved to localStorage
     addToast("Discord Live Connected", "Bot credentials validated. Multi-platform sync complete.", "success");
   };
 
   const handleDisconnectDiscord = () => {
     setIsDiscordConnected(false);
+    setDiscordToken("");
     localStorage.removeItem("discord_connected");
+    localStorage.removeItem("discord_token");
     addToast("Discord Disconnected", "Discord credentials and active streams disconnected.", "info");
   };
 
@@ -2925,6 +2927,7 @@ export default function App() {
           `Session created successfully! Session ID: ${data.sessionId ? `${data.sessionId.slice(0, 8)}...[REDACTED]` : "N/A"}, User: ${data.user?.displayName}`
         );
         setSessionId(data.sessionId);
+        sessionStorage.setItem("jira_session_id", data.sessionId);
         setJiraUrl(credentials.jiraUrl);
         setActiveUser(data.user);
         setIsConnected(true);
@@ -2947,6 +2950,13 @@ export default function App() {
 
   // Disconnect Real Jira
   const handleDisconnect = () => {
+    if (sessionId) {
+      fetch("/api/jira/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${sessionId}` }
+      }).catch(() => {});
+    }
+
     setSessionId(null);
     setActiveUser(null);
     setJiraUrl("");
@@ -2957,8 +2967,10 @@ export default function App() {
     setJiraIssueTypes([]);
     setReport(null);
 
-    // Clear session details from localStorage
+    // Clear session details from storage
+    sessionStorage.removeItem("jira_session_id");
     localStorage.removeItem("jira_session_id");
+    localStorage.removeItem("jira_token");
     localStorage.removeItem("jira_is_connected");
     localStorage.setItem("jira_is_sandbox", "true");
     localStorage.removeItem("jira_active_user");
@@ -4499,6 +4511,9 @@ export default function App() {
             <div>
               <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 uppercase">
                 <span>Eshan Barua's OmniSync Suite</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 rounded-md border border-emerald-800/40 px-2 py-0.5 ml-1.5">
+                  {isSandbox ? "Sandbox Mode" : isConnected ? "Jira Connected" : "Live Proxy"}
+                </span>
                 {selectedProjects.length > 0 && (
                   <span className="text-[10px] font-bold tracking-normal normal-case text-blue-400 bg-blue-950/60 rounded-md border border-blue-900/30 px-2 py-0.5 ml-1.5">
                     {selectedProjects.join(", ")}

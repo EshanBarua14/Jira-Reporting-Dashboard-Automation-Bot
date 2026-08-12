@@ -21,7 +21,7 @@ export function initDatabase() {
   const dbPath = getDbPath();
   console.log(`[OmniSync DB] Initialising SQLite database at: ${dbPath}`);
   
-  db = new Database(dbPath, { verbose: console.log });
+  db = new Database(dbPath);
   try {
     db.pragma("journal_mode = WAL");
   } catch (e) {

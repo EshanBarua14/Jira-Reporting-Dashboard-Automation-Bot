@@ -14,7 +14,7 @@ test.describe("OmniSync Suite - Full End-to-End User Journey Tests", () => {
     await expect(brandText).toBeVisible();
 
     // Verify connection status badge (e.g. Sandbox Mode or Jira Connected)
-    const statusBadge = page.locator("header").locator("text=/Sandbox|Live|Connected/i").first();
+    const statusBadge = page.locator("header").locator("span", { hasText: /Sandbox|Live|Connected|Proxy/i }).first();
     await expect(statusBadge).toBeVisible();
   });
 
@@ -29,7 +29,7 @@ test.describe("OmniSync Suite - Full End-to-End User Journey Tests", () => {
     const totalIssuesMetric = page.locator("text=/Total Issues|Scope/i").first();
     await expect(totalIssuesMetric).toBeVisible();
 
-    const completionRateMetric = page.locator("text=/Completion|Velocity/i").first();
+    const completionRateMetric = page.locator("text=/Completion|Velocity/i").filter({ hasText: /Completion|Velocity/i }).locator("visible=true").first();
     await expect(completionRateMetric).toBeVisible();
   });
 

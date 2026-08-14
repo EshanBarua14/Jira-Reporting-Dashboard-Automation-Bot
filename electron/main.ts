@@ -108,7 +108,10 @@ function startServer() {
   const env = { 
     ...process.env, 
     NODE_ENV: "production", 
-    PORT: "3000"
+    PORT: "3000",
+    HOST: "127.0.0.1",
+    IS_ELECTRON: "true",
+    PREVIEW_IFRAME: "false"
   };
   
   console.log(`[Electron Main] Starting background Express proxy server from: ${serverPath}`);

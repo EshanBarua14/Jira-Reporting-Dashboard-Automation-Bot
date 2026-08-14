@@ -20,6 +20,7 @@ import {
   getAllReports,
   deleteReport
 } from "./database";
+import { getHelmetConfig, getResolvedHost } from "./src/utils/securityConfig";
 
 dotenv.config();
 
@@ -27,24 +28,8 @@ const app = express();
 app.set("trust proxy", 1);
 const PORT = 3000;
 
-// Security Headers (Helmet)
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        imgSrc: ["'self'", "data:", "blob:", "https:"],
-        connectSrc: ["'self'", "https:", "wss:", "ws:"],
-        frameAncestors: ["'self'"],
-        objectSrc: ["'none'"],
-      },
-    },
-    crossOriginEmbedderPolicy: false,
-  })
-);
+// Security Headers (Environment-aware Helmet & CSP)
+app.use(helmet(getHelmetConfig(process.env)));
 
 // Strict payload size constraints (1MB max body)
 app.use(express.json({ limit: "1mb" }));
@@ -1676,8 +1661,9 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "127.0.0.1", () => {
-    console.log(`Server running on port ${PORT}`);
+  const host = getResolvedHost(process.env);
+  app.listen(PORT, host, () => {
+    console.log(`Server running on http://${host}:${PORT} (HOST=${host}, NODE_ENV=${process.env.NODE_ENV || "development"})`);
   });
 }
 

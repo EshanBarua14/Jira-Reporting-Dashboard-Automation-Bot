@@ -82,6 +82,37 @@ const generalApiLimiter = rateLimit({
 // Apply general API rate limiter to all /api routes
 app.use("/api/", generalApiLimiter);
 
+// --- SAFE RUNTIME DIAGNOSTIC ENDPOINTS (No secrets exposed) ---
+app.get("/api/runtime-diagnostics", (req, res) => {
+  const host = getResolvedHost(process.env);
+  res.json({
+    ok: true,
+    nodeEnv: process.env.NODE_ENV || "development",
+    host: process.env.HOST || "unset",
+    port: String(PORT),
+    isElectron: process.env.IS_ELECTRON === "true",
+    previewIframe: process.env.PREVIEW_IFRAME === "true",
+    resolvedHost: host,
+    origin: req.headers.origin || "same-origin",
+    requestHost: req.headers.host || "unknown",
+    xForwardedHostPresent: Boolean(req.headers["x-forwarded-host"]),
+    xForwardedProtoPresent: Boolean(req.headers["x-forwarded-proto"])
+  });
+});
+
+app.get("/api/preview-health", (req, res) => {
+  const host = getResolvedHost(process.env);
+  res.json({
+    ok: true,
+    service: "omnisync-suite",
+    frontend: true,
+    backend: true,
+    runtime: process.env.NODE_ENV || "development",
+    resolvedHost: host,
+    port: PORT
+  });
+});
+
 // --- SECURE DESKTOP-OPTIMIZED STORAGE ENGINE SCHEMAS ---
 const StoreSetSchema = z.object({
   key: z.string().min(1, "Key is required").max(255),
@@ -1663,7 +1694,14 @@ async function startServer() {
 
   const host = getResolvedHost(process.env);
   app.listen(PORT, host, () => {
-    console.log(`Server running on http://${host}:${PORT} (HOST=${host}, NODE_ENV=${process.env.NODE_ENV || "development"})`);
+    console.log(`[OMNISYNC_RUNTIME]
+NODE_ENV=${process.env.NODE_ENV || "development"}
+IS_ELECTRON=${process.env.IS_ELECTRON === "true"}
+PREVIEW_IFRAME=${process.env.PREVIEW_IFRAME || "unset"}
+HOST_ENV=${process.env.HOST || "unset"}
+RESOLVED_HOST=${host}
+PORT=${PORT}
+Server running on http://${host}:${PORT}`);
   });
 }
 

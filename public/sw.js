@@ -1,11 +1,11 @@
 // OmniSync Service Worker for API & Dashboard Caching
-const CACHE_NAME = "omnisync-cache-v1";
-const STATIC_ASSETS = ["/", "/index.html", "/src/main.tsx"];
+const CACHE_NAME = "omnisync-cache-v2";
+const STATIC_ASSETS = ["/", "/index.html"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
+      return cache.addAll(STATIC_ASSETS).catch(() => {});
     })
   );
   self.skipWaiting();

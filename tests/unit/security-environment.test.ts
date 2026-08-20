@@ -23,6 +23,14 @@ describe("Environment-Aware Network & Security Header Configurations", () => {
       NODE_ENV: "production"
     };
     expect(getResolvedHost(explicitEnv)).toBe("0.0.0.0");
+
+    const containerEnv: NodeJS.ProcessEnv = {
+      NODE_ENV: "production",
+      K_SERVICE: "omnisync-preview",
+      IS_ELECTRON: "false"
+    };
+    expect(getResolvedHost(containerEnv)).toBe("0.0.0.0");
+    expect(isIframePreviewAllowed(containerEnv)).toBe(true);
   });
 
   // TEST B: Electron / local production configuration binds to 127.0.0.1
@@ -142,4 +150,62 @@ describe("Environment-Aware Network & Security Header Configurations", () => {
       await new Promise<void>((resolve) => previewServer.close(() => resolve()));
     }
   });
+
+  // TEST G: Diagnostics and Health Check endpoints
+  it("TEST G: Provides safe runtime-diagnostics and preview-health metadata without leaking secrets", async () => {
+    const testApp = express();
+    const mockEnv = { NODE_ENV: "development", PREVIEW_IFRAME: "true", HOST: "0.0.0.0" };
+    
+    testApp.get("/api/runtime-diagnostics", (req, res) => {
+      res.json({
+        ok: true,
+        nodeEnv: mockEnv.NODE_ENV,
+        host: mockEnv.HOST,
+        port: "3000",
+        isElectron: false,
+        previewIframe: true,
+        resolvedHost: getResolvedHost(mockEnv),
+        origin: req.headers.origin || "same-origin",
+        requestHost: req.headers.host || "unknown",
+        xForwardedHostPresent: Boolean(req.headers["x-forwarded-host"]),
+        xForwardedProtoPresent: Boolean(req.headers["x-forwarded-proto"])
+      });
+    });
+
+    testApp.get("/api/preview-health", (_req, res) => {
+      res.json({
+        ok: true,
+        service: "omnisync-suite",
+        frontend: true,
+        backend: true,
+        runtime: mockEnv.NODE_ENV,
+        resolvedHost: getResolvedHost(mockEnv),
+        port: 3000
+      });
+    });
+
+    const server: http.Server = await new Promise((resolve) => {
+      const s = testApp.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const port = (server.address() as any).port;
+
+    try {
+      const diagRes = await fetch(`http://127.0.0.1:${port}/api/runtime-diagnostics`);
+      const diagData = await diagRes.json();
+      expect(diagData.ok).toBe(true);
+      expect(diagData.resolvedHost).toBe("0.0.0.0");
+      expect(diagData.previewIframe).toBe(true);
+      expect(diagData).not.toHaveProperty("token");
+      expect(diagData).not.toHaveProperty("password");
+
+      const healthRes = await fetch(`http://127.0.0.1:${port}/api/preview-health`);
+      const healthData = await healthRes.json();
+      expect(healthData.ok).toBe(true);
+      expect(healthData.service).toBe("omnisync-suite");
+      expect(healthData.resolvedHost).toBe("0.0.0.0");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
+

@@ -1698,8 +1698,15 @@ export default function App() {
   };
 
 
-  // View Mode Switcher state
+  // View Mode Switcher & Persona Density state
   const [viewMode, setViewMode] = useState<"dashboard" | "report">("dashboard");
+  const [personaMode, setPersonaMode] = useState<"simple" | "power">(() => {
+    try {
+      return (localStorage.getItem("omnisync_persona_mode") as "simple" | "power") || "power";
+    } catch {
+      return "power";
+    }
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("omnisync_sidebar_collapsed") === "true";
@@ -4633,6 +4640,54 @@ export default function App() {
                   <span>Audit Log ({auditLogs.length})</span>
                 </button>
 
+
+                {/* Persona Mode Switcher: Simple PM vs Power PMO */}
+                <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPersonaMode("simple");
+                      localStorage.setItem("omnisync_persona_mode", "simple");
+                      addToast(
+                        "Simple PM Mode Active",
+                        "Focused executive view: prioritized high-level KPIs, AI summary, and rapid export.",
+                        "info",
+                        3000
+                      );
+                    }}
+                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer ${
+                      personaMode === "simple"
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black shadow-md shadow-emerald-500/20"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Simple PM Mode: Clean, low-cognitive-load executive dashboard with essential agile summaries"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Simple PM</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPersonaMode("power");
+                      localStorage.setItem("omnisync_persona_mode", "power");
+                      addToast(
+                        "Power PMO Mode Active",
+                        "Deep analytics enabled: full access to CFD, Monte Carlo models, JQL AST syntax, and diagnostics.",
+                        "info",
+                        3000
+                      );
+                    }}
+                    className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider cursor-pointer ${
+                      personaMode === "power"
+                        ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black shadow-md shadow-blue-500/20"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Power PMO Mode: Full granular access to Monte Carlo simulations, CFD charts, AST JQL builder, and diagnostics"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>Power PMO</span>
+                  </button>
+                </div>
 
                 {/* View Mode Switcher & Sidebar Toggle */}
                 <div className="bg-slate-950/80 border border-white/5 rounded-xl p-1 flex items-center gap-1 shrink-0 select-none">

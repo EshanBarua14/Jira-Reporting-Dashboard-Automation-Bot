@@ -6,7 +6,7 @@
 
 **High-Velocity Agile Jira Reporting, PMO Analytics & Predictive Intelligence Engine**
 
-[![Build & Test Status](https://img.shields.io/badge/Build%20%26%20Tests-PASSING%20(38%2F38)-10b981?style=flat-badge&logo=vitest&logoColor=white)](#-developer--engineering-guide)
+[![Tests](https://img.shields.io/badge/tests-vitest-10b981?style=flat-badge&logo=vitest&logoColor=white)](#-developer--engineering-guide)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.0-61dafb?style=flat-badge&logo=react&logoColor=black)](https://react.dev/)
 [![Express](https://img.shields.io/badge/Express-4.21-000000?style=flat-badge&logo=express&logoColor=white)](https://expressjs.com/)
@@ -23,18 +23,18 @@
 2. [For CTOs & Engineering Leadership (Architecture, Security & Risk)](#-for-ctos--engineering-leadership)
 3. [For End Users & PMO Teams (Features & Operations)](#-for-end-users--pmo-teams)
 4. [For Developers & Engineers (Setup, Testing & Extensibility)](#-for-developers--engineers)
-5. [Production Readiness & Audit Scorecard](#-production-readiness--audit-scorecard)
+5. [Project status](#-project-status)
 6. [Roadmap & Scalability Path](#-roadmap--scalability-path)
 
 ---
 
 ## 🌟 Executive Summary & Current State of Software
 
-**OmniSync Suite** is an enterprise-grade Jira analytics and PMO automation platform. It bridges raw Atlassian issue tracking with real-time velocity modeling, Monte Carlo probabilistic forecasting, cumulative flow diagrams (CFD), anomaly detection, and automated report exports (PDF, PNG, CSV, JSON).
+**OmniSync Suite** is a Jira analytics and PMO automation platform. It bridges raw Atlassian issue tracking with real-time velocity modeling, Monte Carlo probabilistic forecasting, cumulative flow diagrams (CFD), anomaly detection, and automated report exports (PDF, PNG, CSV, JSON).
 
-### Current State of the Software (v1.0.0 Release Candidate / GA)
-- **Deployment Status:** **Production-Ready for Desktop (Electron) & Single-Tenant/Internal Cloud Run (Web)**.
-- **Verification Baseline:** 100% automated test pass rate (**32 unit/integration tests across 7 test suites**).
+### Current State of the Software (v1.0.0 release candidate)
+- **Targets:** desktop (Electron) and single-tenant/internal web (Cloud Run or Docker).
+- **Verification:** automated Vitest suite; run `npm test` for the current count and result.
 - **Security Profile:** Hardened backend gateway with in-memory session vaults, SSRF IP sanitization, contextual CSP headers, and zero client-side credential storage.
 - **Platform Agnostic:** Runs identically in modern web browsers (Cloud Run / Docker) and offline desktop environments (Electron).
 
@@ -181,17 +181,17 @@ omnisync-suite/
 
 ---
 
-## 📋 Production Readiness & Audit Scorecard
+## 📋 Project status
 
-| Assessment Domain | Lead Reviewer | Grade | Audit Result |
-| :--- | :--- | :---: | :--- |
-| **System Architecture** | Chief Technology Officer | **94 / 100** |  Decoupled backend, Universal Storage Adapter pattern, zero-token client leaks, resilient fallback. |
-| **Code Quality** | Principal Engineer | **90 / 100** |  Strict TypeScript (`tsc --noEmit` clean), runtime Zod contracts, async time-sliced computation engine. |
-| **Quality Assurance** | QA Lead | **95 / 100** |  **38/38 unit tests passing across 8 suites**, zero flaky tests. |
-| **Infrastructure & DevOps** | Platform Engineer | **94 / 100** |  Single-command build, dynamic host resolution (`0.0.0.0` vs `127.0.0.1`), memory adapter fallback. |
-| **User Experience (UI/UX)** | Product Design Lead | **92 / 100** |  Simple PM vs Power PMO persona density toggle with persistent workspace layout. |
-| **Security & Compliance** | Lead Auditor | **96 / 100** |  SSRF blocklist, in-memory vault, sandboxed Electron IPC. |
-| **COMPOSITE SCORE** | **Cross-Functional Team** | **93.5 / 100** | **APPROVED FOR PRODUCTION RELEASE** |
+Built and maintained by AIPG. Not externally audited or certified. What the code implements, and how to check it:
+
+| Area | Implemented | Check |
+| :--- | :--- | :--- |
+| Architecture | Decoupled backend, Universal Storage Adapter, memory fallback | Code review |
+| Code quality | Strict TypeScript, Zod runtime contracts | `npx tsc --noEmit` |
+| Tests | Vitest unit/integration suites, Playwright config | `npm test` |
+| Security | SSRF blocklist, in-memory credential vault, sandboxed Electron IPC | Code review; no third-party pen test yet |
+| UX | Simple PM vs Power PMO density toggle | Manual |
 
 ---
 
@@ -199,10 +199,10 @@ omnisync-suite/
 
 For full multi-phase architectural milestones, refer to the [OmniSync Strategic Roadmap (ROADMAP.md)](ROADMAP.md).
 
-- [x] **v1.0.0 (Phase 1 Baseline)**: Core Jira JQL engine, agile metrics, Monte Carlo simulations, export engine, Universal Storage Adapter, Persona Mode toggle, 38/38 tests passing.
+- [x] **v1.0.0 (Phase 1 Baseline)**: Core Jira JQL engine, agile metrics, Monte Carlo simulations, export engine, Universal Storage Adapter, Persona Mode toggle, tests passing.
 - [ ] **v1.1.0 (Phase 2 - Q4 2026)**: Multi-Tenant Cloud SQL (PostgreSQL) adapter, Atlassian OAuth 2.0 3LO flow, Microsoft Teams & Slack webhooks.
 - [ ] **v1.2.0 (Phase 3 - Q1 2027)**: Web Worker background processing for datasets >50,000 issues; domain React Context state decoupling; `React.lazy` bundle chunking.
-- [ ] **v2.0.0 (Phase 4 - Q2 2027)**: Multi-board Jira instance federation, Autonomous Gemini GenAI Retrospective Agent, SOC2 Type II compliance audit readiness.
+- [ ] **v2.0.0 (Phase 4 - Q2 2027)**: Multi-board Jira instance federation, Autonomous Gemini GenAI Retrospective Agent, preparation for an external security review.
 
 ---
 
